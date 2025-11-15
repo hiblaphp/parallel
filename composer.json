@@ -1,0 +1,21 @@
+{
+    "name": "hiblaphp/parallel",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Hibla\\Parallel\\": "src/"
+        }
+    },
+    "minimum-stability": "dev",
+    "require": {
+        "rcalicdan/config-loader": "^1.0",
+        "opis/closure": "^4.3",
+        "pestphp/pest": "^3.0"
+    },
+    "config": {
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    }
+}
