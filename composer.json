@@ -5,7 +5,10 @@
     "autoload": {
         "psr-4": {
             "Hibla\\Parallel\\": "src/"
-        }
+        },
+        "files": [
+            "src/Helpers/namespace_function.php"
+        ]
     },
     "minimum-stability": "dev",
     "require": {
