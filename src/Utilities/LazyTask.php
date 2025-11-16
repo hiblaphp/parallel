@@ -2,8 +2,8 @@
 
 namespace Hibla\Parallel\Utilities;
 
-use Hibla\Parallel\Defer;
 use Hibla\Parallel\Process;
+use Hibla\Promise\Interfaces\PromiseInterface;
 
 class LazyTask
 {
@@ -51,16 +51,20 @@ class LazyTask
     }
 
     /**
-     * Execute the lazy task and return real task ID
+     * Execute the lazy task and return Promise<string> (real task ID)
      */
-    public function execute(): string
+    public function execute(): PromiseInterface
     {
         if (!$this->executed) {
-            $this->realTaskId = Process::spawn($this->callback, $this->context);
-            $this->executed = true;
+            return Process::spawn($this->callback, $this->context)
+                ->then(function ($taskId) {
+                    $this->realTaskId = $taskId;
+                    $this->executed = true;
+                    return $taskId;
+                });
         }
-        
-        return $this->realTaskId;
+
+        return \Hibla\Promise\Promise::resolved($this->realTaskId);
     }
 
     /**
@@ -87,16 +91,16 @@ class LazyTask
         if ($this->executed) {
             throw new \RuntimeException('Cannot modify context after task execution');
         }
-        
+
         $this->context = $context;
     }
 
     /**
-     * Get real task ID (executes if needed)
+     * Get real task ID (null if not yet executed)
      */
-    public function getRealTaskId(): string
+    public function getRealTaskId(): ?string
     {
-        return $this->execute();
+        return $this->realTaskId;
     }
 
     /**

@@ -4,9 +4,14 @@ namespace Hibla\Parallel;
 
 use Hibla\Parallel\Handlers\ProcessBackgroundHandler;
 use Hibla\Parallel\Utilities\LazyTask;
+use Hibla\Promise\Interfaces\PromiseInterface;
+use function Hibla\async;
+use function Hibla\await;
+use function Hibla\delay;
 
 /**
  * Static process utility for monitoring and awaiting background tasks
+ * Integrated with Hibla's async ecosystem
  */
 class Process
 {
@@ -21,92 +26,107 @@ class Process
     }
 
     /**
-     * Spawn and Execute a background task and return an unique task ID
+     * Spawn and Execute a background task and return a Promise<string> (task ID)
+     * 
+     * @return PromiseInterface<string> Promise resolving to unique task ID
      */
-    public static function spawn(callable $callback, array $context = []): string
+    public static function spawn(callable $callback, array $context = []): PromiseInterface
     {
-        return self::getHandler()->executeBackground($callback, $context);
+        return async(function () use ($callback, $context) {
+            return self::getHandler()->executeBackground($callback, $context);
+        });
     }
 
     /**
-     * Create a lazy background task that only execute when awaited
+     * Create a lazy background task that only executes when awaited
+     * 
+     * @return string Lazy task ID
      */
-    public function lazy(string $taskId)
+    public static function lazy(callable $callback, array $context = []): string
     {
-        return LazyTask::create($taskId);
+        return LazyTask::create($callback, $context);
     }
 
     /**
-     * Monitor a task until completion or timeout
+     * Monitor a task until completion or timeout (non-blocking)
+     * 
+     * @return PromiseInterface<array> Promise resolving to task status
      */
-    public static function monitor(string $taskId, int $timeoutSeconds = 30, ?callable $progressCallback = null): array
+    public static function monitor(string $taskId, int $timeoutSeconds = 30, ?callable $progressCallback = null): PromiseInterface
     {
-        $startTime = time();
-        $lastStatus = null;
-        $displayedOutput = false;
+        return async(function () use ($taskId, $timeoutSeconds, $progressCallback) {
+            $startTime = time();
+            $lastStatus = null;
+            $displayedOutput = false;
 
-        do {
-            $status = self::getTaskStatus($taskId);
+            while (true) {
+                $status = self::getTaskStatus($taskId);
 
-            if (isset($status['output']) && !empty($status['output']) && !$displayedOutput) {
-                echo $status['output'];
-                $displayedOutput = true;
-            }
-
-            if ($progressCallback && $status !== $lastStatus) {
-                $progressCallback($status);
-                $lastStatus = $status;
-            }
-
-            if (in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND'])) {
                 if (isset($status['output']) && !empty($status['output']) && !$displayedOutput) {
                     echo $status['output'];
+                    $displayedOutput = true;
                 }
-                return $status;
-            }
 
-            if ($timeoutSeconds > 0 && (time() - $startTime) >= $timeoutSeconds) {
-                return array_merge($status, [
-                    'timeout' => true,
-                    'message' => $status['message'] . ' (monitoring timeout reached)'
-                ]);
-            }
+                if ($progressCallback && $status !== $lastStatus) {
+                    $progressCallback($status);
+                    $lastStatus = $status;
+                }
 
-            usleep(10000);
-        } while (true);
+                if (in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND'])) {
+                    if (isset($status['output']) && !empty($status['output']) && !$displayedOutput) {
+                        echo $status['output'];
+                    }
+                    return $status;
+                }
+
+                if ($timeoutSeconds > 0 && (time() - $startTime) >= $timeoutSeconds) {
+                    return array_merge($status, [
+                        'timeout' => true,
+                        'message' => $status['message'] . ' (monitoring timeout reached)'
+                    ]);
+                }
+
+                // Non-blocking delay using event loop
+                await(delay(0.01)); // 10ms
+            }
+        });
     }
 
     /**
-     * Wait for a task to complete and return its result
+     * Wait for a task to complete and return its result (non-blocking)
+     * 
+     * @return PromiseInterface<mixed> Promise resolving to task result
      */
-    public static function await(string $taskId, int $timeoutSeconds = 60): mixed
+    public static function await(string $taskId, int $timeoutSeconds = 60): PromiseInterface
     {
-        if (LazyTask::isLazyId($taskId)) {
-            $task = LazyTask::get($taskId);
-            if (!$task) {
-                throw new \RuntimeException("Lazy task not found: {$taskId}");
+        return async(function () use ($taskId, $timeoutSeconds) {
+            if (LazyTask::isLazyId($taskId)) {
+                $task = LazyTask::get($taskId);
+                if (!$task) {
+                    throw new \RuntimeException("Lazy task not found: {$taskId}");
+                }
+
+                $realTaskId = await($task->execute());
+                return await(self::await($realTaskId, $timeoutSeconds));
             }
 
-            $realTaskId = $task->execute();
-            return self::await($realTaskId, $timeoutSeconds);
-        }
+            $finalStatus = await(self::monitor($taskId, $timeoutSeconds));
 
-        $finalStatus = self::monitor($taskId, $timeoutSeconds);
+            if ($finalStatus['status'] === 'COMPLETED') {
+                return $finalStatus['result'] ?? null;
+            }
 
-        if ($finalStatus['status'] === 'COMPLETED') {
-            return $finalStatus['result'] ?? null;
-        }
+            if (isset($finalStatus['timeout']) && $finalStatus['timeout']) {
+                throw new \RuntimeException("Task {$taskId} timed out after {$timeoutSeconds} seconds");
+            }
 
-        if (isset($finalStatus['timeout']) && $finalStatus['timeout']) {
-            throw new \RuntimeException("Task {$taskId} timed out after {$timeoutSeconds} seconds");
-        }
+            if ($finalStatus['status'] === 'ERROR') {
+                $errorMsg = $finalStatus['error_message'] ?? $finalStatus['message'];
+                throw new \RuntimeException("Task {$taskId} failed: {$errorMsg}");
+            }
 
-        if ($finalStatus['status'] === 'ERROR') {
-            $errorMsg = $finalStatus['error_message'] ?? $finalStatus['message'];
-            throw new \RuntimeException("Task {$taskId} failed: {$errorMsg}");
-        }
-
-        throw new \RuntimeException("Task {$taskId} ended with unexpected status: " . $finalStatus['status']);
+            throw new \RuntimeException("Task {$taskId} ended with unexpected status: " . $finalStatus['status']);
+        });
     }
 
     /**

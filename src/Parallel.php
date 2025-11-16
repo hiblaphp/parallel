@@ -3,20 +3,23 @@
 namespace Hibla\Parallel;
 
 use Hibla\Parallel\Utilities\TaskAwaiter;
+use Hibla\Promise\Interfaces\PromiseInterface;
+use function Hibla\async;
 
 /**
- * Simple parallel task execution utilities
+ * Parallel task execution utilities integrated with Hibla's async ecosystem
  */
 class Parallel
 {
     /**
      * Execute multiple tasks concurrently and wait for all to complete
+     * Returns a Promise that resolves when all tasks are done
      * 
      * @param array $tasks Array of callables, task IDs, or lazy task IDs (keys are preserved)
-     * @param int $timeoutSeconds Maximum time to wait for all tasks
      * @param int|null $maxConcurrency Maximum concurrent processes (null = no limit)
+     * @param int $timeoutSeconds Maximum time to wait for all tasks
      * @param int $pollIntervalMs Polling interval in milliseconds
-     * @return array Task results with preserved keys
+     * @return PromiseInterface<array> Promise resolving to task results with preserved keys
      * @throws \RuntimeException If any task fails or times out
      */
     public static function all(
@@ -24,27 +27,31 @@ class Parallel
         ?int $maxConcurrency = null,
         int $timeoutSeconds = 60,
         int $pollIntervalMs = 10
-    ): array {
-        return TaskAwaiter::awaitAll($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
+    ): PromiseInterface {
+        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
+            return TaskAwaiter::awaitAll($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
+        });
     }
 
     /**
      * Execute multiple tasks concurrently and return all results (settled version)
-     * Never throws - returns results with status indicators
+     * Returns a Promise that never throws - returns results with status indicators
      * 
      * @param array $tasks Array of callables, task IDs, or lazy task IDs (keys are preserved)
      * @param int $timeoutSeconds Maximum time to wait for all tasks
      * @param int|null $maxConcurrency Maximum concurrent processes (null = no limit)
      * @param int $pollIntervalMs Polling interval in milliseconds
-     * @return array Results with 'status' and either 'value' or 'reason' for each task
+     * @return PromiseInterface<array> Promise resolving to results with 'status' and either 'value' or 'reason' for each task
      */
     public static function allSettled(
         array $tasks,
         int $timeoutSeconds = 60,
         ?int $maxConcurrency = null,
         int $pollIntervalMs = 100
-    ): array {
-        return TaskAwaiter::awaitAllSettled($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
+    ): PromiseInterface {
+        return async(function () use ($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs) {
+            return TaskAwaiter::awaitAllSettled($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
+        });
     }
 
     /**
@@ -80,11 +87,11 @@ class Parallel
     }
 
     /**
-     * Get optimal number of processes based on system resources and print CPU info
+     * Get optimal number of processes based on system resources
      * 
-     * @param int|null $maxLimit Optional maximum limit
      * @param bool $printInfo Whether to print CPU and core information
-     * @return int Recommended number of processes
+     * @param int|null $maxLimit Optional maximum limit
+     * @return array ['cpu' => int, 'io' => int] Recommended process counts
      */
     public static function optimalProcessCount(bool $printInfo = false, ?int $maxLimit = null): array
     {
