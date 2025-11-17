@@ -5,9 +5,9 @@ namespace Hibla\Parallel\Handlers;
 use Hibla\Parallel\Config\ConfigLoader;
 use Hibla\Parallel\Serialization\CallbackSerializationManager;
 use Hibla\Parallel\Serialization\SerializationException;
-use Hibla\Parallel\Process\ProcessManager;
-use Hibla\Parallel\Process\TaskRegistry;
-use Hibla\Parallel\Process\StatusManager;
+use Hibla\Parallel\Managers\ProcessManager;
+use Hibla\Parallel\Utilities\TaskRegistry;
+use Hibla\Parallel\Managers\StatusManager;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 

@@ -1,6 +1,6 @@
 <?php
 
-namespace Hibla\Parallel\Process;
+namespace Hibla\Parallel\Utilities;
 
 /**
  * Manages task registration and tracking
@@ -48,7 +48,7 @@ class TaskRegistry
         foreach ($this->taskRegistry as $taskId => $info) {
             if ($info['created_at'] < $cutoffTime) {
                 $status = $statusManager->getTaskStatus($taskId);
-                if (in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND'])) {
+                if (\in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND'])) {
                     unset($this->taskRegistry[$taskId]);
                     $cleared++;
                 }
@@ -63,9 +63,9 @@ class TaskRegistry
      */
     private function getCallableType(callable $callback): string
     {
-        if (is_string($callback)) {
+        if (\is_string($callback)) {
             return 'function';
-        } elseif (is_array($callback)) {
+        } elseif (\is_array($callback)) {
             return 'method';
         } elseif ($callback instanceof \Closure) {
             return 'closure';

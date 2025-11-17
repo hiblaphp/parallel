@@ -1,6 +1,6 @@
 <?php
 
-namespace Hibla\Parallel\Process;
+namespace Hibla\Parallel\Managers;
 
 use Hibla\Parallel\Config\ConfigLoader;
 use Hibla\Parallel\Utilities\BackgroundLogger;
