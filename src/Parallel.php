@@ -101,7 +101,7 @@ class Parallel
                 $cancelled = 0;
                 foreach ($taskIds as $taskId) {
                     if (Process::isRunning($taskId)) {
-                        $result = await(Process::cancel($taskId));
+                        $result = Process::cancel($taskId);
                         if ($result['success']) {
                             $cancelled++;
                         }
