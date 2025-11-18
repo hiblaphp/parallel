@@ -1,6 +1,6 @@
 <?php
 
-namespace Hibla\Parallel\Utilities;
+namespace Hibla\Parallel;
 
 use Hibla\Parallel\Process;
 use Hibla\Promise\Interfaces\PromiseInterface;

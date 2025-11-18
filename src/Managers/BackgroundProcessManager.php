@@ -1,26 +1,27 @@
 <?php
 
-namespace Hibla\Parallel\Handlers;
+namespace Hibla\Parallel\Managers;
 
 use Hibla\Parallel\Config\ConfigLoader;
 use Hibla\Parallel\Serialization\CallbackSerializationManager;
 use Hibla\Parallel\Serialization\SerializationException;
-use Hibla\Parallel\Managers\ProcessManager;
+use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Utilities\TaskRegistry;
-use Hibla\Parallel\Managers\StatusManager;
+use Hibla\Parallel\Handlers\TaskStatusHandler;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 
 /**
- * Handles background process execution for deferred tasks
+ * Main manager for background process execution
+ * Orchestrates process spawning, status tracking, and task lifecycle management
  */
-class BackgroundProcessExecutorHandler
+class BackgroundProcessManager
 {
     private ConfigLoader $config;
     private CallbackSerializationManager $serializationManager;
-    private ProcessManager $processManager;
+    private ProcessSpawnHandler $processSpawnHandler;
     private TaskRegistry $taskRegistry;
-    private StatusManager $statusManager;
+    private TaskStatusHandler $taskStatusHandler;
     private BackgroundLogger $logger;
     private SystemUtilities $systemUtils;
 
@@ -36,9 +37,9 @@ class BackgroundProcessExecutorHandler
 
         $this->systemUtils = new SystemUtilities($this->config);
         $this->logger = new BackgroundLogger($this->config, $enableDetailedLogging, $customLogDir);
-        $this->statusManager = new StatusManager($this->logger->getLogDirectory());
+        $this->taskStatusHandler = new TaskStatusHandler($this->logger->getLogDirectory());
         $this->taskRegistry = new TaskRegistry();
-        $this->processManager = new ProcessManager($this->config, $this->systemUtils, $this->logger);
+        $this->processSpawnHandler = new ProcessSpawnHandler($this->config, $this->systemUtils, $this->logger);
 
         if ($this->config->get('bootstrap_framework', true)) {
             $this->frameworkInfo = $this->systemUtils->detectFramework();
@@ -67,10 +68,10 @@ class BackgroundProcessExecutorHandler
         $taskId = $this->systemUtils->generateTaskId();
 
         $this->taskRegistry->registerTask($taskId, $callback, $context);
-        $this->statusManager->createInitialStatus($taskId, $callback, $context);
+        $this->taskStatusHandler->createInitialStatus($taskId, $callback, $context);
 
         try {
-            $this->processManager->spawnBackgroundTask(
+            $this->processSpawnHandler->spawnBackgroundTask(
                 $taskId,
                 $callback,
                 $context,
@@ -82,7 +83,7 @@ class BackgroundProcessExecutorHandler
             return $taskId;
         } catch (\Throwable $e) {
             $this->logger->logTaskEvent($taskId, 'ERROR', 'Failed to spawn background process: ' . $e->getMessage());
-            $this->statusManager->updateStatus($taskId, 'SPAWN_ERROR', 'Failed to spawn background process: ' . $e->getMessage(), [
+            $this->taskStatusHandler->updateStatus($taskId, 'SPAWN_ERROR', 'Failed to spawn background process: ' . $e->getMessage(), [
                 'error_message' => $e->getMessage(),
                 'error_file' => $e->getFile(),
                 'error_line' => $e->getLine()
@@ -114,7 +115,7 @@ class BackgroundProcessExecutorHandler
      */
     public function getTaskStatus(string $taskId): array
     {
-        return $this->statusManager->getTaskStatus($taskId);
+        return $this->taskStatusHandler->getTaskStatus($taskId);
     }
 
     /**
@@ -122,7 +123,7 @@ class BackgroundProcessExecutorHandler
      */
     public function getAllTasksStatus(): array
     {
-        return $this->statusManager->getAllTasksStatus();
+        return $this->taskStatusHandler->getAllTasksStatus();
     }
 
     /**
@@ -130,7 +131,7 @@ class BackgroundProcessExecutorHandler
      */
     public function getTasksSummary(): array
     {
-        return $this->statusManager->getTasksSummary();
+        return $this->taskStatusHandler->getTasksSummary();
     }
 
     /**
@@ -138,7 +139,7 @@ class BackgroundProcessExecutorHandler
      */
     public function cleanupOldTasks(int $maxAgeHours = 24): int
     {
-        return $this->statusManager->cleanupOldTasks($maxAgeHours, $this->systemUtils->getTempDirectory());
+        return $this->taskStatusHandler->cleanupOldTasks($maxAgeHours, $this->systemUtils->getTempDirectory());
     }
 
     /**
@@ -154,7 +155,7 @@ class BackgroundProcessExecutorHandler
      */
     public function testCapabilities(bool $verbose = false): array
     {
-        return $this->processManager->testCapabilities($verbose, $this->serializationManager);
+        return $this->processSpawnHandler->testCapabilities($verbose, $this->serializationManager);
     }
 
     /**
@@ -233,7 +234,7 @@ class BackgroundProcessExecutorHandler
      */
     public function getHealthCheck(): array
     {
-        return $this->statusManager->getHealthCheck(
+        return $this->taskStatusHandler->getHealthCheck(
             $this->systemUtils,
             $this->logger,
             $this->serializationManager
@@ -245,7 +246,7 @@ class BackgroundProcessExecutorHandler
      */
     public function exportTaskData(array $taskIds = []): array
     {
-        return $this->statusManager->exportTaskData($taskIds, $this->getStats());
+        return $this->taskStatusHandler->exportTaskData($taskIds, $this->getStats());
     }
 
     /**
@@ -253,7 +254,7 @@ class BackgroundProcessExecutorHandler
      */
     public function importTaskData(array $data): bool
     {
-        return $this->statusManager->importTaskData($data, $this->logger);
+        return $this->taskStatusHandler->importTaskData($data, $this->logger);
     }
 
     public function getLogFile(): string
@@ -286,24 +287,24 @@ class BackgroundProcessExecutorHandler
         return $this->taskRegistry->getAllTasks();
     }
 
-    public function getStatusManager(): StatusManager
+    public function getTaskStatusHandler(): TaskStatusHandler
     {
-        return $this->statusManager;
+        return $this->taskStatusHandler;
     }
 
     public function clearCompletedTasks(int $maxAge = 3600): int
     {
-        return $this->taskRegistry->clearCompletedTasks($maxAge, $this->statusManager);
+        return $this->taskRegistry->clearCompletedTasks($maxAge, $this->taskStatusHandler);
     }
 
     public function cancelTask(string $taskId): array
     {
-        return $this->statusManager->cancelTask($taskId);
+        return $this->taskStatusHandler->cancelTask($taskId);
     }
 
     public function isTaskRunning(string $taskId): bool
     {
-        $status = $this->statusManager->getTaskStatus($taskId);
+        $status = $this->taskStatusHandler->getTaskStatus($taskId);
 
         if ($status['status'] !== 'RUNNING') {
             return false;
@@ -314,22 +315,22 @@ class BackgroundProcessExecutorHandler
             return false;
         }
 
-        return $this->statusManager->isProcessRunning($pid);
+        return $this->taskStatusHandler->isProcessRunning($pid);
     }
 
     public function getCancellableTasks(): array
     {
-        return $this->statusManager->getCancellableTasks();
+        return $this->taskStatusHandler->getCancellableTasks();
     }
 
     public function cancelMultipleTasks(array $taskIds): array
     {
-        return $this->statusManager->cancelMultipleTasks($taskIds);
+        return $this->taskStatusHandler->cancelMultipleTasks($taskIds);
     }
 
     public function cancelAllRunningTasks(): array
     {
-        return $this->statusManager->cancelAllRunningTasks();
+        return $this->taskStatusHandler->cancelAllRunningTasks();
     }
 
     private function validateSerialization(callable $callback, array $context): void

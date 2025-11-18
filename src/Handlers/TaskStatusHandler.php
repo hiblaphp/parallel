@@ -1,13 +1,13 @@
 <?php
 
-namespace Hibla\Parallel\Managers;
+namespace Hibla\Parallel\Handlers;
 
 use Hibla\Parallel\Utilities\BackgroundLogger;
 
 /**
- * Manages task status tracking and monitoring
+ * Handles task status tracking, monitoring, and lifecycle operations
  */
-class StatusManager
+class TaskStatusHandler
 {
     protected string $logDir;
 
@@ -438,7 +438,7 @@ class StatusManager
     {
         if (PHP_OS_FAMILY === 'Windows') {
             exec("taskkill /F /PID {$pid} 2>&1", $output, $returnCode);
-            return $returnCode === 0 || $returnCode === 128; 
+            return $returnCode === 0 || $returnCode === 128;
         } else {
             $result = posix_kill($pid, SIGTERM);
 
@@ -448,7 +448,7 @@ class StatusManager
                 if ($this->isProcessRunning($pid)) {
                     posix_kill($pid, SIGKILL);
                 }
-                
+
                 return true;
             }
 

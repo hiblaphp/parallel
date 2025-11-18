@@ -1,6 +1,6 @@
 <?php
 
-namespace Hibla\Parallel\Managers;
+namespace Hibla\Parallel\Handlers;
 
 use Hibla\Parallel\Config\ConfigLoader;
 use Hibla\Parallel\Utilities\BackgroundLogger;
@@ -9,9 +9,9 @@ use Hibla\Parallel\Serialization\SerializationException;
 use Hibla\Parallel\Utilities\SystemUtilities;
 
 /**
- * Manages the creation and execution of background processes
+ * Handles the spawning and execution of background processes
  */
-class ProcessManager
+class ProcessSpawnHandler
 {
     private ConfigLoader $config;
     private SystemUtilities $systemUtils;
@@ -161,9 +161,6 @@ class ProcessManager
         }
     }
 
-    /**
-     * Generate the background script template
-     */
     /**
      * Generate the background script template with output capture
      */
@@ -443,6 +440,7 @@ try {
 exit(0);
 PHP;
     }
+
     /**
      * Spawn background process with platform-specific handling
      */

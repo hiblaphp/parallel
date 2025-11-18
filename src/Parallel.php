@@ -2,7 +2,7 @@
 
 namespace Hibla\Parallel;
 
-use Hibla\Parallel\Utilities\ProcessPool;
+use Hibla\Parallel\ProcessPool;
 use Hibla\Parallel\Utilities\LazyTask;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use function Hibla\async;
