@@ -2,7 +2,7 @@
 
 namespace Hibla\Parallel;
 
-use Hibla\Parallel\Handlers\ProcessBackgroundHandler;
+use Hibla\Parallel\Handlers\BackgroundProcessExecutorHandler;
 use Hibla\Parallel\Utilities\LazyTask;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use function Hibla\async;
@@ -15,12 +15,12 @@ use function Hibla\delay;
  */
 class Process
 {
-    protected static ?ProcessBackgroundHandler $handler = null;
+    protected static ?BackgroundProcessExecutorHandler $handler = null;
 
-    protected static function getHandler(): ProcessBackgroundHandler
+    protected static function getHandler(): BackgroundProcessExecutorHandler
     {
         if (self::$handler === null) {
-            self::$handler = new ProcessBackgroundHandler;
+            self::$handler = new BackgroundProcessExecutorHandler;
         }
         return self::$handler;
     }

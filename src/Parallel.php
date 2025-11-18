@@ -130,9 +130,9 @@ class Parallel
     /**
      * Cancel all currently running tasks (non-blocking)
      * 
-     * @return PromiseInterface<array> Promise that resolves to summary of cancellation results
+     * @return array Summary of cancellation results
      */
-    public static function cancelAll(): PromiseInterface
+    public static function cancelAll()
     {
         return Process::cancelAll();
     }

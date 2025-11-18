@@ -52,7 +52,7 @@ class BackgroundProcessExecutorHandler
     /**
      * Execute callback in a true background process with comprehensive logging
      */
-    public function execute(callable $callback, array $context = []): string
+    public function executeBackground(callable $callback, array $context = []): string
     {
         if ($this->isRunningInBackground()) {
             $this->logger->logEvent('WARNING', 'Blocked nested background process spawn attempt');
