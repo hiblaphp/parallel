@@ -296,9 +296,42 @@ class BackgroundProcessExecutorHandler
         return $this->taskRegistry->clearCompletedTasks($maxAge, $this->statusManager);
     }
 
-    /**
-     * Validate that callback and context can be serialized
-     */
+    public function cancelTask(string $taskId): array
+    {
+        return $this->statusManager->cancelTask($taskId);
+    }
+
+    public function isTaskRunning(string $taskId): bool
+    {
+        $status = $this->statusManager->getTaskStatus($taskId);
+
+        if ($status['status'] !== 'RUNNING') {
+            return false;
+        }
+
+        $pid = $status['pid'] ?? null;
+        if (!$pid) {
+            return false;
+        }
+
+        return $this->statusManager->isProcessRunning($pid);
+    }
+
+    public function getCancellableTasks(): array
+    {
+        return $this->statusManager->getCancellableTasks();
+    }
+
+    public function cancelMultipleTasks(array $taskIds): array
+    {
+        return $this->statusManager->cancelMultipleTasks($taskIds);
+    }
+
+    public function cancelAllRunningTasks(): array
+    {
+        return $this->statusManager->cancelAllRunningTasks();
+    }
+
     private function validateSerialization(callable $callback, array $context): void
     {
         if (!$this->serializationManager->canSerializeCallback($callback)) {

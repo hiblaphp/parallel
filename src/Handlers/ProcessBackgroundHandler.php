@@ -1,4 +1,4 @@
-<?php 
+<?php
 
 namespace Hibla\Parallel\Handlers;
 
@@ -55,6 +55,46 @@ class ProcessBackgroundHandler
     public function getLogDirectory(): string
     {
         return $this->backgroundTaskManager->getLogDirectory();
+    }
+
+    /**
+     * Cancel a running task
+     */
+    public function cancelTask(string $taskId): array
+    {
+        return $this->backgroundTaskManager->cancelTask($taskId);
+    }
+
+    /**
+     * Check if a task is still running
+     */
+    public function isTaskRunning(string $taskId): bool
+    {
+        return $this->backgroundTaskManager->isTaskRunning($taskId);
+    }
+
+    /**
+     * Get all cancellable tasks
+     */
+    public function getCancellableTasks(): array
+    {
+        return $this->backgroundTaskManager->getCancellableTasks();
+    }
+
+    /**
+     * Cancel multiple tasks
+     */
+    public function cancelMultipleTasks(array $taskIds): array
+    {
+        return $this->backgroundTaskManager->cancelMultipleTasks($taskIds);
+    }
+
+    /**
+     * Cancel all running tasks
+     */
+    public function cancelAllRunningTasks(): array
+    {
+        return $this->backgroundTaskManager->cancelAllRunningTasks();
     }
 
     /**

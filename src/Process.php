@@ -48,9 +48,127 @@ class Process
     }
 
     /**
-     * Monitor a task until completion or timeout (non-blocking)
+     * Cancel a running task by its task ID (non-blocking)
      * 
-     * @return PromiseInterface<array> Promise resolving to task status
+     * @param string $taskId The task ID to cancel
+     * @return PromiseInterface<array> Promise that resolves to cancellation result
+     */
+    public static function cancel(string $taskId): PromiseInterface
+    {
+        return async(function () use ($taskId) {
+            if (LazyTask::isLazyId($taskId)) {
+                $task = LazyTask::get($taskId);
+                if (!$task) {
+                    return [
+                        'success' => false,
+                        'message' => 'Lazy task not found',
+                        'task_id' => $taskId
+                    ];
+                }
+
+                if (!$task->isExecuted()) {
+                    return [
+                        'success' => false,
+                        'message' => 'Lazy task has not been executed yet',
+                        'task_id' => $taskId
+                    ];
+                }
+
+                $realTaskId = $task->getRealTaskId();
+                return self::getHandler()->cancelTask($realTaskId);
+            }
+
+            return self::getHandler()->cancelTask($taskId);
+        });
+    }
+
+    /**
+     * Check if a task process is still running (non-blocking)
+     * 
+     * @param string $taskId The task ID to check
+     * @return bool True if the process is running
+     */
+    public static function isRunning(string $taskId): bool
+    {
+        if (LazyTask::isLazyId($taskId)) {
+            $task = LazyTask::get($taskId);
+            if (!$task || !$task->isExecuted()) {
+                return false;
+            }
+            $taskId = $task->getRealTaskId();
+        }
+
+        return self::getHandler()->isTaskRunning($taskId);
+    }
+
+    /**
+     * Get all cancellable (running/pending) tasks (non-blocking)
+     * 
+     * @return array Array of cancellable tasks
+     */
+    public static function getCancellableTasks(): array
+    {
+        return self::getHandler()->getCancellableTasks();
+    }
+
+    /**
+     * Cancel multiple tasks at once (non-blocking)
+     * 
+     * @param array $taskIds Array of task IDs to cancel
+     * @return PromiseInterface<array> Promise that resolves to results for each task cancellation
+     */
+    public static function cancelMultiple(array $taskIds): PromiseInterface
+    {
+        return async(function () use ($taskIds) {
+            $results = [];
+            foreach ($taskIds as $taskId) {
+                $results[$taskId] = await(self::cancel($taskId));
+            }
+            return $results;
+        });
+    }
+
+    /**
+     * Cancel all running tasks (non-blocking)
+     * 
+     * @return PromiseInterface<array> Promise that resolves to summary with total tasks and individual results
+     */
+    public static function cancelAll(): PromiseInterface
+    {
+        return async(function () {
+            return self::getHandler()->cancelAllRunningTasks();
+        });
+    }
+
+    /**
+     * Wait for a task with ability to cancel on timeout (non-blocking)
+     * 
+     * @param string $taskId Task ID to await
+     * @param int $timeoutSeconds Timeout in seconds
+     * @param bool $cancelOnTimeout Whether to cancel the task if it times out
+     * @return PromiseInterface<mixed> Promise that resolves to task result
+     */
+    public static function awaitOrCancel(string $taskId, int $timeoutSeconds = 60, bool $cancelOnTimeout = true): PromiseInterface
+    {
+        return async(function () use ($taskId, $timeoutSeconds, $cancelOnTimeout) {
+            try {
+                return await(self::await($taskId, $timeoutSeconds));
+            } catch (\RuntimeException $e) {
+                if ($cancelOnTimeout && str_contains($e->getMessage(), 'timed out')) {
+                    $cancelResult = await(self::cancel($taskId));
+                    throw new \RuntimeException(
+                        $e->getMessage() . ' (Task cancelled: ' . ($cancelResult['success'] ? 'yes' : 'no') . ')',
+                        0,
+                        $e
+                    );
+                }
+                throw $e;
+            }
+        });
+    }
+
+    /**
+     * Monitor a task until completion or timeout (non-blocking)
      */
     public static function monitor(string $taskId, int $timeoutSeconds = 30, ?callable $progressCallback = null): PromiseInterface
     {
@@ -72,7 +190,7 @@ class Process
                     $lastStatus = $status;
                 }
 
-                if (in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND'])) {
+                if (in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND', 'CANCELLED'])) {
                     if (isset($status['output']) && !empty($status['output']) && !$displayedOutput) {
                         echo $status['output'];
                     }
@@ -86,16 +204,13 @@ class Process
                     ]);
                 }
 
-                // Non-blocking delay using event loop
-                await(delay(0.01)); // 10ms
+                await(delay(0.01)); // 10ms delay
             }
         });
     }
 
     /**
      * Wait for a task to complete and return its result (non-blocking)
-     * 
-     * @return PromiseInterface<mixed> Promise resolving to task result
      */
     public static function await(string $taskId, int $timeoutSeconds = 60): PromiseInterface
     {
@@ -114,6 +229,10 @@ class Process
 
             if ($finalStatus['status'] === 'COMPLETED') {
                 return $finalStatus['result'] ?? null;
+            }
+
+            if ($finalStatus['status'] === 'CANCELLED') {
+                throw new \RuntimeException("Task {$taskId} was cancelled");
             }
 
             if (isset($finalStatus['timeout']) && $finalStatus['timeout']) {

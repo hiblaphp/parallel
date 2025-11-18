@@ -111,4 +111,44 @@ class BackgroundTaskManager
     {
         return $this->backgroundExecutor->testCapabilities($verbose);
     }
+
+    /**
+     * Cancel a running task
+     */
+    public function cancelTask(string $taskId): array
+    {
+        return $this->backgroundExecutor->cancelTask($taskId);
+    }
+
+    /**
+     * Check if a task is still running
+     */
+    public function isTaskRunning(string $taskId): bool
+    {
+        return $this->backgroundExecutor->isTaskRunning($taskId);
+    }
+
+    /**
+     * Get all cancellable tasks
+     */
+    public function getCancellableTasks(): array
+    {
+        return $this->backgroundExecutor->getCancellableTasks();
+    }
+
+    /**
+     * Cancel multiple tasks
+     */
+    public function cancelMultipleTasks(array $taskIds): array
+    {
+        return $this->backgroundExecutor->cancelMultipleTasks($taskIds);
+    }
+
+    /**
+     * Cancel all running tasks
+     */
+    public function cancelAllRunningTasks(): array
+    {
+        return $this->backgroundExecutor->cancelAllRunningTasks();
+    }
 }

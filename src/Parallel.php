@@ -4,7 +4,6 @@ namespace Hibla\Parallel;
 
 use Hibla\Parallel\Utilities\TaskAwaiter;
 use Hibla\Promise\Interfaces\PromiseInterface;
-use function Hibla\async;
 
 /**
  * Parallel task execution utilities integrated with Hibla's async ecosystem
@@ -28,9 +27,7 @@ class Parallel
         int $timeoutSeconds = 60,
         int $pollIntervalMs = 10
     ): PromiseInterface {
-        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
-            return TaskAwaiter::awaitAll($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
-        });
+        return TaskAwaiter::awaitAll($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
     }
 
     /**
@@ -49,9 +46,95 @@ class Parallel
         ?int $maxConcurrency = null,
         int $pollIntervalMs = 100
     ): PromiseInterface {
-        return async(function () use ($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs) {
-            return TaskAwaiter::awaitAllSettled($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
+        return TaskAwaiter::awaitAllSettled($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
+    }
+
+    /**
+     * Cancel multiple tasks that are taking too long (non-blocking)
+     * 
+     * @param array $taskIds Array of task IDs to check and cancel if running
+     * @return PromiseInterface<array> Promise that resolves to cancellation results
+     */
+    public static function cancelTasks(array $taskIds): PromiseInterface
+    {
+        return async(function () use ($taskIds) {
+            $results = [];
+            foreach ($taskIds as $key => $taskId) {
+                $results[$key] = await(Process::cancel($taskId));
+            }
+            return $results;
         });
+    }
+
+    /**
+     * Execute tasks with automatic cancellation on first failure (non-blocking)
+     * 
+     * @param array $tasks Array of callables or task IDs
+     * @param int|null $maxConcurrency Maximum concurrent processes
+     * @param int $timeoutSeconds Timeout for all tasks
+     * @param int $pollIntervalMs Polling interval
+     * @return PromiseInterface<array> Promise that resolves to task results
+     */
+    public static function allOrCancel(
+        array $tasks,
+        ?int $maxConcurrency = null,
+        int $timeoutSeconds = 60,
+        int $pollIntervalMs = 100
+    ): PromiseInterface {
+        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
+            $taskIds = [];
+
+            try {
+                // Start all tasks
+                foreach ($tasks as $key => $task) {
+                    if (is_callable($task)) {
+                        $taskIds[$key] = await(Process::spawn($task));
+                    } else {
+                        $taskIds[$key] = $task; // Already a task ID
+                    }
+                }
+
+                // Wait for all tasks
+                return await(TaskAwaiter::awaitAll($taskIds, $timeoutSeconds, $maxConcurrency, $pollIntervalMs));
+            } catch (\Throwable $e) {
+                // Cancel all tasks that are still running
+                $cancelled = 0;
+                foreach ($taskIds as $taskId) {
+                    if (Process::isRunning($taskId)) {
+                        $result = await(Process::cancel($taskId));
+                        if ($result['success']) {
+                            $cancelled++;
+                        }
+                    }
+                }
+
+                throw new \RuntimeException(
+                    $e->getMessage() . " (Cancelled {$cancelled} running tasks)",
+                    0,
+                    $e
+                );
+            }
+        });
+    }
+
+    /**
+     * Get information about all currently running tasks (non-blocking)
+     * 
+     * @return array Array of running tasks with their status
+     */
+    public static function getRunningTasks(): array
+    {
+        return Process::getCancellableTasks();
+    }
+
+    /**
+     * Cancel all currently running tasks (non-blocking)
+     * 
+     * @return PromiseInterface<array> Promise that resolves to summary of cancellation results
+     */
+    public static function cancelAll(): PromiseInterface
+    {
+        return Process::cancelAll();
     }
 
     /**

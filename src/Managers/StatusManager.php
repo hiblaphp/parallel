@@ -365,6 +365,156 @@ class StatusManager
     }
 
     /**
+     * Cancel a running task by killing its process
+     */
+    public function cancelTask(string $taskId): array
+    {
+        $status = $this->getTaskStatus($taskId);
+
+        if ($status['status'] === 'NOT_FOUND') {
+            return [
+                'success' => false,
+                'message' => 'Task not found',
+                'task_id' => $taskId
+            ];
+        }
+
+        if (!in_array($status['status'], ['RUNNING', 'PENDING'])) {
+            return [
+                'success' => false,
+                'message' => "Cannot cancel task with status: {$status['status']}",
+                'task_id' => $taskId,
+                'current_status' => $status['status']
+            ];
+        }
+
+        $pid = $status['pid'] ?? null;
+
+        if (!$pid) {
+            // Update status to cancelled even without PID
+            $this->updateStatus($taskId, 'CANCELLED', 'Task cancelled (no PID available)');
+            return [
+                'success' => true,
+                'message' => 'Task marked as cancelled (process may not have started)',
+                'task_id' => $taskId
+            ];
+        }
+
+        // Try to kill the process
+        $killed = $this->killProcess($pid);
+
+        if ($killed) {
+            $this->updateStatus($taskId, 'CANCELLED', "Task cancelled, process {$pid} terminated", [
+                'cancelled_at' => date('Y-m-d H:i:s'),
+                'cancelled_pid' => $pid
+            ]);
+
+            return [
+                'success' => true,
+                'message' => "Task cancelled successfully, process {$pid} terminated",
+                'task_id' => $taskId,
+                'pid' => $pid
+            ];
+        } else {
+            // Process might already be dead or not killable
+            $this->updateStatus($taskId, 'CANCELLED', "Task marked as cancelled (process {$pid} termination attempted)", [
+                'cancelled_at' => date('Y-m-d H:i:s'),
+                'attempted_pid' => $pid
+            ]);
+
+            return [
+                'success' => true,
+                'message' => "Task marked as cancelled (process may have already terminated)",
+                'task_id' => $taskId,
+                'pid' => $pid
+            ];
+        }
+    }
+
+    /**
+     * Kill a process by PID
+     */
+    private function killProcess(int $pid): bool
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            exec("taskkill /F /PID {$pid} 2>&1", $output, $returnCode);
+            return $returnCode === 0 || $returnCode === 128; 
+        } else {
+            $result = posix_kill($pid, SIGTERM);
+
+            if ($result) {
+                usleep(100000);
+
+                if ($this->isProcessRunning($pid)) {
+                    posix_kill($pid, SIGKILL);
+                }
+                
+                return true;
+            }
+
+            return false;
+        }
+    }
+
+    /**
+     * Check if a process is running
+     */
+    public function isProcessRunning(int $pid): bool
+    {
+        if (PHP_OS_FAMILY === 'Windows') {
+            exec("tasklist /FI \"PID eq {$pid}\" 2>&1", $output);
+            foreach ($output as $line) {
+                if (strpos($line, (string)$pid) !== false) {
+                    return true;
+                }
+            }
+            return false;
+        } else {
+            return posix_kill($pid, 0);
+        }
+    }
+
+    /**
+     * Get all cancellable tasks
+     */
+    public function getCancellableTasks(): array
+    {
+        $allTasks = $this->getAllTasksStatus();
+
+        return array_filter($allTasks, function ($task) {
+            return in_array($task['status'], ['RUNNING', 'PENDING']) && !empty($task['pid']);
+        });
+    }
+
+    /**
+     * Cancel multiple tasks
+     */
+    public function cancelMultipleTasks(array $taskIds): array
+    {
+        $results = [];
+
+        foreach ($taskIds as $taskId) {
+            $results[$taskId] = $this->cancelTask($taskId);
+        }
+
+        return $results;
+    }
+
+    /**
+     * Cancel all running tasks
+     */
+    public function cancelAllRunningTasks(): array
+    {
+        $cancellableTasks = $this->getCancellableTasks();
+        $taskIds = array_keys($cancellableTasks);
+
+        return [
+            'total_tasks' => count($taskIds),
+            'results' => $this->cancelMultipleTasks($taskIds)
+        ];
+    }
+
+    /**
      * Get callable type for logging
      */
     protected function getCallableType(callable $callback): string

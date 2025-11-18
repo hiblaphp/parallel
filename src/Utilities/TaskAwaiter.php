@@ -380,8 +380,44 @@ class TaskAwaiter
                     return $results;
                 }
 
-                // Non-blocking delay using event loop
-                await(delay(0.01)); // 10ms delay
+                await(delay(0.01));
+            }
+        });
+    }
+
+    /**
+     * Wait for tasks with automatic cancellation on first failure (non-blocking)
+     */
+    public static function awaitAllOrCancel(
+        array $taskIds,
+        int $timeoutSeconds = 60,
+        ?int $maxConcurrentTasks = null,
+        int $pollIntervalMs = 100
+    ): PromiseInterface {
+        return async(function () use ($taskIds, $timeoutSeconds, $maxConcurrentTasks, $pollIntervalMs) {
+            try {
+                return await(self::awaitAll($taskIds, $timeoutSeconds, $maxConcurrentTasks, $pollIntervalMs));
+            } catch (\Throwable $e) {
+                $cancelled = [];
+                foreach ($taskIds as $key => $taskId) {
+                    $status = Process::getTaskStatus($taskId);
+                    if (in_array($status['status'], ['RUNNING', 'PENDING'])) {
+                        $result = await(Process::cancel($taskId));
+                        if ($result['success']) {
+                            $cancelled[$key] = $taskId;
+                        }
+                    }
+                }
+
+                if (!empty($cancelled)) {
+                    throw new \RuntimeException(
+                        $e->getMessage() . sprintf(' (Cancelled %d running tasks)', count($cancelled)),
+                        0,
+                        $e
+                    );
+                }
+
+                throw $e;
             }
         });
     }
