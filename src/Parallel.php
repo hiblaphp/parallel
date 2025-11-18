@@ -2,8 +2,12 @@
 
 namespace Hibla\Parallel;
 
-use Hibla\Parallel\Utilities\TaskAwaiter;
+use Hibla\Parallel\Utilities\ProcessPool;
+use Hibla\Parallel\Utilities\LazyTask;
 use Hibla\Promise\Interfaces\PromiseInterface;
+use function Hibla\async;
+use function Hibla\await;
+use function Hibla\delay;
 
 /**
  * Parallel task execution utilities integrated with Hibla's async ecosystem
@@ -27,7 +31,27 @@ class Parallel
         int $timeoutSeconds = 60,
         int $pollIntervalMs = 10
     ): PromiseInterface {
-        return TaskAwaiter::awaitAll($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
+        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
+            if (empty($tasks)) {
+                return [];
+            }
+
+            // Determine task types
+            $taskTypes = self::analyzeTaskTypes($tasks);
+
+            // Use pool if we have concurrency limit and lazy/callable tasks
+            if (($taskTypes['hasLazy'] || $taskTypes['hasCallable']) && $maxConcurrency !== null) {
+                return await(self::executeWithPool($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs));
+            }
+
+            // Convert lazy/callables to task IDs
+            if ($taskTypes['hasLazy'] || $taskTypes['hasCallable']) {
+                $tasks = await(self::convertToTaskIds($tasks));
+            }
+
+            // Wait for all tasks
+            return await(self::awaitTaskIds($tasks, $timeoutSeconds));
+        });
     }
 
     /**
@@ -46,23 +70,22 @@ class Parallel
         ?int $maxConcurrency = null,
         int $pollIntervalMs = 100
     ): PromiseInterface {
-        return TaskAwaiter::awaitAllSettled($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs);
-    }
-
-    /**
-     * Cancel multiple tasks that are taking too long (non-blocking)
-     * 
-     * @param array $taskIds Array of task IDs to check and cancel if running
-     * @return PromiseInterface<array> Promise that resolves to cancellation results
-     */
-    public static function cancelTasks(array $taskIds): PromiseInterface
-    {
-        return async(function () use ($taskIds) {
-            $results = [];
-            foreach ($taskIds as $key => $taskId) {
-                $results[$key] = await(Process::cancel($taskId));
+        return async(function () use ($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs) {
+            if (empty($tasks)) {
+                return [];
             }
-            return $results;
+
+            $taskTypes = self::analyzeTaskTypes($tasks);
+
+            if (($taskTypes['hasLazy'] || $taskTypes['hasCallable']) && $maxConcurrency !== null) {
+                return await(self::executeWithPoolSettled($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs));
+            }
+
+            if ($taskTypes['hasLazy'] || $taskTypes['hasCallable']) {
+                $tasks = await(self::convertToTaskIds($tasks));
+            }
+
+            return await(self::awaitTaskIdsSettled($tasks, $timeoutSeconds));
         });
     }
 
@@ -95,7 +118,7 @@ class Parallel
                 }
 
                 // Wait for all tasks
-                return await(TaskAwaiter::awaitAll($taskIds, $timeoutSeconds, $maxConcurrency, $pollIntervalMs));
+                return await(self::all($taskIds, $maxConcurrency, $timeoutSeconds, $pollIntervalMs));
             } catch (\Throwable $e) {
                 // Cancel all tasks that are still running
                 $cancelled = 0;
@@ -118,7 +141,7 @@ class Parallel
     }
 
     /**
-     * Get information about all currently running tasks (non-blocking)
+     * Get information about all currently running tasks
      * 
      * @return array Array of running tasks with their status
      */
@@ -128,11 +151,11 @@ class Parallel
     }
 
     /**
-     * Cancel all currently running tasks (non-blocking)
+     * Cancel all currently running tasks
      * 
      * @return array Summary of cancellation results
      */
-    public static function cancelAll()
+    public static function cancelAll(): array
     {
         return Process::cancelAll();
     }
@@ -170,71 +193,293 @@ class Parallel
     }
 
     /**
-     * Get optimal number of processes based on system resources
-     * 
-     * @param bool $printInfo Whether to print CPU and core information
-     * @param int|null $maxLimit Optional maximum limit
-     * @return array ['cpu' => int, 'io' => int] Recommended process counts
+     * Analyze what types of tasks are in the array
      */
-    public static function optimalProcessCount(bool $printInfo = false, ?int $maxLimit = null): array
+    private static function analyzeTaskTypes(array $tasks): array
     {
-        // Get CPU core count (fallback to 4 if unable to determine)
-        $cores = 4;
-        $detectionMethod = 'fallback';
+        $hasLazy = false;
+        $hasCallable = false;
 
-        if (function_exists('shell_exec')) {
-            if (PHP_OS_FAMILY === 'Windows') {
-                $windowsCores = shell_exec('echo %NUMBER_OF_PROCESSORS% 2>nul');
-                if ($windowsCores && trim($windowsCores)) {
-                    $cores = max(1, (int)trim($windowsCores));
-                    $detectionMethod = 'NUMBER_OF_PROCESSORS (Windows)';
-                } else {
-                    $wmic = shell_exec('wmic cpu get NumberOfCores /value 2>nul | findstr NumberOfCores');
-                    if ($wmic && preg_match('/NumberOfCores=(\d+)/', $wmic, $matches)) {
-                        $cores = max(1, (int)$matches[1]);
-                        $detectionMethod = 'WMIC (Windows)';
-                    }
-                }
-            } else {
-                $linuxCores = shell_exec('nproc 2>/dev/null');
-                if ($linuxCores && trim($linuxCores)) {
-                    $cores = max(1, (int)trim($linuxCores));
-                    $detectionMethod = 'nproc (Linux)';
-                } else {
-                    $bsdCores = shell_exec('sysctl -n hw.ncpu 2>/dev/null');
-                    if ($bsdCores && trim($bsdCores)) {
-                        $cores = max(1, (int)trim($bsdCores));
-                        $detectionMethod = 'sysctl (macOS/BSD)';
-                    }
-                }
+        foreach ($tasks as $item) {
+            if (is_string($item) && LazyTask::isLazyId($item)) {
+                $hasLazy = true;
+            } elseif (is_callable($item)) {
+                $hasCallable = true;
             }
-        }
-
-        // Calculate optimal processes for both task types
-        $cpuOptimal = $cores; // 1x cores for CPU-bound tasks
-        $ioOptimal = $cores * 2; // 2x cores for I/O-bound tasks
-
-        // Apply maximum limit if specified
-        if ($maxLimit !== null) {
-            $cpuOptimal = min($cpuOptimal, $maxLimit);
-            $ioOptimal = min($ioOptimal, $maxLimit);
-        }
-
-        if ($printInfo) {
-            echo "=== System CPU Information ===\n";
-            echo "Platform: " . PHP_OS_FAMILY . "\n";
-            echo "CPU Cores: {$cores} (detected via: {$detectionMethod})\n";
-            echo "CPU-bound Tasks: {$cpuOptimal} processes (1x cores)\n";
-            echo "I/O-bound Tasks: {$ioOptimal} processes (2x cores)\n";
-            if ($maxLimit !== null) {
-                echo "Applied Limit: {$maxLimit}\n";
-            }
-            echo "==============================\n";
         }
 
         return [
-            'cpu' => max(1, $cpuOptimal),
-            'io' => max(1, $ioOptimal)
+            'hasLazy' => $hasLazy,
+            'hasCallable' => $hasCallable
         ];
+    }
+
+    /**
+     * Convert mixed task types to actual task IDs
+     */
+    private static function convertToTaskIds(array $tasks): PromiseInterface
+    {
+        return async(function () use ($tasks) {
+            $taskIds = [];
+
+            foreach ($tasks as $key => $item) {
+                if (\is_string($item) && LazyTask::isLazyId($item)) {
+                    $lazyTask = LazyTask::get($item);
+                    if (!$lazyTask) {
+                        throw new \RuntimeException("Lazy task not found: {$item}");
+                    }
+                    $taskIds[$key] = await($lazyTask->execute());
+                } elseif (is_callable($item)) {
+                    $taskIds[$key] = await(Process::spawn($item));
+                } else {
+                    $taskIds[$key] = $item; // Already a task ID
+                }
+            }
+
+            return $taskIds;
+        });
+    }
+
+    /**
+     * Execute tasks using process pool
+     */
+    private static function executeWithPool(
+        array $tasks,
+        int $maxConcurrency,
+        int $timeoutSeconds,
+        int $pollIntervalMs
+    ): PromiseInterface {
+        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
+            $pool = new ProcessPool($maxConcurrency, $pollIntervalMs);
+
+            // Convert to pool format
+            $poolTasks = [];
+            foreach ($tasks as $key => $item) {
+                if (\is_string($item) && LazyTask::isLazyId($item)) {
+                    $lazyTask = LazyTask::get($item);
+                    if (!$lazyTask) {
+                        throw new \RuntimeException("Lazy task not found: {$item}");
+                    }
+                    $poolTasks[$key] = [
+                        'callback' => $lazyTask->getCallback(),
+                        'context' => $lazyTask->getContext()
+                    ];
+                } elseif (is_callable($item)) {
+                    $poolTasks[$key] = ['callback' => $item, 'context' => []];
+                } else {
+                    throw new \RuntimeException("Cannot mix lazy/callable with task IDs in pool mode");
+                }
+            }
+
+            // Execute through pool
+            $taskIds = await($pool->executeTasksAsync($poolTasks));
+            $poolTimeout = min($timeoutSeconds, 60);
+            $completed = await($pool->waitForCompletionAsync($poolTimeout));
+
+            if (!$completed) {
+                throw new \RuntimeException("Pool execution timed out during startup phase");
+            }
+
+            // Wait for results
+            return await(self::awaitTaskIds($taskIds, $timeoutSeconds));
+        });
+    }
+
+    /**
+     * Execute with pool (settled version)
+     */
+    private static function executeWithPoolSettled(
+        array $tasks,
+        int $maxConcurrency,
+        int $timeoutSeconds,
+        int $pollIntervalMs
+    ): PromiseInterface {
+        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
+            $pool = new ProcessPool($maxConcurrency, $pollIntervalMs);
+
+            $poolTasks = [];
+            foreach ($tasks as $key => $item) {
+                if (\is_string($item) && LazyTask::isLazyId($item)) {
+                    $lazyTask = LazyTask::get($item);
+                    if (!$lazyTask) {
+                        throw new \RuntimeException("Lazy task not found: {$item}");
+                    }
+                    $poolTasks[$key] = [
+                        'callback' => $lazyTask->getCallback(),
+                        'context' => $lazyTask->getContext()
+                    ];
+                } elseif (is_callable($item)) {
+                    $poolTasks[$key] = ['callback' => $item, 'context' => []];
+                } else {
+                    throw new \RuntimeException("Cannot mix lazy/callable with task IDs in pool mode");
+                }
+            }
+
+            $taskIds = await($pool->executeTasksAsync($poolTasks));
+            $poolTimeout = min($timeoutSeconds, 60);
+            await($pool->waitForCompletionAsync($poolTimeout));
+
+            return await(self::awaitTaskIdsSettled($taskIds, $timeoutSeconds));
+        });
+    }
+
+    /**
+     * Wait for task IDs to complete
+     */
+    private static function awaitTaskIds(array $taskIds, int $timeoutSeconds): PromiseInterface
+    {
+        return async(function () use ($taskIds, $timeoutSeconds) {
+            $startTime = time();
+            $results = [];
+            $completedTasks = [];
+            $displayedOutput = [];
+
+            foreach ($taskIds as $key => $taskId) {
+                $results[$key] = null;
+            }
+
+            while (true) {
+                $allCompleted = true;
+
+                foreach ($taskIds as $key => $taskId) {
+                    if (isset($completedTasks[$key])) {
+                        continue;
+                    }
+
+                    $status = Process::getTaskStatus($taskId);
+
+                    if (isset($status['output']) && !empty($status['output']) && !isset($displayedOutput[$taskId])) {
+                        echo $status['output'];
+                        $displayedOutput[$taskId] = true;
+                    }
+
+                    if ($status['status'] === 'COMPLETED') {
+                        $results[$key] = $status['result'] ?? null;
+                        $completedTasks[$key] = true;
+
+                        // Display output one more time for completed tasks
+                        if (isset($status['output']) && !empty($status['output'])) {
+                            if (!isset($displayedOutput[$taskId])) {
+                                echo $status['output'];
+                                $displayedOutput[$taskId] = true;
+                            }
+                        }
+                    } elseif ($status['status'] === 'ERROR' || $status['status'] === 'NOT_FOUND') {
+                        $errorMsg = $status['error_message'] ?? $status['message'];
+                        throw new \RuntimeException("Task {$taskId} (key: {$key}) failed: {$errorMsg}");
+                    } else {
+                        // Task still running
+                        $allCompleted = false;
+                    }
+                }
+
+                if ($allCompleted) {
+                    return $results;
+                }
+
+                if ($timeoutSeconds > 0 && time() - $startTime >= $timeoutSeconds) {
+                    $pendingTasks = [];
+                    foreach ($taskIds as $key => $taskId) {
+                        if (!isset($completedTasks[$key])) {
+                            $pendingTasks[] = "{$taskId} (key: {$key})";
+                        }
+                    }
+                    $pendingList = implode(', ', $pendingTasks);
+                    throw new \RuntimeException("Tasks timed out after {$timeoutSeconds} seconds. Pending: {$pendingList}");
+                }
+
+                await(delay(0.01)); 
+            }
+        });
+    }
+
+    /**
+     * Wait for task IDs (settled version - never throws)
+     */
+    private static function awaitTaskIdsSettled(array $taskIds, int $timeoutSeconds): PromiseInterface
+    {
+        return async(function () use ($taskIds, $timeoutSeconds) {
+            $startTime = time();
+            $results = [];
+            $completedTasks = [];
+            $displayedOutput = [];
+
+            foreach ($taskIds as $key => $taskId) {
+                $results[$key] = null;
+            }
+
+            while (true) {
+                $allCompleted = true;
+
+                foreach ($taskIds as $key => $taskId) {
+                    if (isset($completedTasks[$key])) {
+                        continue;
+                    }
+
+                    $status = Process::getTaskStatus($taskId);
+
+                    // Display output
+                    if (isset($status['output']) && !empty($status['output']) && !isset($displayedOutput[$taskId])) {
+                        echo $status['output'];
+                        $displayedOutput[$taskId] = true;
+                    }
+
+                    if ($status['status'] === 'COMPLETED') {
+                        $results[$key] = [
+                            'status' => 'fulfilled',
+                            'value' => $status['result'] ?? null,
+                            'task_id' => $taskId
+                        ];
+                        $completedTasks[$key] = true;
+
+                        // Display output one more time for completed tasks
+                        if (isset($status['output']) && !empty($status['output'])) {
+                            if (!isset($displayedOutput[$taskId])) {
+                                echo $status['output'];
+                                $displayedOutput[$taskId] = true;
+                            }
+                        }
+                    } elseif ($status['status'] === 'ERROR' || $status['status'] === 'NOT_FOUND') {
+                        $errorMsg = $status['error_message'] ?? $status['message'];
+                        $results[$key] = [
+                            'status' => 'rejected',
+                            'reason' => $errorMsg,
+                            'task_id' => $taskId
+                        ];
+                        $completedTasks[$key] = true;
+
+                        // Display output even for failed tasks
+                        if (isset($status['output']) && !empty($status['output'])) {
+                            if (!isset($displayedOutput[$taskId])) {
+                                echo $status['output'];
+                                $displayedOutput[$taskId] = true;
+                            }
+                        }
+                    } else {
+                        $allCompleted = false;
+                    }
+                }
+
+                if ($allCompleted) {
+                    return $results;
+                }
+
+                // Timeout - return what we have
+                if ($timeoutSeconds > 0 && time() - $startTime >= $timeoutSeconds) {
+                    foreach ($taskIds as $key => $taskId) {
+                        if (!isset($completedTasks[$key])) {
+                            $results[$key] = [
+                                'status' => 'rejected',
+                                'reason' => "Timeout after {$timeoutSeconds} seconds",
+                                'task_id' => $taskId
+                            ];
+                        }
+                    }
+                    return $results;
+                }
+
+                await(delay(0.01));
+            }
+        });
     }
 }

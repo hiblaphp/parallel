@@ -4,6 +4,7 @@ namespace Hibla\Parallel\Utilities;
 
 use Hibla\Parallel\Process;
 use Hibla\Promise\Interfaces\PromiseInterface;
+use Hibla\Promise\Promise;
 
 class LazyTask
 {
@@ -64,7 +65,7 @@ class LazyTask
                 });
         }
 
-        return \Hibla\Promise\Promise::resolved($this->realTaskId);
+        return Promise::resolved($this->realTaskId);
     }
 
     /**

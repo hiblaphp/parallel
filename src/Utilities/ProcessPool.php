@@ -64,8 +64,8 @@ class ProcessPool
                 await($this->processQueueAsync());
                 await($this->checkCompletedTasksAsync());
 
-                if ($timeoutSeconds > 0 && (time() - $startTime) >= $timeoutSeconds) {
-                    error_log("Pool completion timeout. Queued: " . count($this->queuedTasks) . ", Active: " . count($this->activeTasks));
+                if ($timeoutSeconds > 0 && time() - $startTime >= $timeoutSeconds) {
+                    error_log("Pool completion timeout. Queued: " . \count($this->queuedTasks) . ", Active: " . count($this->activeTasks));
                     return false;
                 }
 
@@ -87,7 +87,7 @@ class ProcessPool
             foreach ($this->activeTasks as $index => $task) {
                 $status = Process::getTaskStatus($task['task_id']);
 
-                if (in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND'])) {
+                if (\in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND'])) {
                     unset($this->activeTasks[$index]);
                     $this->activeTasks = array_values($this->activeTasks);
                 }
@@ -101,7 +101,7 @@ class ProcessPool
     private function processQueueAsync(): PromiseInterface
     {
         return async(function () {
-            while (count($this->activeTasks) < $this->maxConcurrentTasks && !empty($this->queuedTasks)) {
+            while (\count($this->activeTasks) < $this->maxConcurrentTasks && !empty($this->queuedTasks)) {
                 $task = array_shift($this->queuedTasks);
 
                 try {

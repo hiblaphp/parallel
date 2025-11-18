@@ -32,9 +32,9 @@ class Process
      */
     public static function spawn(callable $callback, array $context = []): PromiseInterface
     {
-        return async(function () use ($callback, $context) {
-            return self::getHandler()->executeBackground($callback, $context);
-        });
+        return async(
+            fn() => self::getHandler()->executeBackground($callback, $context)
+        );
     }
 
     /**
@@ -318,5 +318,71 @@ class Process
             return true;
         }
         return false;
+    }
+
+    /**
+     * Get optimal number of processes based on system resources
+     * 
+     * @param bool $printInfo Whether to print CPU and core information
+     * @param int|null $maxLimit Optional maximum limit
+     * @return array ['cpu' => int, 'io' => int] Recommended process counts
+     */
+    public static function optimalProcessCount(bool $printInfo = false, ?int $maxLimit = null): array
+    {
+        $cores = 1;
+        $detectionMethod = 'fallback';
+
+        if (function_exists('shell_exec')) {
+            if (PHP_OS_FAMILY === 'Windows') {
+                $windowsCores = shell_exec('echo %NUMBER_OF_PROCESSORS% 2>nul');
+                if ($windowsCores && trim($windowsCores)) {
+                    $cores = max(1, (int)trim($windowsCores));
+                    $detectionMethod = 'NUMBER_OF_PROCESSORS (Windows)';
+                } else {
+                    $wmic = shell_exec('wmic cpu get NumberOfCores /value 2>nul | findstr NumberOfCores');
+                    if ($wmic && preg_match('/NumberOfCores=(\d+)/', $wmic, $matches)) {
+                        $cores = max(1, (int)$matches[1]);
+                        $detectionMethod = 'WMIC (Windows)';
+                    }
+                }
+            } else {
+                $linuxCores = shell_exec('nproc 2>/dev/null');
+                if ($linuxCores && trim($linuxCores)) {
+                    $cores = max(1, (int)trim($linuxCores));
+                    $detectionMethod = 'nproc (Linux)';
+                } else {
+                    $bsdCores = shell_exec('sysctl -n hw.ncpu 2>/dev/null');
+                    if ($bsdCores && trim($bsdCores)) {
+                        $cores = max(1, (int)trim($bsdCores));
+                        $detectionMethod = 'sysctl (macOS/BSD)';
+                    }
+                }
+            }
+        }
+
+        $cpuOptimal = $cores;
+        $ioOptimal = $cores * 2;
+
+        if ($maxLimit !== null) {
+            $cpuOptimal = min($cpuOptimal, $maxLimit);
+            $ioOptimal = min($ioOptimal, $maxLimit);
+        }
+
+        if ($printInfo) {
+            echo "=== System CPU Information ===\n";
+            echo "Platform: " . PHP_OS_FAMILY . "\n";
+            echo "CPU Cores: {$cores} (detected via: {$detectionMethod})\n";
+            echo "CPU-bound Tasks: {$cpuOptimal} processes (1x cores)\n";
+            echo "I/O-bound Tasks: {$ioOptimal} processes (2x cores)\n";
+            if ($maxLimit !== null) {
+                echo "Applied Limit: {$maxLimit}\n";
+            }
+            echo "==============================\n";
+        }
+
+        return [
+            'cpu' => max(1, $cpuOptimal),
+            'io' => max(1, $ioOptimal)
+        ];
     }
 }

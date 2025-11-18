@@ -17,7 +17,7 @@ class TaskRegistry
         $this->taskRegistry[$taskId] = [
             'created_at' => time(),
             'callback_type' => $this->getCallableType($callback),
-            'context_size' => count($context)
+            'context_size' => \count($context)
         ];
     }
 
