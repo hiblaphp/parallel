@@ -136,20 +136,4 @@ class ProcessPool
             'poll_interval_ms' => $this->pollIntervalMs
         ];
     }
-
-    /**
-     * Legacy synchronous method (for backward compatibility)
-     */
-    public function executeTasks(array $tasks): array
-    {
-        return await($this->executeTasksAsync($tasks));
-    }
-
-    /**
-     * Legacy synchronous method (for backward compatibility)
-     */
-    public function waitForCompletion(int $timeoutSeconds = 0): bool
-    {
-        return await($this->waitForCompletionAsync($timeoutSeconds));
-    }
 }
