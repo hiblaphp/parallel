@@ -1,18 +1,11 @@
 <?php
 
 /**
- * Hibla Parallel Worker Script (Single-Task, Stream-Based)
- *
- * This script runs as a child process, managed by proc_open. It is the
- * universal entry point for all parallel tasks. It reads ONE serialized task
- * definition from STDIN, executes it, writes the result as JSON to STDOUT,
- * and then exits cleanly.
+ * Hibla Parallel Worker Script (Single-Task, Stream-Based with Real-Time Output)
  */
 
 declare(strict_types=1);
 
-
-// Set an error handler to catch fatal errors and report them.
 register_shutdown_function(function () {
     $error = error_get_last();
     if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
@@ -34,9 +27,6 @@ $statusFile = null;
 $taskId = 'unknown';
 $startTime = microtime(true);
 
-/**
- * Writes a status message to STDOUT for the parent process.
- */
 function write_status_to_stdout(array $data): void
 {
     global $stdout;
@@ -47,9 +37,6 @@ function write_status_to_stdout(array $data): void
     }
 }
 
-/**
- * Writes a detailed status message to the filesystem for out-of-band monitoring.
- */
 function update_status_file(string $status, string $message, array $extra = []): void
 {
     global $statusFile, $startTime, $taskId;
@@ -69,36 +56,41 @@ function update_status_file(string $status, string $message, array $extra = []):
     file_put_contents($statusFile, json_encode($statusData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 }
 
+function stream_output_handler($buffer, $phase): string
+{
+    if ($buffer !== '') {
+        write_status_to_stdout([
+            'status' => 'OUTPUT',
+            'output' => $buffer
+        ]);
+    }
+    return '';
+}
 
 // --- Main Worker Loop (Single Task) ---
 
 $taskProcessed = false;
-$maxWaitTime = 5; // Maximum seconds to wait for initial task
+$maxWaitTime = 5;
 $waitStart = microtime(true);
 
 while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
     $payload = fgets($stdin);
     
     if ($payload === false || trim($payload) === '') {
-        // Check if we've been waiting too long for a task
         if ((microtime(true) - $waitStart) > $maxWaitTime) {
             fwrite($stderr, "Worker timeout: No task received within {$maxWaitTime} seconds.\n");
             break;
         }
         
-        usleep(10000); // 10ms
+        usleep(10000);
         continue;
     }
 
-    $capturedOutput = '';
-    ob_start(function ($buffer) use (&$capturedOutput) {
-        $capturedOutput .= $buffer;
-        return '';
-    });
+    ob_start('stream_output_handler', 1);
 
-    // Reset tracking variables for the task
     $startTime = microtime(true);
     $taskId = 'unknown';
+    $allOutput = '';
 
     try {
         $taskData = json_decode($payload, true);
@@ -109,7 +101,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         $taskId = $taskData['task_id'] ?? 'unknown';
         $statusFile = $taskData['status_file'] ?? null;
 
-        // --- Environment Bootstrap (only on the first task this worker receives) ---
         if ($autoloadPath === null) {
             $autoloadPath = $taskData['autoload_path'] ?? '';
             if (!file_exists($autoloadPath)) {
@@ -127,8 +118,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         
         update_status_file('RUNNING', 'Worker process started execution for task: ' . $taskId);
         
-        // --- Task Deserialization and Execution ---
-        
         $callback = eval("return {$taskData['callback_code']};");
         $context = eval("return {$taskData['context_code']};");
 
@@ -136,7 +125,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
             throw new \RuntimeException('Deserialized task is not callable.');
         }
         
-        // Signal parent that we are running (critical for non-blocking wait)
         write_status_to_stdout(['status' => 'RUNNING']);
         
         $result = $callback($context);
@@ -145,7 +133,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         $finalStatus = [
             'status' => 'COMPLETED',
             'result' => $result,
-            'output' => $capturedOutput,
         ];
         
         write_status_to_stdout($finalStatus);
@@ -159,7 +146,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
             'message' => $e->getMessage(),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
-            'output' => $capturedOutput,
             'stack_trace' => $e->getTraceAsString()
         ];
 
@@ -170,7 +156,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
     }
 }
 
-// --- Cleanup and Exit ---
 if (is_resource($stdin)) fclose($stdin);
 if (is_resource($stdout)) fclose($stdout);
 if (is_resource($stderr)) fclose($stderr);
