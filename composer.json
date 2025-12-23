@@ -10,12 +10,15 @@
             "src/Helpers/namespace_function.php"
         ]
     },
+    "prefer-stable": true,
     "minimum-stability": "dev",
     "require": {
         "rcalicdan/config-loader": "^1.0",
         "opis/closure": "^4.3",
         "pestphp/pest": "^3.0",
-        "hiblaphp/promise": "dev-main"
+        "hiblaphp/promise": "dev-main",
+        "hiblaphp/async": "dev-main",
+        "hiblaphp/stream":"dev-main"
     },
     "config": {
         "allow-plugins": {

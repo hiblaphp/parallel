@@ -2,138 +2,148 @@
 
 namespace Hibla\Parallel;
 
-use Hibla\Parallel\Process;
+use Hibla\Cancellation\CancellationToken;
 use Hibla\Promise\Interfaces\PromiseInterface;
+use Hibla\Promise\Promise;
 use function Hibla\async;
 use function Hibla\await;
-use function Hibla\delay;
 
 /**
- * Process pool manager for limiting concurrent background tasks
- * Integrated with Hibla's async ecosystem
+ * A true process pool that manages a limited number of concurrent workers
+ * to execute a queue of tasks.
  */
 class ProcessPool
 {
-    private int $maxConcurrentTasks;
-    private array $activeTasks = [];
-    private array $queuedTasks = [];
-    private array $allTaskIds = [];
-    private int $pollIntervalMs;
+    private int $maxConcurrency;
+    private ?\Iterator $iterator = null;
+    private array $results = [];
+    private ?\Throwable $firstError = null;
 
-    public function __construct(int $maxConcurrentTasks = 5, int $pollIntervalMs = 100)
+    public function __construct(int $maxConcurrency = 8)
     {
-        $this->maxConcurrentTasks = max(1, $maxConcurrentTasks);
-        $this->pollIntervalMs = max(10, $pollIntervalMs);
+        $this->maxConcurrency = max(1, $maxConcurrency);
     }
 
     /**
-     * Execute tasks with pool management (async version)
+     * Executes an array of callables with a concurrency limit.
+     * The promise resolves with an array of results, preserving keys.
+     * If any task fails, the promise rejects, and no further tasks are started.
      *
-     * @param array $tasks Array of [callback, context] pairs with preserved keys
-     * @return PromiseInterface<array> Promise resolving to task IDs with preserved keys
+     * @param array<string|int, callable> $tasks Associative array of tasks to run.
+     * @param CancellationToken|null $cancellation Token to cancel the entire pool operation.
+     * @return PromiseInterface<array>
      */
-    public function executeTasksAsync(array $tasks): PromiseInterface
+    public function run(array $tasks, ?CancellationToken $cancellation = null): PromiseInterface
     {
-        return async(function () use ($tasks) {
-            $this->allTaskIds = [];
+        if (empty($tasks)) {
+            return Promise::resolved([]);
+        }
 
-            foreach ($tasks as $key => $taskData) {
-                $this->queuedTasks[] = [
-                    'key' => $key,
-                    'callback' => $taskData['callback'],
-                    'context' => $taskData['context'] ?? []
-                ];
+        return async(function () use ($tasks, $cancellation) {
+            $this->iterator = new \ArrayIterator($tasks);
+            $this->iterator->rewind();
+            $this->results = [];
+            $this->firstError = null;
+            
+            $workers = [];
+            $workerCount = min($this->maxConcurrency, count($tasks));
+
+            for ($i = 0; $i < $workerCount; ++$i) {
+                $workers[] = $this->runWorker($cancellation);
             }
 
-            // Process initial batch
-            await($this->processQueueAsync());
+            await(Promise::all($workers));
 
-            return $this->allTaskIds;
+            if ($this->firstError) {
+                throw $this->firstError;
+            }
+
+            ksort($this->results);
+            return $this->results;
         });
     }
 
     /**
-     * Wait for all active tasks to complete (async version)
+     * Executes tasks and returns a settled result for each, never rejecting.
+     *
+     * @param array<string|int, callable> $tasks Associative array of tasks to run.
+     * @param CancellationToken|null $cancellation Token to cancel the entire pool operation.
+     * @return PromiseInterface<array>
      */
-    public function waitForCompletionAsync(int $timeoutSeconds = 0): PromiseInterface
+    public function runSettled(array $tasks, ?CancellationToken $cancellation = null): PromiseInterface
     {
-        return async(function () use ($timeoutSeconds) {
-            $startTime = time();
+         if (empty($tasks)) {
+            return Promise::resolved([]);
+        }
 
-            while (!empty($this->queuedTasks) || !empty($this->activeTasks)) {
-                await($this->processQueueAsync());
-                await($this->checkCompletedTasksAsync());
+        return async(function () use ($tasks, $cancellation) {
+            $this->iterator = new \ArrayIterator($tasks);
+            $this->iterator->rewind();
+            $this->results = [];
 
-                if ($timeoutSeconds > 0 && time() - $startTime >= $timeoutSeconds) {
-                    error_log("Pool completion timeout. Queued: " . \count($this->queuedTasks) . ", Active: " . count($this->activeTasks));
-                    return false;
-                }
-
-                if (!empty($this->queuedTasks) || !empty($this->activeTasks)) {
-                    await(delay($this->pollIntervalMs / 1000)); // Convert ms to seconds
-                }
+            $workers = [];
+            $workerCount = min($this->maxConcurrency, count($tasks));
+            
+            for ($i = 0; $i < $workerCount; ++$i) {
+                $workers[] = $this->runWorkerSettled($cancellation);
             }
 
-            return true;
+            await(Promise::all($workers));
+
+            ksort($this->results);
+            return $this->results;
         });
     }
 
     /**
-     * Check for completed tasks and remove them from active pool (async)
+     * The logic for a single worker coroutine that rejects on the first error.
      */
-    private function checkCompletedTasksAsync(): PromiseInterface
+    private function runWorker(?CancellationToken $cancellation): PromiseInterface
     {
-        return async(function () {
-            foreach ($this->activeTasks as $index => $task) {
-                $status = Process::getTaskStatus($task['task_id']);
+        return async(function () use ($cancellation) {
+            while ($this->iterator->valid() && $this->firstError === null) {
+                $cancellation?->throwIfCancelled();
 
-                if (\in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND'])) {
-                    unset($this->activeTasks[$index]);
-                    $this->activeTasks = array_values($this->activeTasks);
-                }
-            }
-        });
-    }
-
-    /**
-     * Process queued tasks up to the pool limit (async)
-     */
-    private function processQueueAsync(): PromiseInterface
-    {
-        return async(function () {
-            while (\count($this->activeTasks) < $this->maxConcurrentTasks && !empty($this->queuedTasks)) {
-                $task = array_shift($this->queuedTasks);
+                $key = $this->iterator->key();
+                $task = $this->iterator->current();
+                $this->iterator->next();
 
                 try {
-                    $taskId = await(Process::spawn($task['callback'], $task['context']));
-
-                    $this->allTaskIds[$task['key']] = $taskId;
-
-                    $this->activeTasks[] = [
-                        'key' => $task['key'],
-                        'task_id' => $taskId,
-                        'started_at' => time()
-                    ];
+                    /** @var Process $process */
+                    $process = await(Process::spawn($task), $cancellation);
+                
+                    $this->results[$key] = await($process->await(), $cancellation);
                 } catch (\Throwable $e) {
-                    error_log("Failed to start pooled task {$task['key']}: " . $e->getMessage());
-                    $fakeTaskId = 'failed_' . $task['key'] . '_' . time();
-                    $this->allTaskIds[$task['key']] = $fakeTaskId;
+                    if ($this->firstError === null) {
+                        $this->firstError = $e;
+                    }
                 }
             }
         });
     }
-
+    
     /**
-     * Get current pool statistics
+     * The logic for a single worker coroutine that settles all tasks.
      */
-    public function getStats(): array
+    private function runWorkerSettled(?CancellationToken $cancellation): PromiseInterface
     {
-        return [
-            'max_concurrent' => $this->maxConcurrentTasks,
-            'active_tasks' => count($this->activeTasks),
-            'queued_tasks' => count($this->queuedTasks),
-            'completed_task_ids' => count($this->allTaskIds),
-            'poll_interval_ms' => $this->pollIntervalMs
-        ];
+        return async(function () use ($cancellation) {
+            while ($this->iterator->valid()) {
+                $cancellation?->throwIfCancelled();
+
+                $key = $this->iterator->key();
+                $task = $this->iterator->current();
+                $this->iterator->next();
+
+                try {
+                    /** @var Process $process */
+                    $process = await(Process::spawn($task), $cancellation);
+                    $value = await($process->await(), $cancellation);
+                    $this->results[$key] = ['status' => 'fulfilled', 'value' => $value];
+                } catch (\Throwable $e) {
+                     $this->results[$key] = ['status' => 'rejected', 'reason' => $e->getMessage()];
+                }
+            }
+        });
     }
 }

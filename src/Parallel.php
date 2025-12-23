@@ -2,137 +2,63 @@
 
 namespace Hibla\Parallel;
 
+use Hibla\Cancellation\CancellationToken;
+use Hibla\Cancellation\CancellationTokenSource;
 use Hibla\Parallel\ProcessPool;
-use Hibla\Parallel\Utilities\LazyTask;
+use Hibla\Promise\Exceptions\PromiseCancelledException;
+use Hibla\Promise\Exceptions\TimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
+use Hibla\Promise\Promise;
+
 use function Hibla\async;
 use function Hibla\await;
-use function Hibla\delay;
 
 /**
- * Parallel task execution utilities integrated with Hibla's async ecosystem
+ * A high-level facade for running tasks in parallel with concurrency control and timeouts.
+ * This class provides the simplest entry point for parallel execution.
  */
 class Parallel
 {
     /**
-     * Execute multiple tasks concurrently and wait for all to complete
-     * Returns a Promise that resolves when all tasks are done
-     * 
-     * @param array $tasks Array of callables, task IDs, or lazy task IDs (keys are preserved)
-     * @param int|null $maxConcurrency Maximum concurrent processes (null = no limit)
-     * @param int $timeoutSeconds Maximum time to wait for all tasks
-     * @param int $pollIntervalMs Polling interval in milliseconds
-     * @return PromiseInterface<array> Promise resolving to task results with preserved keys
-     * @throws \RuntimeException If any task fails or times out
+     * Executes multiple tasks concurrently with a specified concurrency limit.
+     *
+     * The returned promise will resolve with an array of results, preserving the
+     * keys from the input array. The promise will reject if any single task
+     * fails or if the overall operation exceeds the specified timeout.
+     *
+     * Example:
+     * ```php
+     * $results = await(Parallel::all([
+     *     'image1' => fn() => processImage('path1.jpg'),
+     *     'image2' => fn() => processImage('path2.jpg'),
+     * ], maxConcurrency: 4, timeoutSeconds: 30));
+     * ```
+     *
+     * @param array<string|int, callable> $tasks An associative array of callables to execute in parallel.
+     * @param int $maxConcurrency The maximum number of processes to run at the same time. Defaults to 8.
+     * @param int $timeoutSeconds An overall timeout for the entire operation in seconds. If it's exceeded,
+     *                            the returned promise will reject. Defaults to 60.
+     * @return PromiseInterface<array> A promise that resolves to an array of results with keys preserved.
      */
     public static function all(
         array $tasks,
-        ?int $maxConcurrency = null,
+        int $maxConcurrency = 8,
         int $timeoutSeconds = 60,
-        int $pollIntervalMs = 10
+        ?CancellationToken $cancellation = null
     ): PromiseInterface {
-        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
+        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $cancellation) {
             if (empty($tasks)) {
                 return [];
             }
 
-            // Determine task types
-            $taskTypes = self::analyzeTaskTypes($tasks);
-
-            // Use pool if we have concurrency limit and lazy/callable tasks
-            if (($taskTypes['hasLazy'] || $taskTypes['hasCallable']) && $maxConcurrency !== null) {
-                return await(self::executeWithPool($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs));
-            }
-
-            // Convert lazy/callables to task IDs
-            if ($taskTypes['hasLazy'] || $taskTypes['hasCallable']) {
-                $tasks = await(self::convertToTaskIds($tasks));
-            }
-
-            // Wait for all tasks
-            return await(self::awaitTaskIds($tasks, $timeoutSeconds));
-        });
-    }
-
-    /**
-     * Execute multiple tasks concurrently and return all results (settled version)
-     * Returns a Promise that never throws - returns results with status indicators
-     * 
-     * @param array $tasks Array of callables, task IDs, or lazy task IDs (keys are preserved)
-     * @param int $timeoutSeconds Maximum time to wait for all tasks
-     * @param int|null $maxConcurrency Maximum concurrent processes (null = no limit)
-     * @param int $pollIntervalMs Polling interval in milliseconds
-     * @return PromiseInterface<array> Promise resolving to results with 'status' and either 'value' or 'reason' for each task
-     */
-    public static function allSettled(
-        array $tasks,
-        int $timeoutSeconds = 60,
-        ?int $maxConcurrency = null,
-        int $pollIntervalMs = 100
-    ): PromiseInterface {
-        return async(function () use ($tasks, $timeoutSeconds, $maxConcurrency, $pollIntervalMs) {
-            if (empty($tasks)) {
-                return [];
-            }
-
-            $taskTypes = self::analyzeTaskTypes($tasks);
-
-            if (($taskTypes['hasLazy'] || $taskTypes['hasCallable']) && $maxConcurrency !== null) {
-                return await(self::executeWithPoolSettled($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs));
-            }
-
-            if ($taskTypes['hasLazy'] || $taskTypes['hasCallable']) {
-                $tasks = await(self::convertToTaskIds($tasks));
-            }
-
-            return await(self::awaitTaskIdsSettled($tasks, $timeoutSeconds));
-        });
-    }
-
-    /**
-     * Execute tasks with automatic cancellation on first failure (non-blocking)
-     * 
-     * @param array $tasks Array of callables or task IDs
-     * @param int|null $maxConcurrency Maximum concurrent processes
-     * @param int $timeoutSeconds Timeout for all tasks
-     * @param int $pollIntervalMs Polling interval
-     * @return PromiseInterface<array> Promise that resolves to task results
-     */
-    public static function allOrCancel(
-        array $tasks,
-        ?int $maxConcurrency = null,
-        int $timeoutSeconds = 60,
-        int $pollIntervalMs = 100
-    ): PromiseInterface {
-        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
-            $taskIds = [];
+            $pool = new ProcessPool($maxConcurrency);
+            $poolPromise = $pool->run($tasks, $cancellation);
 
             try {
-                // Start all tasks
-                foreach ($tasks as $key => $task) {
-                    if (is_callable($task)) {
-                        $taskIds[$key] = await(Process::spawn($task));
-                    } else {
-                        $taskIds[$key] = $task; // Already a task ID
-                    }
-                }
-
-                // Wait for all tasks
-                return await(self::all($taskIds, $maxConcurrency, $timeoutSeconds, $pollIntervalMs));
-            } catch (\Throwable $e) {
-                // Cancel all tasks that are still running
-                $cancelled = 0;
-                foreach ($taskIds as $taskId) {
-                    if (Process::isRunning($taskId)) {
-                        $result = Process::cancel($taskId);
-                        if ($result['success']) {
-                            $cancelled++;
-                        }
-                    }
-                }
-
+                return await(Promise::timeout($poolPromise, $timeoutSeconds));
+            } catch (TimeoutException $e) {
                 throw new \RuntimeException(
-                    $e->getMessage() . " (Cancelled {$cancelled} running tasks)",
+                    "Parallel::all operation timed out after {$timeoutSeconds} seconds.",
                     0,
                     $e
                 );
@@ -141,344 +67,54 @@ class Parallel
     }
 
     /**
-     * Get information about all currently running tasks
-     * 
-     * @return array Array of running tasks with their status
+     * Executes multiple tasks concurrently and returns a settled result for each.
+     *
+     * This promise will never reject, even if individual tasks fail or the timeout is exceeded.
+     * Instead, it resolves with an array where each result is an object containing
+     * a `status` ('fulfilled' or 'rejected') and either a 'value' or a 'reason'.
+     *
+     * Example:
+     * ```php
+     * $results = await(Parallel::allSettled([...]));
+     * foreach ($results as $key => $result) {
+     *     if ($result['status'] === 'fulfilled') {
+     *         echo "Task {$key} succeeded with value: " . $result['value'];
+     *     } else {
+     *         echo "Task {$key} failed with reason: " . $result['reason'];
+     *     }
+     * }
+     * ```
+     *
+     * @param array<string|int, callable> $tasks An associative array of callables to execute.
+     * @param int $maxConcurrency The maximum number of processes to run at the same time. Defaults to 8.
+     * @param int $timeoutSeconds An overall timeout for the entire operation in seconds. Any tasks
+     *                            not completed by this time will be marked as rejected.
+     * @return PromiseInterface<array> A promise resolving to an array of settled result objects.
      */
-    public static function getRunningTasks(): array
-    {
-        return Process::getCancellableTasks();
-    }
-
-    /**
-     * Cancel all currently running tasks
-     * 
-     * @return array Summary of cancellation results
-     */
-    public static function cancelAll(): array
-    {
-        return Process::cancelAll();
-    }
-
-    /**
-     * Get statistics about settled task results
-     * 
-     * @param array $settledResults Results from allSettled()
-     * @return array Statistics about the execution
-     */
-    public static function getStats(array $settledResults): array
-    {
-        $stats = [
-            'total' => count($settledResults),
-            'successful' => 0,
-            'failed' => 0,
-            'success_rate' => 0.0,
-            'failures' => []
-        ];
-
-        foreach ($settledResults as $key => $result) {
-            if ($result['status'] === 'fulfilled') {
-                $stats['successful']++;
-            } else {
-                $stats['failed']++;
-                $stats['failures'][$key] = $result['reason'];
-            }
-        }
-
-        if ($stats['total'] > 0) {
-            $stats['success_rate'] = round(($stats['successful'] / $stats['total']) * 100, 2);
-        }
-
-        return $stats;
-    }
-
-    /**
-     * Analyze what types of tasks are in the array
-     */
-    private static function analyzeTaskTypes(array $tasks): array
-    {
-        $hasLazy = false;
-        $hasCallable = false;
-
-        foreach ($tasks as $item) {
-            if (is_string($item) && LazyTask::isLazyId($item)) {
-                $hasLazy = true;
-            } elseif (is_callable($item)) {
-                $hasCallable = true;
-            }
-        }
-
-        return [
-            'hasLazy' => $hasLazy,
-            'hasCallable' => $hasCallable
-        ];
-    }
-
-    /**
-     * Convert mixed task types to actual task IDs
-     */
-    private static function convertToTaskIds(array $tasks): PromiseInterface
-    {
-        return async(function () use ($tasks) {
-            $taskIds = [];
-
-            foreach ($tasks as $key => $item) {
-                if (\is_string($item) && LazyTask::isLazyId($item)) {
-                    $lazyTask = LazyTask::get($item);
-                    if (!$lazyTask) {
-                        throw new \RuntimeException("Lazy task not found: {$item}");
-                    }
-                    $taskIds[$key] = await($lazyTask->execute());
-                } elseif (is_callable($item)) {
-                    $taskIds[$key] = await(Process::spawn($item));
-                } else {
-                    $taskIds[$key] = $item; // Already a task ID
-                }
-            }
-
-            return $taskIds;
-        });
-    }
-
-    /**
-     * Execute tasks using process pool
-     */
-    private static function executeWithPool(
+    public static function allSettled(
         array $tasks,
-        int $maxConcurrency,
-        int $timeoutSeconds,
-        int $pollIntervalMs
+        int $maxConcurrency = 8,
+        int $timeoutSeconds = 60,
+        ?CancellationToken $cancellation = null
     ): PromiseInterface {
-        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
-            $pool = new ProcessPool($maxConcurrency, $pollIntervalMs);
-
-            // Convert to pool format
-            $poolTasks = [];
-            foreach ($tasks as $key => $item) {
-                if (\is_string($item) && LazyTask::isLazyId($item)) {
-                    $lazyTask = LazyTask::get($item);
-                    if (!$lazyTask) {
-                        throw new \RuntimeException("Lazy task not found: {$item}");
-                    }
-                    $poolTasks[$key] = [
-                        'callback' => $lazyTask->getCallback(),
-                        'context' => $lazyTask->getContext()
-                    ];
-                } elseif (is_callable($item)) {
-                    $poolTasks[$key] = ['callback' => $item, 'context' => []];
-                } else {
-                    throw new \RuntimeException("Cannot mix lazy/callable with task IDs in pool mode");
-                }
+        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $cancellation) {
+            if (empty($tasks)) {
+                return [];
             }
 
-            // Execute through pool
-            $taskIds = await($pool->executeTasksAsync($poolTasks));
-            $poolTimeout = min($timeoutSeconds, 60);
-            $completed = await($pool->waitForCompletionAsync($poolTimeout));
+            $pool = new ProcessPool($maxConcurrency);
 
-            if (!$completed) {
-                throw new \RuntimeException("Pool execution timed out during startup phase");
-            }
-
-            // Wait for results
-            return await(self::awaitTaskIds($taskIds, $timeoutSeconds));
-        });
-    }
-
-    /**
-     * Execute with pool (settled version)
-     */
-    private static function executeWithPoolSettled(
-        array $tasks,
-        int $maxConcurrency,
-        int $timeoutSeconds,
-        int $pollIntervalMs
-    ): PromiseInterface {
-        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $pollIntervalMs) {
-            $pool = new ProcessPool($maxConcurrency, $pollIntervalMs);
-
-            $poolTasks = [];
-            foreach ($tasks as $key => $item) {
-                if (\is_string($item) && LazyTask::isLazyId($item)) {
-                    $lazyTask = LazyTask::get($item);
-                    if (!$lazyTask) {
-                        throw new \RuntimeException("Lazy task not found: {$item}");
-                    }
-                    $poolTasks[$key] = [
-                        'callback' => $lazyTask->getCallback(),
-                        'context' => $lazyTask->getContext()
-                    ];
-                } elseif (is_callable($item)) {
-                    $poolTasks[$key] = ['callback' => $item, 'context' => []];
-                } else {
-                    throw new \RuntimeException("Cannot mix lazy/callable with task IDs in pool mode");
-                }
-            }
-
-            $taskIds = await($pool->executeTasksAsync($poolTasks));
-            $poolTimeout = min($timeoutSeconds, 60);
-            await($pool->waitForCompletionAsync($poolTimeout));
-
-            return await(self::awaitTaskIdsSettled($taskIds, $timeoutSeconds));
-        });
-    }
-
-    /**
-     * Wait for task IDs to complete
-     */
-    private static function awaitTaskIds(array $taskIds, int $timeoutSeconds): PromiseInterface
-    {
-        return async(function () use ($taskIds, $timeoutSeconds) {
-            $startTime = time();
-            $results = [];
-            $completedTasks = [];
-            $displayedOutput = [];
-
-            foreach ($taskIds as $key => $taskId) {
-                $results[$key] = null;
-            }
-
-            while (true) {
-                $allCompleted = true;
-
-                foreach ($taskIds as $key => $taskId) {
-                    if (isset($completedTasks[$key])) {
-                        continue;
-                    }
-
-                    $status = Process::getTaskStatus($taskId);
-
-                    if (isset($status['output']) && !empty($status['output']) && !isset($displayedOutput[$taskId])) {
-                        echo $status['output'];
-                        $displayedOutput[$taskId] = true;
-                    }
-
-                    if ($status['status'] === 'COMPLETED') {
-                        $results[$key] = $status['result'] ?? null;
-                        $completedTasks[$key] = true;
-
-                        // Display output one more time for completed tasks
-                        if (isset($status['output']) && !empty($status['output'])) {
-                            if (!isset($displayedOutput[$taskId])) {
-                                echo $status['output'];
-                                $displayedOutput[$taskId] = true;
-                            }
-                        }
-                    } elseif ($status['status'] === 'ERROR' || $status['status'] === 'NOT_FOUND') {
-                        $errorMsg = $status['error_message'] ?? $status['message'];
-                        throw new \RuntimeException("Task {$taskId} (key: {$key}) failed: {$errorMsg}");
-                    } else {
-                        // Task still running
-                        $allCompleted = false;
-                    }
-                }
-
-                if ($allCompleted) {
-                    return $results;
-                }
-
-                if ($timeoutSeconds > 0 && time() - $startTime >= $timeoutSeconds) {
-                    $pendingTasks = [];
-                    foreach ($taskIds as $key => $taskId) {
-                        if (!isset($completedTasks[$key])) {
-                            $pendingTasks[] = "{$taskId} (key: {$key})";
-                        }
-                    }
-                    $pendingList = implode(', ', $pendingTasks);
-                    throw new \RuntimeException("Tasks timed out after {$timeoutSeconds} seconds. Pending: {$pendingList}");
-                }
-
-                await(delay(0.01)); 
-            }
-        });
-    }
-
-    /**
-     * Wait for task IDs (settled version - never throws)
-     */
-    private static function awaitTaskIdsSettled(array $taskIds, int $timeoutSeconds): PromiseInterface
-    {
-        return async(function () use ($taskIds, $timeoutSeconds) {
-            $startTime = time();
-            $results = [];
-            $completedTasks = [];
-            $displayedOutput = [];
-
-            foreach ($taskIds as $key => $taskId) {
-                $results[$key] = null;
-            }
-
-            while (true) {
-                $allCompleted = true;
-
-                foreach ($taskIds as $key => $taskId) {
-                    if (isset($completedTasks[$key])) {
-                        continue;
-                    }
-
-                    $status = Process::getTaskStatus($taskId);
-
-                    // Display output
-                    if (isset($status['output']) && !empty($status['output']) && !isset($displayedOutput[$taskId])) {
-                        echo $status['output'];
-                        $displayedOutput[$taskId] = true;
-                    }
-
-                    if ($status['status'] === 'COMPLETED') {
-                        $results[$key] = [
-                            'status' => 'fulfilled',
-                            'value' => $status['result'] ?? null,
-                            'task_id' => $taskId
-                        ];
-                        $completedTasks[$key] = true;
-
-                        // Display output one more time for completed tasks
-                        if (isset($status['output']) && !empty($status['output'])) {
-                            if (!isset($displayedOutput[$taskId])) {
-                                echo $status['output'];
-                                $displayedOutput[$taskId] = true;
-                            }
-                        }
-                    } elseif ($status['status'] === 'ERROR' || $status['status'] === 'NOT_FOUND') {
-                        $errorMsg = $status['error_message'] ?? $status['message'];
-                        $results[$key] = [
-                            'status' => 'rejected',
-                            'reason' => $errorMsg,
-                            'task_id' => $taskId
-                        ];
-                        $completedTasks[$key] = true;
-
-                        // Display output even for failed tasks
-                        if (isset($status['output']) && !empty($status['output'])) {
-                            if (!isset($displayedOutput[$taskId])) {
-                                echo $status['output'];
-                                $displayedOutput[$taskId] = true;
-                            }
-                        }
-                    } else {
-                        $allCompleted = false;
-                    }
-                }
-
-                if ($allCompleted) {
-                    return $results;
-                }
-
-                // Timeout - return what we have
-                if ($timeoutSeconds > 0 && time() - $startTime >= $timeoutSeconds) {
-                    foreach ($taskIds as $key => $taskId) {
-                        if (!isset($completedTasks[$key])) {
-                            $results[$key] = [
-                                'status' => 'rejected',
-                                'reason' => "Timeout after {$timeoutSeconds} seconds",
-                                'task_id' => $taskId
-                            ];
-                        }
-                    }
-                    return $results;
-                }
-
-                await(delay(0.01));
+            try {
+                return await(Promise::timeout(
+                    $pool->runSettled($tasks, $cancellation),
+                    $timeoutSeconds
+                ));
+            } catch (\Hibla\Promise\Exceptions\TimeoutException $e) {
+                throw new \RuntimeException(
+                    "Parallel::allSettled operation timed out after {$timeoutSeconds} seconds.",
+                    0,
+                    $e
+                );
             }
         });
     }
