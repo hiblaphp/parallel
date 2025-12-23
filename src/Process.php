@@ -90,6 +90,9 @@ class Process
     /**
      * Internal helper to read the final result from the process's stdout stream.
      */
+    /**
+     * Internal helper to read the final result from the process's stdout stream.
+     */
     private function readResultFromStream(): PromiseInterface
     {
         return async(function () {
@@ -97,14 +100,21 @@ class Process
                 $status = json_decode($line, true);
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
-                    continue; 
+                    continue;
                 }
 
                 if ($status['status'] === 'COMPLETED') {
+                    if (!empty($status['output'])) {
+                        echo $status['output'];
+                    }
                     return $status['result'] ?? null;
                 }
 
                 if ($status['status'] === 'ERROR') {
+                    if (!empty($status['output'])) {
+                        echo $status['output'];
+                    }
+                    
                     $errorMessage = $status['message'] ?? 'Unknown error';
                     throw new \RuntimeException("Task {$this->taskId} failed in child process: {$errorMessage}");
                 }
