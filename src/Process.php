@@ -47,6 +47,13 @@ class Process
         $this->loggingEnabled = $loggingEnabled;
     }
 
+    /**
+     * Spawns a new process to run the given callback.
+     *
+     * @param callable $callback The task function to run.
+     * @param array $context Optional context to pass to the task
+     * @return PromiseInterface<Process> A promise that resolves with the Process instance.
+     */
     public static function spawn(callable $callback, array $context = []): PromiseInterface
     {
         return async(function () use ($callback, $context) {
@@ -147,14 +154,14 @@ class Process
         return async(function () use ($timeoutSeconds) {
             $startTime = microtime(true);
             $pollInterval = 0.01; // 10 milliseconds
-            $lastOutputPosition = 0; 
+            $lastOutputPosition = 0;
 
             while ((microtime(true) - $startTime) < $timeoutSeconds) {
                 if (!file_exists($this->statusFilePath)) {
                     if (!$this->isRunning()) {
-                        return null; 
+                        return null;
                     }
-                    
+
                     await(delay($pollInterval));
                     continue;
                 }
