@@ -23,6 +23,8 @@ if ($nestingLevel > 1) {
 }
 // ==========================================
 
+$outputBuffer = '';
+
 register_shutdown_function(function () {
     $error = error_get_last();
     if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
@@ -58,9 +60,47 @@ function write_status_to_stdout(array $data): void
     }
 }
 
+function update_status_file_with_output(): void
+{
+    global $statusFile, $startTime, $taskId, $outputBuffer;
+    if ($statusFile === null) return;
+
+    $existing = [];
+    if (file_exists($statusFile)) {
+        $content = @file_get_contents($statusFile);
+        if ($content !== false) {
+            $existing = json_decode($content, true) ?: [];
+        }
+    }
+
+    $preservedFields = [
+        'created_at' => $existing['created_at'] ?? date('Y-m-d H:i:s'),
+        'callback_type' => $existing['callback_type'] ?? null,
+        'context_size' => $existing['context_size'] ?? null,
+    ];
+
+    $statusData = array_merge(
+        $preservedFields,
+        [
+            'task_id' => $taskId,
+            'status' => $existing['status'] ?? 'RUNNING',
+            'message' => $existing['message'] ?? 'Task is running',
+            'pid' => getmypid(),
+            'timestamp' => time(),
+            'duration' => microtime(true) - $startTime,
+            'memory_usage' => memory_get_usage(true),
+            'memory_peak' => memory_get_peak_usage(true),
+            'updated_at' => date('Y-m-d H:i:s'),
+            'buffered_output' => $outputBuffer,
+        ]
+    );
+
+    @file_put_contents($statusFile, json_encode($statusData, JSON_UNESCAPED_SLASHES));
+}
+
 function update_status_file(string $status, string $message, array $extra = []): void
 {
-    global $statusFile, $startTime, $taskId;
+    global $statusFile, $startTime, $taskId, $outputBuffer;
     if ($statusFile === null) return;
 
     $existing = [];
@@ -89,20 +129,29 @@ function update_status_file(string $status, string $message, array $extra = []):
             'memory_usage' => memory_get_usage(true),
             'memory_peak' => memory_get_peak_usage(true),
             'updated_at' => date('Y-m-d H:i:s'),
+            'buffered_output' => $outputBuffer,
         ],
         $extra
     );
 
-    file_put_contents($statusFile, json_encode($statusData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    @file_put_contents($statusFile, json_encode($statusData, JSON_UNESCAPED_SLASHES));
 }
 
 function stream_output_handler($buffer, $phase): string
 {
+    global $outputBuffer;
+    
     if ($buffer !== '') {
+        $outputBuffer .= $buffer;
+        
+        // Write to stdout for Linux
         write_status_to_stdout([
             'status' => 'OUTPUT',
             'output' => $buffer
         ]);
+        
+        // Also update status file for Windows
+        update_status_file_with_output();
     }
     return '';
 }
@@ -165,6 +214,7 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
                     'pid' => getmypid(),
                     'timestamp' => time(),
                     'updated_at' => date('Y-m-d H:i:s'),
+                    'buffered_output' => '',
                 ]);
                 file_put_contents($statusFile, json_encode($statusData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             } else {
@@ -176,6 +226,7 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
                     'timestamp' => time(),
                     'created_at' => date('Y-m-d H:i:s'),
                     'updated_at' => date('Y-m-d H:i:s'),
+                    'buffered_output' => '',
                 ];
                 file_put_contents($statusFile, json_encode($statusData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
             }

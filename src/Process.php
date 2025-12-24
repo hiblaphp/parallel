@@ -63,7 +63,7 @@ class Process
      */
     private static function spawnTask(callable $callback, array $context = []): PromiseInterface
     {
-       return Promise::resolved(self::getHandler()->spawnStreamedTask($callback, $context));
+        return Promise::resolved(self::getHandler()->spawnStreamedTask($callback, $context));
     }
 
     /**
@@ -142,11 +142,18 @@ class Process
      * 
      * @param int $timeoutSeconds Maximum time to wait for the result
      */
+    /**
+     * WINDOWS STRATEGY: Polls the .status file.
+     * Prevents blocking the Main Event Loop on Windows pipes.
+     * 
+     * @param int $timeoutSeconds Maximum time to wait for the result
+     */
     private function pollResultFromFile(int $timeoutSeconds): PromiseInterface
     {
         return async(function () use ($timeoutSeconds) {
             $startTime = microtime(true);
             $pollInterval = 0.01; // 10 milliseconds
+            $lastOutputPosition = 0; 
 
             while ((microtime(true) - $startTime) < $timeoutSeconds) {
                 if (!file_exists($this->statusFilePath)) {
@@ -172,6 +179,14 @@ class Process
                 }
 
                 $currentStatus = $status['status'] ?? '';
+
+                if (isset($status['buffered_output'])) {
+                    $output = $status['buffered_output'];
+                    if (\strlen($output) > $lastOutputPosition) {
+                        echo substr($output, $lastOutputPosition);
+                        $lastOutputPosition = \strlen($output);
+                    }
+                }
 
                 if ($currentStatus === 'COMPLETED') {
                     return $status['result'] ?? null;
