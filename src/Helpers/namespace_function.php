@@ -10,6 +10,30 @@ use function Hibla\await;
 /**
  * Run a task in parallel (separate process) and return a Promise.
  *
+ *⚠️ CLOSURE SERIALIZATION WARNING
+ * 
+ * The way you format closures affects what gets captured during serialization:
+ * 
+ * ❌ DANGEROUS (may cause fork bomb and the process spawner imidiately throw an exception to prevent mass spawn):
+ * async(fn() => await(parallel(fn() => sleep(5))));
+ * 
+ * ✅ SAFE (multi-line formatting):
+ * async(
+ *     fn() => await(parallel(
+ *         fn() => sleep(5)
+ *     ))
+ * );
+ * 
+ * ✅ SAFEST (use regular closures):
+ * async(function() {
+ *     return await(parallel(function() {
+ *         return sleep(5);
+ *     }));
+ * });
+ * 
+ * ✅ BEST (avoid nesting entirely):
+ * await(parallel(fn() => sleep(5)));
+ * 
  * **Platform Behavior:**
  * - On **Linux**: Fire-and-forget calls are non-blocking and run truly in parallel
  * - On **Windows**: Fire-and-forget calls may block due to stream handling limitations

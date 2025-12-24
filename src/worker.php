@@ -6,6 +6,23 @@
 
 declare(strict_types=1);
 
+// ===== CRITICAL: FORK BOMB PROTECTION =====
+// Set environment variables to prevent nested process spawning
+putenv('DEFER_BACKGROUND_PROCESS=1');
+$_ENV['DEFER_BACKGROUND_PROCESS'] = '1';
+$_SERVER['DEFER_BACKGROUND_PROCESS'] = '1';
+
+$nestingLevel = (int) (getenv('DEFER_NESTING_LEVEL') ?: 0) + 1;
+putenv("DEFER_NESTING_LEVEL={$nestingLevel}");
+$_ENV['DEFER_NESTING_LEVEL'] = (string) $nestingLevel;
+$_SERVER['DEFER_NESTING_LEVEL'] = (string) $nestingLevel;
+
+if ($nestingLevel > 1) {
+    fwrite(STDERR, "FATAL: Attempted to spawn process at nesting level {$nestingLevel}. This is a fork bomb! Exiting.\n");
+    exit(1);
+}
+// ==========================================
+
 register_shutdown_function(function () {
     $error = error_get_last();
     if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {

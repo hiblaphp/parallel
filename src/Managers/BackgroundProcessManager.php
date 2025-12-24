@@ -24,7 +24,7 @@ class BackgroundProcessManager
     private TaskStatusHandler $taskStatusHandler;
     private BackgroundLogger $logger;
     private SystemUtilities $systemUtils;
-    private TaskRegistry $taskRegistry; 
+    private TaskRegistry $taskRegistry;
     private array $frameworkInfo = [];
 
     public function __construct(
@@ -39,7 +39,7 @@ class BackgroundProcessManager
         $this->logger = new BackgroundLogger($this->config, $enableDetailedLogging, $customLogDir);
         $this->taskStatusHandler = new TaskStatusHandler($this->logger->getLogDirectory());
         $this->processSpawnHandler = new ProcessSpawnHandler($this->config, $this->systemUtils, $this->logger);
-        $this->taskRegistry = new TaskRegistry(); 
+        $this->taskRegistry = new TaskRegistry();
 
         $this->frameworkInfo = $this->systemUtils->detectFramework();
     }
@@ -57,13 +57,22 @@ class BackgroundProcessManager
     public function spawnStreamedTask(callable $callback, array $context = []): Process
     {
         if ($this->isRunningInBackground()) {
-            throw new \RuntimeException('Cannot spawn a background process from within another background process (fork bomb prevention).');
+            $nestingLevel = (int) (getenv('DEFER_NESTING_LEVEL') ?:
+                $_ENV['DEFER_NESTING_LEVEL'] ??
+                $_SERVER['DEFER_NESTING_LEVEL'] ?? 1);
+
+            throw new \RuntimeException(
+                "Cannot spawn a background process from within another background process. " .
+                    "Current nesting level: {$nestingLevel}. " .
+                    "This prevents fork bombs and resource exhaustion. " .
+                    "If you need nested parallelism, structure your code differently."
+            );
         }
 
         $this->validateSerialization($callback, $context);
 
         $taskId = $this->systemUtils->generateTaskId();
-        
+
         $this->taskRegistry->registerTask($taskId, $callback, $context);
         $this->taskStatusHandler->createInitialStatus($taskId, $callback, $context);
 
@@ -77,7 +86,7 @@ class BackgroundProcessManager
             );
 
             $this->logger->logTaskEvent($taskId, 'SPAWNED', "Streamed process spawned successfully with PID {$process->getPid()}");
-            
+
             return $process;
         } catch (\Throwable $e) {
             $this->logger->logTaskEvent($taskId, 'ERROR', 'Failed to spawn streamed process: ' . $e->getMessage());
@@ -88,8 +97,21 @@ class BackgroundProcessManager
 
     private function isRunningInBackground(): bool
     {
-        return getenv('DEFER_BACKGROUND_PROCESS') === '1';
+        $isBackground = getenv('DEFER_BACKGROUND_PROCESS') === '1' ||
+            (isset($_ENV['DEFER_BACKGROUND_PROCESS']) && $_ENV['DEFER_BACKGROUND_PROCESS'] === '1') ||
+            (isset($_SERVER['DEFER_BACKGROUND_PROCESS']) && $_SERVER['DEFER_BACKGROUND_PROCESS'] === '1');
+
+        if ($isBackground) {
+            return true;
+        }
+
+        $nestingLevel = (int) (getenv('DEFER_NESTING_LEVEL') ?:
+            $_ENV['DEFER_NESTING_LEVEL'] ??
+            $_SERVER['DEFER_NESTING_LEVEL'] ?? 0);
+
+        return $nestingLevel > 0;
     }
+
 
     private function validateSerialization(callable $callback, array $context): void
     {
@@ -110,7 +132,7 @@ class BackgroundProcessManager
     {
         return $this->taskStatusHandler->getAllTasksStatus();
     }
-    
+
     public function getTasksSummary(): array
     {
         return $this->taskStatusHandler->getTasksSummary();
@@ -134,7 +156,7 @@ class BackgroundProcessManager
     {
         return $this->processSpawnHandler->testCapabilities($verbose, $this->serializationManager);
     }
-    
+
     public function getStats(): array
     {
         return [
@@ -158,7 +180,7 @@ class BackgroundProcessManager
     {
         return $this->logger->getRecentLogs($limit);
     }
-    
+
     public function cancelTask(string $taskId): array
     {
         return $this->taskStatusHandler->cancelTask($taskId);
@@ -177,7 +199,7 @@ class BackgroundProcessManager
     {
         return $this->taskStatusHandler->cancelAllRunningTasks();
     }
-    
+
     public function getCancellableTasks(): array
     {
         return $this->taskStatusHandler->getCancellableTasks();
