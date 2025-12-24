@@ -8,19 +8,54 @@ use function Hibla\async;
 use function Hibla\await;
 
 /**
- * Run a task in a true, non-blocking background process.
+ * Run a task in parallel (separate process) and return a Promise.
  *
- * This function is the simplest way to offload a CPU-intensive task to a separate
- * process without blocking the main event loop. It establishes a low-latency,
- * stream-based communication channel for real-time results, powered by `proc_open`
- * and the Hibla async ecosystem.
+ * **Platform Behavior:**
+ * - On **Linux**: Fire-and-forget calls are non-blocking and run truly in parallel
+ * - On **Windows**: Fire-and-forget calls may block due to stream handling limitations
+ *   - ✅ **Recommended**: Always use with Promise combinators (`Promise::all()`, `Promise::race()`)
+ *   - ✅ **For fire-and-forget**: Use `Process::spawn()` directly (see examples below)
+ *   - ❌ **Not recommended**: Calling `parallel()` without awaiting on Windows
  *
- * (The rest of the docblock and examples remain the same, as the external API is unchanged)
+ * **Examples:**
+ * ```php
+ * // ✅ Recommended: Works on all platforms
+ * $results = await(Promise::all([
+ *     parallel(fn() => task1()),
+ *     parallel(fn() => task2()),
+ * ]));
  *
- * @param  callable  $task  The task to execute in parallel.
- * @param  array     $context  Optional context to pass to the task.
- * @param  int       $timeout  Maximum seconds to wait for the task to complete.
- * @return PromiseInterface Promise resolving to the task's return value.
+ * // ✅ Also works: Using Parallel class
+ * $results = await(Parallel::all([
+ *     fn() => task1(),
+ *     fn() => task2(),
+ * ], maxConcurrency: 4));
+ *
+ * // ✅ Fire-and-forget on Windows: Use Process::spawn()
+ * $process = await(Process::spawn(fn() => backgroundTask()));
+ * // Process runs in background, no blocking
+ * // Optionally await later: $result = await($process->await());
+ *
+ * // ⚠️ Fire-and-forget with parallel() (may block on Windows)
+ * parallel(fn() => heavyTask());
+ * // On Windows, this blocks until complete
+ * // On Linux, this returns immediately
+ * ```
+ *
+ * **Why the difference?**
+ * `parallel()` internally awaits the process result, which may block on Windows.
+ * `Process::spawn()` only spawns the process and returns immediately, allowing
+ * true fire-and-forget behavior on all platforms.
+ *
+ * @template TResult
+ *
+ * @param  callable(array): TResult  $task  The task to execute in parallel
+ * @param  array<string, mixed>  $context  Optional context/parameters to pass to the task
+ * @param  int  $timeout  Maximum seconds to wait for task completion (default: 60)
+ * @return PromiseInterface<TResult> Promise resolving to the task's return value
+ *
+ * @throws \RuntimeException If the task fails or times out
+ * @throws \Hibla\Parallel\Serialization\SerializationException If task cannot be serialized
  */
 function parallel(callable $task, array $context = [], int $timeout = 60): PromiseInterface
 {
