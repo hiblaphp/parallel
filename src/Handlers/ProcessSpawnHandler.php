@@ -67,7 +67,7 @@ class ProcessSpawnHandler
         }
         $pid = $status['pid'];
 
-        $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.status';
+        $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.json';
         $loggingEnabled = $this->logger->isDetailedLoggingEnabled();
 
         try {

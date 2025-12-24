@@ -142,12 +142,6 @@ class Process
      * 
      * @param int $timeoutSeconds Maximum time to wait for the result
      */
-    /**
-     * WINDOWS STRATEGY: Polls the .status file.
-     * Prevents blocking the Main Event Loop on Windows pipes.
-     * 
-     * @param int $timeoutSeconds Maximum time to wait for the result
-     */
     private function pollResultFromFile(int $timeoutSeconds): PromiseInterface
     {
         return async(function () use ($timeoutSeconds) {
@@ -158,8 +152,9 @@ class Process
             while ((microtime(true) - $startTime) < $timeoutSeconds) {
                 if (!file_exists($this->statusFilePath)) {
                     if (!$this->isRunning()) {
-                        throw new \RuntimeException("Task {$this->taskId} process died before creating status file.");
+                        return null; 
                     }
+                    
                     await(delay($pollInterval));
                     continue;
                 }
@@ -248,6 +243,7 @@ class Process
 
     /**
      * Clean up status file and directory if logging is disabled and it's in temp directory.
+     * This acts as a fallback for the parent process.
      */
     private function cleanupIfNeeded(): void
     {
@@ -266,7 +262,7 @@ class Process
         $statusDir = dirname($this->statusFilePath);
         if (is_dir($statusDir)) {
             $files = @scandir($statusDir);
-            if ($files !== false && count($files) === 2) {
+            if ($files !== false && count($files) <= 2) {
                 @rmdir($statusDir);
             }
         }

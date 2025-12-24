@@ -21,7 +21,7 @@ class TaskStatusHandler
      */
     public function createInitialStatus(string $taskId, callable $callback, array $context): void
     {
-        $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.status';
+        $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
         $initialStatus = [
             'task_id' => $taskId,
@@ -46,7 +46,7 @@ class TaskStatusHandler
      */
     public function updateStatus(string $taskId, string $status, string $message, array $extra = []): void
     {
-        $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.status';
+        $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
         $statusData = array_merge([
             'task_id' => $taskId,
@@ -64,7 +64,7 @@ class TaskStatusHandler
      */
     public function getTaskStatus(string $taskId): array
     {
-        $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.status';
+        $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
         if (!file_exists($statusFile)) {
             return [
@@ -106,10 +106,10 @@ class TaskStatusHandler
     public function getAllTasksStatus(): array
     {
         $tasks = [];
-        $pattern = $this->logDir . DIRECTORY_SEPARATOR . '*.status';
+        $pattern = $this->logDir . DIRECTORY_SEPARATOR . '*.json';
 
         foreach (glob($pattern) as $statusFile) {
-            $taskId = basename($statusFile, '.status');
+            $taskId = basename($statusFile, '.json');
             $tasks[$taskId] = $this->getTaskStatus($taskId);
         }
 
@@ -213,7 +213,7 @@ class TaskStatusHandler
         $cleanedCount = 0;
 
         // Clean up status files
-        $statusFiles = glob($this->logDir . DIRECTORY_SEPARATOR . '*.status');
+        $statusFiles = glob($this->logDir . DIRECTORY_SEPARATOR . '*.json');
         foreach ($statusFiles as $file) {
             if (filemtime($file) < $cutoffTime) {
                 // Check if task is still running before cleanup
@@ -275,7 +275,7 @@ class TaskStatusHandler
 
         $imported = 0;
         foreach ($data['tasks'] as $taskId => $taskData) {
-            $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.status';
+            $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
             if (file_put_contents($statusFile, json_encode($taskData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES))) {
                 $imported++;

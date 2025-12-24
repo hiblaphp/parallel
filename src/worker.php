@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Hibla Parallel Worker Script (Single-Task, Stream-Based with Real-Time Output)
+ * Hibla Parallel Worker Script (Single-Task, Stream-Based with Real-Time Output) worker.php
  */
 
 declare(strict_types=1);
@@ -156,6 +156,34 @@ function stream_output_handler($buffer, $phase): string
     return '';
 }
 
+/**
+ * Checks if the status file is in the system temp directory and deletes it.
+ * This ensures cleanup happens even in fire-and-forget scenarios.
+ */
+function cleanup_temp_file(?string $file): void 
+{
+    if (!$file || !file_exists($file)) {
+        return;
+    }
+
+    // Get real paths to ensure we are comparing correctly
+    $fileReal = realpath($file);
+    $tempReal = realpath(sys_get_temp_dir());
+
+    if ($fileReal && $tempReal && strpos($fileReal, $tempReal) === 0) {
+        // It is a temp file, delete it
+        @unlink($file);
+
+        // Try to remove the directory if it's empty (we created a subdir per task usually)
+        $dir = dirname($file);
+        $files = @scandir($dir);
+        // if directory contains only . and ..
+        if ($files !== false && count($files) <= 2) {
+            @rmdir($dir);
+        }
+    }
+}
+
 // --- Main Worker Loop (Single Task) ---
 
 $taskProcessed = false;
@@ -285,6 +313,9 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         update_status_file('ERROR', $e->getMessage(), $errorStatus);
     } finally {
         $taskProcessed = true;
+        // Perform self-cleanup if we are running with a temp file
+        // This ensures files are deleted even in fire-and-forget mode
+        cleanup_temp_file($statusFile);
     }
 }
 
