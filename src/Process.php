@@ -229,12 +229,42 @@ class Process
         return $status['running'];
     }
 
+    /**
+     * Cancels the process immediately and updates status.
+     */
     public function cancel(): void
     {
-        if (\is_resource($this->processResource)) {
-            proc_terminate($this->processResource);
-            $this->close();
+        if ($this->isRunning()) {
+            if (PHP_OS_FAMILY === 'Windows') {
+                exec("taskkill /F /T /PID {$this->pid} 2>nul");
+            } else {
+                posix_kill($this->pid, 9);
+            }
         }
+
+        if (file_exists($this->statusFilePath)) {
+            $content = @file_get_contents($this->statusFilePath);
+            $statusData = $content ? json_decode($content, true) : [];
+
+            if (!is_array($statusData)) {
+                $statusData = [];
+            }
+
+            $statusData = array_merge($statusData, [
+                'status' => 'CANCELLED',
+                'message' => 'Task cancelled by parent process',
+                'pid' => $this->pid,
+                'updated_at' => date('Y-m-d H:i:s'),
+                'buffered_output' => $statusData['buffered_output'] ?? '',
+            ]);
+
+            @file_put_contents(
+                $this->statusFilePath,
+                json_encode($statusData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
+            );
+        }
+
+        $this->close();
     }
 
     public function close(): void
