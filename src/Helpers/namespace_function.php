@@ -84,7 +84,7 @@ use function Hibla\await;
 function parallel(callable $task, array $context = [], int $timeout = 60): PromiseInterface
 {
     return async(function () use ($task, $context, $timeout) {
-        $process = Process::spawn($task, $context);
+        $process = await(Process::spawn($task, $context));
         
         return await($process->await($timeout));
     });

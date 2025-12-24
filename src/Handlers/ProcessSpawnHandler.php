@@ -11,9 +11,6 @@ use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Stream\PromiseReadableStream;
 use Hibla\Stream\PromiseWritableStream;
 
-/**
- * Handles the spawning of background processes using proc_open and stream-based IPC.
- */
 class ProcessSpawnHandler
 {
     private ConfigLoader $config;
@@ -30,9 +27,6 @@ class ProcessSpawnHandler
         $this->logger = $logger;
     }
 
-    /**
-     * Spawns a background task using a persistent worker and stream-based IPC.
-     */
     public function spawnStreamedTask(
         string $taskId,
         callable $callback,
@@ -73,8 +67,10 @@ class ProcessSpawnHandler
         }
         $pid = $status['pid'];
 
+        $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.status';
+        $loggingEnabled = $this->logger->isDetailedLoggingEnabled();
+
         try {
-            $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.status';
             $payload = $this->createTaskPayload($taskId, $statusFile, $callback, $context, $frameworkInfo, $serializationManager);
             $stdin->writeAsync($payload . PHP_EOL);
         } catch (\Throwable $e) {
@@ -83,12 +79,9 @@ class ProcessSpawnHandler
             throw $e;
         }
         
-        return new Process($taskId, $pid, $processResource, $stdin, $stdout, $stderr);
+        return new Process($taskId, $pid, $processResource, $stdin, $stdout, $stderr, $statusFile, $loggingEnabled);
     }
 
-    /**
-     * Creates the JSON payload for the worker, including the status file path.
-     */
     private function createTaskPayload(
         string $taskId,
         string $statusFile,
@@ -117,10 +110,7 @@ class ProcessSpawnHandler
         
         return $jsonPayload;
     }
-    
-    /**
-     * Finds the absolute path to the internal worker.php script.
-     */
+
     private function getWorkerPath(): string
     {
         $workerPath = realpath(dirname(__DIR__) . '/worker.php');
@@ -132,9 +122,9 @@ class ProcessSpawnHandler
         
         return $workerPath;
     }
-    
+
     public function testCapabilities(bool $verbose, CallbackSerializationManager $serializationManager): array
     {
-        // todo: implement testCapabilities
+         return []; // Todo: Implement actual capability testing
     }
 }
