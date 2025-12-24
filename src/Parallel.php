@@ -3,9 +3,7 @@
 namespace Hibla\Parallel;
 
 use Hibla\Cancellation\CancellationToken;
-use Hibla\Cancellation\CancellationTokenSource;
 use Hibla\Parallel\ProcessPool;
-use Hibla\Promise\Exceptions\PromiseCancelledException;
 use Hibla\Promise\Exceptions\TimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
