@@ -166,18 +166,14 @@ function cleanup_temp_file(?string $file): void
         return;
     }
 
-    // Get real paths to ensure we are comparing correctly
     $fileReal = realpath($file);
     $tempReal = realpath(sys_get_temp_dir());
 
     if ($fileReal && $tempReal && strpos($fileReal, $tempReal) === 0) {
-        // It is a temp file, delete it
         @unlink($file);
 
-        // Try to remove the directory if it's empty (we created a subdir per task usually)
         $dir = dirname($file);
         $files = @scandir($dir);
-        // if directory contains only . and ..
         if ($files !== false && count($files) <= 2) {
             @rmdir($dir);
         }
@@ -313,8 +309,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         update_status_file('ERROR', $e->getMessage(), $errorStatus);
     } finally {
         $taskProcessed = true;
-        // Perform self-cleanup if we are running with a temp file
-        // This ensures files are deleted even in fire-and-forget mode
         cleanup_temp_file($statusFile);
     }
 }
