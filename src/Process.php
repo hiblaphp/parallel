@@ -47,6 +47,13 @@ class Process
         $this->loggingEnabled = $loggingEnabled;
     }
 
+    public static function spawn(callable $callback, array $context = []): PromiseInterface
+    {
+        return async(function () use ($callback, $context) {
+            return await(self::spawnTask($callback, $context));
+        });
+    }
+
     /**
      * Spawns a new process asynchronously.
      *
@@ -54,9 +61,9 @@ class Process
      * @param array $context Optional context to pass to the task.
      * @return PromiseInterface<Process> A promise that resolves with the Process instance.
      */
-    public static function spawn(callable $callback, array $context = []): PromiseInterface
+    private static function spawnTask(callable $callback, array $context = []): PromiseInterface
     {
-        return async(fn() => self::getHandler()->spawnStreamedTask($callback, $context));
+       return Promise::resolved(self::getHandler()->spawnStreamedTask($callback, $context));
     }
 
     /**
@@ -140,7 +147,7 @@ class Process
         return async(function () use ($timeoutSeconds) {
             $startTime = microtime(true);
             $pollInterval = 0.01; // 10 milliseconds
-            
+
             while ((microtime(true) - $startTime) < $timeoutSeconds) {
                 if (!file_exists($this->statusFilePath)) {
                     if (!$this->isRunning()) {
@@ -244,7 +251,7 @@ class Process
         $statusDir = dirname($this->statusFilePath);
         if (is_dir($statusDir)) {
             $files = @scandir($statusDir);
-            if ($files !== false && count($files) === 2) { 
+            if ($files !== false && count($files) === 2) {
                 @rmdir($statusDir);
             }
         }
