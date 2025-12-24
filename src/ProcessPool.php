@@ -110,7 +110,7 @@ class ProcessPool
 
                 try {
                     /** @var Process $process */
-                    $process = await(Process::spawn($task), $cancellation);
+                    $process = Process::spawn($task);
                 
                     $this->results[$key] = await($process->await(), $cancellation);
                 } catch (\Throwable $e) {
@@ -137,7 +137,7 @@ class ProcessPool
 
                 try {
                     /** @var Process $process */
-                    $process = await(Process::spawn($task), $cancellation);
+                    $process = Process::spawn($task);
                     $value = await($process->await(), $cancellation);
                     $this->results[$key] = ['status' => 'fulfilled', 'value' => $value];
                 } catch (\Throwable $e) {

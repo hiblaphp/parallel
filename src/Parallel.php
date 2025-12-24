@@ -109,7 +109,7 @@ class Parallel
                     $pool->runSettled($tasks, $cancellation),
                     $timeoutSeconds
                 ));
-            } catch (\Hibla\Promise\Exceptions\TimeoutException $e) {
+            } catch (TimeoutException $e) {
                 throw new \RuntimeException(
                     "Parallel::allSettled operation timed out after {$timeoutSeconds} seconds.",
                     0,

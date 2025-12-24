@@ -3,13 +3,13 @@
 namespace Hibla\Parallel;
 
 use Hibla\Parallel\Managers\BackgroundProcessManager;
+use Hibla\Promise\Exceptions\TimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
 use function Hibla\async;
 use function Hibla\await;
-use function Hibla\delay;
 
 /**
  * Represents a live, running background process with stream-based communication.
@@ -18,9 +18,8 @@ use function Hibla\delay;
 class Process
 {
     protected static ?BackgroundProcessManager $handler = null;
-
     private int $pid;
-    private $processResource; // The resource from proc_open
+    private $processResource;
     private PromiseWritableStreamInterface $stdin;
     private PromiseReadableStreamInterface $stdout;
     private PromiseReadableStreamInterface $stderr;
@@ -48,12 +47,10 @@ class Process
     /**
      * Spawns a background task and returns a Promise resolving to a Process object.
      * This is the main entry point for creating parallel processes.
-     *
-     * @return PromiseInterface<Process>
      */
-    public static function spawn(callable $callback, array $context = []): PromiseInterface
+    public static function spawn(callable $callback, array $context = []): Process
     {
-        return async(fn() => self::getHandler()->spawnStreamedTask($callback, $context));
+        return self::getHandler()->spawnStreamedTask($callback, $context);
     }
 
     /**
@@ -66,18 +63,15 @@ class Process
     public function await(int $timeoutSeconds = 60): PromiseInterface
     {
         return async(function () use ($timeoutSeconds) {
-            $timeoutPromise = delay($timeoutSeconds);
             $resultPromise = $this->readResultFromStream();
 
             try {
-                $result = await(Promise::race([$resultPromise, $timeoutPromise]));
-
-                if ($result === null && $timeoutPromise->isFulfilled()) {
-                    $this->cancel();
-                    throw new \RuntimeException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
-                }
+                $result = await(Promise::timeout($resultPromise, $timeoutSeconds));
 
                 return $result;
+            } catch (TimeoutException) {
+                $this->cancel();
+                throw new \RuntimeException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
             } catch (\Throwable $e) {
                 $this->cancel();
                 throw $e;
@@ -108,8 +102,8 @@ class Process
 
                 if ($status['status'] === 'OUTPUT') {
                     echo $status['output'];
-                    flush(); 
-                    continue; 
+                    flush();
+                    continue;
                 }
 
                 if ($status['status'] === 'COMPLETED') {
@@ -131,7 +125,7 @@ class Process
      */
     public function cancel(): void
     {
-        if (is_resource($this->processResource)) {
+        if (\is_resource($this->processResource)) {
             proc_terminate($this->processResource);
             $this->close();
         }
@@ -146,7 +140,7 @@ class Process
         $this->stdout->close();
         $this->stderr->close();
 
-        if (is_resource($this->processResource)) {
+        if (\is_resource($this->processResource)) {
             proc_close($this->processResource);
         }
     }
