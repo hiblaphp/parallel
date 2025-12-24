@@ -238,7 +238,7 @@ class Process
             if (PHP_OS_FAMILY === 'Windows') {
                 exec("taskkill /F /T /PID {$this->pid} 2>nul");
             } else {
-                posix_kill($this->pid, 9);
+                exec("pkill -9 -P {$this->pid} 2>/dev/null");
             }
         }
 
