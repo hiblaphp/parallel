@@ -47,10 +47,14 @@ $startTime = microtime(true);
 function write_status_to_stdout(array $data): void
 {
     global $stdout;
+    if (!is_resource($stdout)) {
+        return; // Parent has disconnected (fire-and-forget)
+    }
+    
     $json = json_encode($data, JSON_UNESCAPED_SLASHES);
     if ($json !== false) {
-        fwrite($stdout, $json . PHP_EOL);
-        fflush($stdout);
+        @fwrite($stdout, $json . PHP_EOL); // Suppress errors if pipe is broken
+        @fflush($stdout);
     }
 }
 
@@ -59,16 +63,37 @@ function update_status_file(string $status, string $message, array $extra = []):
     global $statusFile, $startTime, $taskId;
     if ($statusFile === null) return;
 
-    $statusData = array_merge([
-        'task_id' => $taskId,
-        'status' => $status,
-        'message' => $message,
-        'pid' => getmypid(),
-        'timestamp' => time(),
-        'duration' => microtime(true) - $startTime,
-        'memory_usage' => memory_get_usage(true),
-        'memory_peak' => memory_get_peak_usage(true),
-    ], $extra);
+    // Read existing status file to preserve metadata from parent
+    $existing = [];
+    if (file_exists($statusFile)) {
+        $content = @file_get_contents($statusFile);
+        if ($content !== false) {
+            $existing = json_decode($content, true) ?: [];
+        }
+    }
+
+    // Preserve important metadata fields from initial creation
+    $preservedFields = [
+        'created_at' => $existing['created_at'] ?? date('Y-m-d H:i:s'),
+        'callback_type' => $existing['callback_type'] ?? null,
+        'context_size' => $existing['context_size'] ?? null,
+    ];
+
+    $statusData = array_merge(
+        $preservedFields,
+        [
+            'task_id' => $taskId,
+            'status' => $status,
+            'message' => $message,
+            'pid' => getmypid(),
+            'timestamp' => time(),
+            'duration' => microtime(true) - $startTime,
+            'memory_usage' => memory_get_usage(true),
+            'memory_peak' => memory_get_peak_usage(true),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ],
+        $extra
+    );
 
     file_put_contents($statusFile, json_encode($statusData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 }
@@ -107,7 +132,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
 
     $startTime = microtime(true);
     $taskId = 'unknown';
-    $allOutput = '';
 
     try {
         $taskData = json_decode($payload, true);
@@ -117,6 +141,22 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
 
         $taskId = $taskData['task_id'] ?? 'unknown';
         $statusFile = $taskData['status_file'] ?? null;
+        
+        // IMMEDIATELY take ownership of status file for fire-and-forget support
+        // This ensures even if parent exits, we update the status properly
+        if ($statusFile && file_exists($statusFile)) {
+            // Parent created it with PENDING, read it to get metadata
+            $initialStatus = @json_decode(file_get_contents($statusFile), true) ?: [];
+            // Update to RECEIVED status immediately
+            $statusData = array_merge($initialStatus, [
+                'status' => 'RECEIVED',
+                'message' => 'Worker received task payload and is initializing',
+                'pid' => getmypid(),
+                'timestamp' => time(),
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
+            file_put_contents($statusFile, json_encode($statusData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        }
 
         if ($autoloadPath === null) {
             $autoloadPath = $taskData['autoload_path'] ?? '';
@@ -133,6 +173,7 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
             }
         }
         
+        // Update status to RUNNING after environment is loaded
         update_status_file('RUNNING', 'Worker process started execution for task: ' . $taskId);
         
         $callback = eval("return {$taskData['callback_code']};");
@@ -142,8 +183,10 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
             throw new \RuntimeException('Deserialized task is not callable.');
         }
         
+        // Send RUNNING to stdout 
         write_status_to_stdout(['status' => 'RUNNING']);
         
+        // Execute the actual task
         $result = $callback($context);
         ob_end_flush();
         
@@ -152,7 +195,10 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
             'result' => $result,
         ];
         
+        // Try to send to stdout (may fail if fire-and-forget)
         write_status_to_stdout($finalStatus);
+        
+        // Always update status file (this is critical for fire-and-forget)
         update_status_file('COMPLETED', 'Task completed successfully.', $finalStatus);
 
     } catch (\Throwable $e) {
@@ -166,7 +212,10 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
             'stack_trace' => $e->getTraceAsString()
         ];
 
+        // Try to send to stdout (may fail if fire-and-forget)
         write_status_to_stdout($errorStatus);
+        
+        // Always update status file (critical for fire-and-forget)
         update_status_file('ERROR', $e->getMessage(), $errorStatus);
     } finally {
         $taskProcessed = true;
