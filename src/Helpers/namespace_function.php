@@ -1,20 +1,24 @@
-<?php 
+<?php
 
 namespace Hibla;
 
+use Hibla\Cancellation\CancellationTokenSource;
+use Hibla\Parallel\Interfaces\ProcessInterface;
 use Hibla\Parallel\Process;
 use Hibla\Promise\Interfaces\PromiseInterface;
+use RuntimeException;
+
 use function Hibla\async;
 use function Hibla\await;
 
 /**
  * Run a task in parallel (separate process) and return a Promise.
  *
- *⚠️ CLOSURE SERIALIZATION WARNING
+ * ⚠️ CLOSURE SERIALIZATION WARNING
  * 
  * The way you format closures affects what gets captured during serialization:
  * 
- * ❌ DANGEROUS (may cause fork bomb and the process spawner imidiately throw an exception to prevent mass spawn):
+ * ❌ DANGEROUS (may cause fork bomb and the process spawner immediately throws an exception to prevent mass spawn):
  * async(fn() => await(parallel(fn() => sleep(5))));
  * 
  * ✅ SAFE (multi-line formatting):
@@ -33,59 +37,111 @@ use function Hibla\await;
  * 
  * ✅ BEST (avoid nesting entirely):
  * await(parallel(fn() => sleep(5)));
- * 
- * **Platform Behavior:**
- * - On **Linux**: Fire-and-forget calls are non-blocking and run truly in parallel
- * - On **Windows**: Fire-and-forget calls may block due to stream handling limitations
- *   - ✅ **Recommended**: Always use with Promise combinators (`Promise::all()`, `Promise::race()`)
- *   - ✅ **For fire-and-forget**: Use `Process::spawn()` directly (see examples below)
- *   - ❌ **Not recommended**: Calling `parallel()` without awaiting on Windows
- *
- * **Examples:**
- * ```php
- * // ✅ Recommended: Works on all platforms
- * $results = await(Promise::all([
- *     parallel(fn() => task1()),
- *     parallel(fn() => task2()),
- * ]));
- *
- * // ✅ Also works: Using Parallel class
- * $results = await(Parallel::all([
- *     fn() => task1(),
- *     fn() => task2(),
- * ], maxConcurrency: 4));
- *
- * // ✅ Fire-and-forget on Windows: Use Process::spawn()
- * $process = await(Process::spawn(fn() => backgroundTask()));
- * // Process runs in background, no blocking
- * // Optionally await later: $result = await($process->await());
- *
- * // ⚠️ Fire-and-forget with parallel() (may block on Windows)
- * parallel(fn() => heavyTask());
- * // On Windows, this blocks until complete
- * // On Linux, this returns immediately
- * ```
- *
- * **Why the difference?**
- * `parallel()` internally awaits the process result, which may block on Windows.
- * `Process::spawn()` only spawns the process and returns immediately, allowing
- * true fire-and-forget behavior on all platforms.
  *
  * @template TResult
  *
- * @param  callable(array): TResult  $task  The task to execute in parallel
- * @param  array<string, mixed>  $context  Optional context/parameters to pass to the task
- * @param  int  $timeout  Maximum seconds to wait for task completion (default: 60)
+ * @param callable(array): TResult $task The task to execute in parallel
+ * @param array<string, mixed> $context Optional context/parameters to pass to the task
+ * @param int $timeout Maximum seconds to wait for task completion (default: 60)
  * @return PromiseInterface<TResult> Promise resolving to the task's return value
  *
  * @throws \RuntimeException If the task fails or times out
  * @throws \Hibla\Parallel\Serialization\SerializationException If task cannot be serialized
+ * 
+ * @example
+ * ```php
+ * // Simple parallel execution
+ * $result = await(parallel(fn() => heavyComputation()));
+ * 
+ * // With context
+ * $result = await(parallel(
+ *     fn($ctx) => processData($ctx['data']),
+ *     ['data' => $myData]
+ * ));
+ * 
+ * // With timeout
+ * $result = await(parallel(fn() => slowTask(), [], 120));
+ * ```
  */
 function parallel(callable $task, array $context = [], int $timeout = 60): PromiseInterface
 {
-    return async(function () use ($task, $context, $timeout) {
+    $source =  new CancellationTokenSource();
+
+    return async(function () use ($task,  $timeout, $context, $source) {
         $process = await(Process::spawn($task, $context));
-        
-        return await($process->await($timeout));
+
+        $source->token->onCancel(function () use ($process, $source) {
+            $process->cancel();
+        });
+
+        return await($process->await($timeout), $source->token);
+    })->onCancel(function () use ($source) {
+        $source->cancel();
     });
+}
+
+/**
+ * Spawn a background process and return the Process instance for manual control.
+ * 
+ * Unlike `parallel()`, this gives you full control over the process lifecycle.
+ * You must manually call `await()` on the returned process to get the result.
+ * 
+ * ⚠️ CLOSURE SERIALIZATION WARNING
+ * 
+ * The way you format closures affects what gets captured during serialization:
+ * 
+ * ❌ DANGEROUS (may cause fork bomb):
+ * async(fn() => await(spawn(fn() => sleep(5))));
+ * 
+ * ✅ SAFE (multi-line formatting):
+ * async(
+ *     fn() => await(spawn(
+ *         fn() => sleep(5)
+ *     ))
+ * );
+ * 
+ * ✅ BEST (avoid nesting entirely):
+ * await(spawn(fn() => sleep(5)));
+ *
+ * @template TResult
+ *
+ * @param callable(array): TResult $task The task to execute in parallel
+ * @param array<string, mixed> $context Optional context/parameters to pass to the task
+ * @return PromiseInterface<ProcessInterface<TResult>> Promise resolving to the Process instance
+ *
+ * @throws \RuntimeException If process spawning fails
+ * @throws \Hibla\Parallel\Serialization\SerializationException If task cannot be serialized
+ * 
+ * @example
+ * ```php
+ * // Spawn and wait later
+ * $process = await(spawn(fn() => heavyTask()));
+ * // ... do other work ...
+ * $result = await($process->await());
+ * 
+ * // Spawn multiple processes
+ * $process1 = await(spawn(fn() => task1()));
+ * $process2 = await(spawn(fn() => task2()));
+ * $process3 = await(spawn(fn() => task3()));
+ * 
+ * // Wait for all
+ * $result1 = await($process1->await());
+ * $result2 = await($process2->await());
+ * $result3 = await($process3->await());
+ * 
+ * // Cancel if needed
+ * $process = await(spawn(fn() => longRunningTask()));
+ * if ($shouldCancel) {
+ *     $process->cancel();
+ * }
+ * 
+ * // Check status
+ * $process = await(spawn(fn() => backgroundJob()));
+ * echo "PID: " . $process->getPid() . "\n";
+ * echo "Running: " . ($process->isRunning() ? 'yes' : 'no') . "\n";
+ * ```
+ */
+function spawn(callable $task, array $context = []): PromiseInterface
+{
+    return Process::spawn($task, $context);
 }
