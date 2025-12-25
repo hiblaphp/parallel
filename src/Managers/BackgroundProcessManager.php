@@ -18,6 +18,8 @@ use Hibla\Parallel\Utilities\TaskRegistry;
  */
 class BackgroundProcessManager
 {
+    private static ?self $instance = null;
+    
     private ConfigLoader $config;
     private CallbackSerializationManager $serializationManager;
     private ProcessSpawnHandler $processSpawnHandler;
@@ -26,6 +28,17 @@ class BackgroundProcessManager
     private SystemUtilities $systemUtils;
     private TaskRegistry $taskRegistry;
     private array $frameworkInfo = [];
+
+    /**
+     * Get the global singleton instance of the manager.
+     */
+    public static function getGlobal(): self
+    {
+        if (self::$instance === null) {
+            self::$instance = new self();
+        }
+        return self::$instance;
+    }
 
     public function __construct(
         ?CallbackSerializationManager $serializationManager = null,
@@ -46,7 +59,6 @@ class BackgroundProcessManager
 
     /**
      * Spawns a callback in a true background process and returns a Process object.
-     * This is the new primary method for creating background tasks.
      *
      * @param callable $callback The task to execute.
      * @param array $context Context to pass to the task.
@@ -179,29 +191,5 @@ class BackgroundProcessManager
     public function getRecentLogs(int $limit = 100): array
     {
         return $this->logger->getRecentLogs($limit);
-    }
-
-    public function cancelTask(string $taskId): array
-    {
-        return $this->taskStatusHandler->cancelTask($taskId);
-    }
-
-    public function isTaskRunning(string $taskId): bool
-    {
-        $status = $this->taskStatusHandler->getTaskStatus($taskId);
-        if ($status['status'] !== 'RUNNING' || empty($status['pid'])) {
-            return false;
-        }
-        return $this->taskStatusHandler->isProcessRunning($status['pid']);
-    }
-
-    public function cancelAllRunningTasks(): array
-    {
-        return $this->taskStatusHandler->cancelAllRunningTasks();
-    }
-
-    public function getCancellableTasks(): array
-    {
-        return $this->taskStatusHandler->getCancellableTasks();
     }
 }

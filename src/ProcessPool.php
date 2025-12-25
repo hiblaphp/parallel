@@ -7,6 +7,7 @@ use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use function Hibla\async;
 use function Hibla\await;
+use function Hibla\spawn;
 
 /**
  * A true process pool that manages a limited number of concurrent workers
@@ -110,7 +111,7 @@ class ProcessPool
 
                 try {
                     /** @var Process $process */
-                    $process = await(Process::spawn($task), $cancellation);
+                    $process = await(spawn($task), $cancellation);
                 
                     $this->results[$key] = await($process->await(), $cancellation);
                 } catch (\Throwable $e) {
@@ -137,7 +138,7 @@ class ProcessPool
 
                 try {
                     /** @var Process $process */
-                    $process = await(Process::spawn($task), $cancellation);
+                    $process = await(spawn($task), $cancellation);
                     $value = await($process->await(), $cancellation);
                     $this->results[$key] = ['status' => 'fulfilled', 'value' => $value];
                 } catch (\Throwable $e) {

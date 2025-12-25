@@ -4,8 +4,9 @@ namespace Hibla;
 
 use Hibla\Cancellation\CancellationTokenSource;
 use Hibla\Parallel\Interfaces\ProcessInterface;
-use Hibla\Parallel\Process;
+use Hibla\Parallel\Managers\BackgroundProcessManager;
 use Hibla\Promise\Interfaces\PromiseInterface;
+use Hibla\Promise\Promise;
 use RuntimeException;
 
 use function Hibla\async;
@@ -68,7 +69,7 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
     $source =  new CancellationTokenSource();
 
     return async(function () use ($task,  $timeout, $context, $source) {
-        $process = await(Process::spawn($task, $context));
+        $process = await(spawn($task, $context));
 
         $source->token->onCancel(function () use ($process, $source) {
             $process->cancel();
@@ -143,5 +144,5 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
  */
 function spawn(callable $task, array $context = []): PromiseInterface
 {
-    return Process::spawn($task, $context);
+    return Promise::resolved(BackgroundProcessManager::getGlobal()->spawnStreamedTask($task, $context));
 }

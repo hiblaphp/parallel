@@ -5,7 +5,10 @@ namespace Hibla\Parallel\Handlers;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 
 /**
- * Handles task status tracking, monitoring, and lifecycle operations
+ * Handles task status persistence and file management.
+ * 
+ * This class is strictly responsible for reading and writing task metadata 
+ * to the storage (JSON files). It does not control process execution.
  */
 class TaskStatusHandler
 {
@@ -17,7 +20,7 @@ class TaskStatusHandler
     }
 
     /**
-     * Create initial status for a task
+     * Create initial status file for a new task.
      */
     public function createInitialStatus(string $taskId, callable $callback, array $context): void
     {
@@ -42,7 +45,7 @@ class TaskStatusHandler
     }
 
     /**
-     * Update task status
+     * Update task status file with new state.
      */
     public function updateStatus(string $taskId, string $status, string $message, array $extra = []): void
     {
@@ -60,7 +63,7 @@ class TaskStatusHandler
     }
 
     /**
-     * Get task status
+     * Get task status from file.
      */
     public function getTaskStatus(string $taskId): array
     {
@@ -89,7 +92,6 @@ class TaskStatusHandler
             ];
         }
 
-        // Add file timestamps if missing
         if (!isset($status['file_created_at'])) {
             $status['file_created_at'] = date('Y-m-d H:i:s', filectime($statusFile));
         }
@@ -101,19 +103,20 @@ class TaskStatusHandler
     }
 
     /**
-     * Get all tasks status
+     * Get all tasks status by scanning the directory.
      */
     public function getAllTasksStatus(): array
     {
         $tasks = [];
         $pattern = $this->logDir . DIRECTORY_SEPARATOR . '*.json';
 
-        foreach (glob($pattern) as $statusFile) {
+        $files = glob($pattern) ?: [];
+
+        foreach ($files as $statusFile) {
             $taskId = basename($statusFile, '.json');
             $tasks[$taskId] = $this->getTaskStatus($taskId);
         }
 
-        // Sort by creation time (newest first)
         uasort($tasks, function ($a, $b) {
             return ($b['timestamp'] ?? 0) - ($a['timestamp'] ?? 0);
         });
@@ -122,17 +125,18 @@ class TaskStatusHandler
     }
 
     /**
-     * Get tasks summary with statistics
+     * Get aggregated statistics from all log files.
      */
     public function getTasksSummary(): array
     {
         $allTasks = $this->getAllTasksStatus();
         $summary = [
-            'total_tasks' => count($allTasks),
+            'total_tasks' => \count($allTasks),
             'running' => 0,
             'completed' => 0,
             'failed' => 0,
             'pending' => 0,
+            'cancelled' => 0,
             'unknown' => 0,
             'oldest_task' => null,
             'newest_task' => null,
@@ -150,13 +154,13 @@ class TaskStatusHandler
         $memoryUsages = [];
 
         foreach ($allTasks as $task) {
-            switch ($task['status']) {
+            switch ($task['status'] ?? 'UNKNOWN') {
                 case 'RUNNING':
                     $summary['running']++;
                     break;
                 case 'COMPLETED':
                     $summary['completed']++;
-                    if ($task['duration']) {
+                    if (isset($task['duration']) && $task['duration']) {
                         $executionTimes[] = $task['duration'];
                         $summary['longest_execution_time'] = max($summary['longest_execution_time'], $task['duration']);
                         $summary['shortest_execution_time'] = $summary['shortest_execution_time'] === null
@@ -170,13 +174,17 @@ class TaskStatusHandler
                     $summary['failed']++;
                     break;
                 case 'PENDING':
+                case 'RECEIVED':
                     $summary['pending']++;
+                    break;
+                case 'CANCELLED':
+                    $summary['cancelled']++;
                     break;
                 default:
                     $summary['unknown']++;
             }
 
-            if ($task['timestamp']) {
+            if (isset($task['timestamp']) && $task['timestamp']) {
                 $timestamps[] = $task['timestamp'];
             }
 
@@ -205,34 +213,33 @@ class TaskStatusHandler
     }
 
     /**
-     * Clean up old task logs and status files
+     * Clean up old task logs and status files.
      */
     public function cleanupOldTasks(int $maxAgeHours, string $tempDir): int
     {
         $cutoffTime = time() - ($maxAgeHours * 3600);
         $cleanedCount = 0;
 
-        // Clean up status files
-        $statusFiles = glob($this->logDir . DIRECTORY_SEPARATOR . '*.json');
+        $statusFiles = glob($this->logDir . DIRECTORY_SEPARATOR . '*.json') ?: [];
         foreach ($statusFiles as $file) {
             if (filemtime($file) < $cutoffTime) {
-                // Check if task is still running before cleanup
-                $status = json_decode(file_get_contents($file), true);
-                if ($status && $status['status'] === 'RUNNING') {
+                $content = @file_get_contents($file);
+                $status = $content ? json_decode($content, true) : null;
+                
+                if ($status && isset($status['status']) && $status['status'] === 'RUNNING') {
                     continue;
                 }
 
-                if (unlink($file)) {
+                if (@unlink($file)) {
                     $cleanedCount++;
                 }
             }
         }
 
-        // Clean up task files
-        $taskFiles = glob($tempDir . DIRECTORY_SEPARATOR . 'defer_*.php');
+        $taskFiles = glob($tempDir . DIRECTORY_SEPARATOR . 'defer_*.php') ?: [];
         foreach ($taskFiles as $file) {
             if (filemtime($file) < $cutoffTime) {
-                if (unlink($file)) {
+                if (@unlink($file)) {
                     $cleanedCount++;
                 }
             }
@@ -242,7 +249,7 @@ class TaskStatusHandler
     }
 
     /**
-     * Export task data for external monitoring
+     * Export task data for external monitoring.
      */
     public function exportTaskData(array $taskIds, array $systemStats): array
     {
@@ -265,7 +272,7 @@ class TaskStatusHandler
     }
 
     /**
-     * Import task data
+     * Import task data from external source.
      */
     public function importTaskData(array $data, BackgroundLogger $logger): bool
     {
@@ -287,7 +294,7 @@ class TaskStatusHandler
     }
 
     /**
-     * Get health check information
+     * Get health check information regarding file access.
      */
     public function getHealthCheck($systemUtils = null, $logger = null, $serializationManager = null): array
     {
@@ -297,7 +304,6 @@ class TaskStatusHandler
             'timestamp' => time()
         ];
 
-        // Check log directory
         $health['checks']['log_directory'] = [
             'status' => is_writable($this->logDir) ? 'ok' : 'error',
             'path' => $this->logDir,
@@ -305,7 +311,6 @@ class TaskStatusHandler
         ];
 
         if ($systemUtils) {
-            // Check temp directory
             $tempDir = $systemUtils->getTempDirectory();
             $health['checks']['temp_directory'] = [
                 'status' => is_writable($tempDir) ? 'ok' : 'error',
@@ -313,7 +318,6 @@ class TaskStatusHandler
                 'writable' => is_writable($tempDir)
             ];
 
-            // Check PHP binary
             $phpBinary = $systemUtils->getPhpBinary();
             $health['checks']['php_binary'] = [
                 'status' => is_executable($phpBinary) ? 'ok' : 'warning',
@@ -323,205 +327,45 @@ class TaskStatusHandler
         }
 
         if ($logger) {
-            // Check log file
             $logFile = $logger->getLogFile();
-            $health['checks']['log_file'] = [
-                'status' => (file_exists($logFile) && is_writable($logFile)) ? 'ok' : 'warning',
-                'path' => $logFile,
-                'exists' => file_exists($logFile),
-                'writable' => file_exists($logFile) ? is_writable($logFile) : null,
-                'size' => file_exists($logFile) ? filesize($logFile) : 0
-            ];
+            if ($logFile) {
+                $health['checks']['log_file'] = [
+                    'status' => (file_exists($logFile) && is_writable($logFile)) ? 'ok' : 'warning',
+                    'path' => $logFile,
+                    'exists' => file_exists($logFile),
+                    'writable' => file_exists($logFile) ? is_writable($logFile) : null,
+                    'size' => file_exists($logFile) ? filesize($logFile) : 0
+                ];
+            }
         }
 
         if ($serializationManager) {
-            // Check serialization manager
             $health['checks']['serialization'] = [
                 'status' => 'ok',
                 'available_serializers' => $serializationManager->getSerializerInfo()
             ];
         }
 
-        // Overall health status
-        $hasErrors = false;
-        $hasWarnings = false;
-
         foreach ($health['checks'] as $check) {
             if ($check['status'] === 'error') {
-                $hasErrors = true;
+                $health['status'] = 'error';
                 break;
-            } elseif ($check['status'] === 'warning') {
-                $hasWarnings = true;
+            } elseif ($check['status'] === 'warning' && $health['status'] !== 'error') {
+                $health['status'] = 'warning';
             }
-        }
-
-        if ($hasErrors) {
-            $health['status'] = 'error';
-        } elseif ($hasWarnings) {
-            $health['status'] = 'warning';
         }
 
         return $health;
     }
 
     /**
-     * Cancel a running task by killing its process
-     */
-    public function cancelTask(string $taskId): array
-    {
-        $status = $this->getTaskStatus($taskId);
-
-        if ($status['status'] === 'NOT_FOUND') {
-            return [
-                'success' => false,
-                'message' => 'Task not found',
-                'task_id' => $taskId
-            ];
-        }
-
-        if (!in_array($status['status'], ['RUNNING', 'PENDING'])) {
-            return [
-                'success' => false,
-                'message' => "Cannot cancel task with status: {$status['status']}",
-                'task_id' => $taskId,
-                'current_status' => $status['status']
-            ];
-        }
-
-        $pid = $status['pid'] ?? null;
-
-        if (!$pid) {
-            // Update status to cancelled even without PID
-            $this->updateStatus($taskId, 'CANCELLED', 'Task cancelled (no PID available)');
-            return [
-                'success' => true,
-                'message' => 'Task marked as cancelled (process may not have started)',
-                'task_id' => $taskId
-            ];
-        }
-
-        // Try to kill the process
-        $killed = $this->killProcess($pid);
-
-        if ($killed) {
-            $this->updateStatus($taskId, 'CANCELLED', "Task cancelled, process {$pid} terminated", [
-                'cancelled_at' => date('Y-m-d H:i:s'),
-                'cancelled_pid' => $pid
-            ]);
-
-            return [
-                'success' => true,
-                'message' => "Task cancelled successfully, process {$pid} terminated",
-                'task_id' => $taskId,
-                'pid' => $pid
-            ];
-        } else {
-            // Process might already be dead or not killable
-            $this->updateStatus($taskId, 'CANCELLED', "Task marked as cancelled (process {$pid} termination attempted)", [
-                'cancelled_at' => date('Y-m-d H:i:s'),
-                'attempted_pid' => $pid
-            ]);
-
-            return [
-                'success' => true,
-                'message' => "Task marked as cancelled (process may have already terminated)",
-                'task_id' => $taskId,
-                'pid' => $pid
-            ];
-        }
-    }
-
-    /**
-     * Kill a process by PID
-     */
-    private function killProcess(int $pid): bool
-    {
-        if (PHP_OS_FAMILY === 'Windows') {
-            exec("taskkill /F /PID {$pid} 2>&1", $output, $returnCode);
-            return $returnCode === 0 || $returnCode === 128;
-        } else {
-            $result = posix_kill($pid, SIGTERM);
-
-            if ($result) {
-                usleep(100000);
-
-                if ($this->isProcessRunning($pid)) {
-                    posix_kill($pid, SIGKILL);
-                }
-
-                return true;
-            }
-
-            return false;
-        }
-    }
-
-    /**
-     * Check if a process is running
-     */
-    public function isProcessRunning(int $pid): bool
-    {
-        if (PHP_OS_FAMILY === 'Windows') {
-            exec("tasklist /FI \"PID eq {$pid}\" 2>&1", $output);
-            foreach ($output as $line) {
-                if (strpos($line, (string)$pid) !== false) {
-                    return true;
-                }
-            }
-            return false;
-        } else {
-            return posix_kill($pid, 0);
-        }
-    }
-
-    /**
-     * Get all cancellable tasks
-     */
-    public function getCancellableTasks(): array
-    {
-        $allTasks = $this->getAllTasksStatus();
-
-        return array_filter($allTasks, function ($task) {
-            return in_array($task['status'], ['RUNNING', 'PENDING']) && !empty($task['pid']);
-        });
-    }
-
-    /**
-     * Cancel multiple tasks
-     */
-    public function cancelMultipleTasks(array $taskIds): array
-    {
-        $results = [];
-
-        foreach ($taskIds as $taskId) {
-            $results[$taskId] = $this->cancelTask($taskId);
-        }
-
-        return $results;
-    }
-
-    /**
-     * Cancel all running tasks
-     */
-    public function cancelAllRunningTasks(): array
-    {
-        $cancellableTasks = $this->getCancellableTasks();
-        $taskIds = array_keys($cancellableTasks);
-
-        return [
-            'total_tasks' => count($taskIds),
-            'results' => $this->cancelMultipleTasks($taskIds)
-        ];
-    }
-
-    /**
-     * Get callable type for logging
+     * Get callable type for logging metadata.
      */
     protected function getCallableType(callable $callback): string
     {
-        if (is_string($callback)) {
+        if (\is_string($callback)) {
             return 'function';
-        } elseif (is_array($callback)) {
+        } elseif (\is_array($callback)) {
             return 'method';
         } elseif ($callback instanceof \Closure) {
             return 'closure';

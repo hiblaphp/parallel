@@ -2,10 +2,7 @@
 
 namespace Hibla\Parallel;
 
-use Hibla\Cancellation\CancellationToken;
-use Hibla\Cancellation\CancellationTokenSource;
 use Hibla\Parallel\Interfaces\ProcessInterface;
-use Hibla\Parallel\Managers\BackgroundProcessManager;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
@@ -24,8 +21,6 @@ use function Hibla\delay;
  */
 final class Process implements ProcessInterface
 {
-    private static ?BackgroundProcessManager $handler = null;
-
     /**
      * Constructs a new Process instance.
      * 
@@ -50,36 +45,6 @@ final class Process implements ProcessInterface
         private readonly string $statusFilePath,
         private readonly bool $loggingEnabled = true
     ) {}
-
-    /**
-     * Spawns a new background process to run the given callback.
-     * 
-     * The callback will be executed in a separate PHP process, allowing for
-     * true parallel execution without blocking the main event loop.
-     *
-     * @template T
-     * @param callable(): T $callback The task function to run in the background process
-     * @param array<string, mixed> $context Optional context data to pass to the task
-     * @return PromiseInterface<ProcessInterface<T>> A promise that resolves with the Process instance
-     * @throws \RuntimeException If process spawning fails
-     * 
-     * @example
-     * ```php
-     * $process = await(Process::spawn(function () {
-     *     sleep(5);
-     *     return "Task completed!";
-     * }));
-     * 
-     * $result = await($process->await());
-     * echo $result; // "Task completed!"
-     * ```
-     */
-    public static function spawn(callable $callback, array $context = []): PromiseInterface
-    {
-        return async(function () use ($callback, $context) {
-            return await(self::spawnTask($callback, $context));
-        });
-    }
 
     /**
      * {@inheritDoc}
@@ -127,7 +92,7 @@ final class Process implements ProcessInterface
             $content = @file_get_contents($this->statusFilePath);
             $statusData = $content ? json_decode($content, true) : [];
 
-            if (!is_array($statusData)) {
+            if (!\is_array($statusData)) {
                 $statusData = [];
             }
 
@@ -325,23 +290,10 @@ final class Process implements ProcessInterface
         if (is_dir($statusDir)) {
             $files = @scandir($statusDir);
 
-            if ($files !== false && count($files) <= 2) {
+            if ($files !== false && \count($files) <= 2) {
                 @rmdir($statusDir);
             }
         }
-    }
-
-    /**
-     * Internal method to spawn a process asynchronously.
-     *
-     * @template T
-     * @param callable(): T $callback The task function to run
-     * @param array<string, mixed> $context Optional context to pass to the task
-     * @return PromiseInterface<ProcessInterface<T>> A promise that resolves with the Process instance
-     */
-    private static function spawnTask(callable $callback, array $context = []): PromiseInterface
-    {
-        return Promise::resolved(self::getHandler()->spawnStreamedTask($callback, $context));
     }
 
     /**
@@ -353,19 +305,5 @@ final class Process implements ProcessInterface
         $tempDir = str_replace('\\', '/', realpath(sys_get_temp_dir()) ?: sys_get_temp_dir());
 
         return strpos($statusDir, $tempDir) === 0;
-    }
-
-    /**
-     * Gets or creates the singleton BackgroundProcessManager instance.
-     *
-     * @return BackgroundProcessManager The process manager instance
-     */
-    private static function getHandler(): BackgroundProcessManager
-    {
-        if (self::$handler === null) {
-            self::$handler = new BackgroundProcessManager;
-        }
-
-        return self::$handler;
     }
 }
