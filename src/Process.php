@@ -49,7 +49,7 @@ final class Process implements ProcessInterface
     /**
      * {@inheritDoc}
      */
-    public function await(int $timeoutSeconds = 60): PromiseInterface
+    public function getResult(int $timeoutSeconds = 60): PromiseInterface
     {
         return async(function () use ($timeoutSeconds) {
             if (PHP_OS_FAMILY === 'Windows') {
@@ -63,10 +63,10 @@ final class Process implements ProcessInterface
 
                 return $result;
             } catch (TimeoutException) {
-                $this->cancel();
+                $this->terminate();
                 throw new \RuntimeException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
             } catch (\Throwable $e) {
-                $this->cancel();
+                $this->terminate();
                 throw $e;
             } finally {
                 $this->close();
@@ -78,7 +78,7 @@ final class Process implements ProcessInterface
     /**
      * {@inheritDoc}
      */
-    public function cancel(): void
+    public function terminate(): void
     {
         if ($this->isRunning()) {
             if (PHP_OS_FAMILY === 'Windows') {
@@ -156,7 +156,7 @@ final class Process implements ProcessInterface
     private function readResultFromStream(): PromiseInterface
     {
         return async(function () {
-            while (null !== ($line = await( $this->stdout->readLineAsync()))) {
+            while (null !== ($line = await($this->stdout->readLineAsync()))) {
                 $status = json_decode($line, true);
 
                 if (json_last_error() !== JSON_ERROR_NONE) {
@@ -200,11 +200,11 @@ final class Process implements ProcessInterface
             $lastOutputPosition = 0;
 
             while ((microtime(true) - $startTime) < $timeoutSeconds) {
-                if (!$this->isRunning()) {
-                    throw new \RuntimeException("Task {$this->taskId} was terminated.");
-                }
-
                 if (!file_exists($this->statusFilePath)) {
+                    if (!$this->isRunning()) {
+                        return null;
+                    }
+
                     await(delay($pollInterval));
                     continue;
                 }
@@ -233,12 +233,12 @@ final class Process implements ProcessInterface
                     }
                 }
 
-                if ($currentStatus === 'CANCELLED') {
-                    throw new \RuntimeException("Task {$this->taskId} was cancelled.");
-                }
-
                 if ($currentStatus === 'COMPLETED') {
                     return $status['result'] ?? null;
+                }
+
+                if ($currentStatus === 'CANCELLED') {
+                    throw new \RuntimeException("Task {$this->taskId} was cancelled.");
                 }
 
                 if ($currentStatus === 'ERROR') {

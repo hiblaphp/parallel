@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Hibla Parallel Worker Script (Single-Task, Stream-Based with Real-Time Output) worker.php
+ * Hibla Parallel Worker Script (Single-Task, Stream-Based with Real-Time Output)
  */
 
 declare(strict_types=1);
@@ -156,30 +156,6 @@ function stream_output_handler($buffer, $phase): string
     return '';
 }
 
-/**
- * Checks if the status file is in the system temp directory and deletes it.
- * This ensures cleanup happens even in fire-and-forget scenarios.
- */
-function cleanup_temp_file(?string $file): void 
-{
-    if (!$file || !file_exists($file)) {
-        return;
-    }
-
-    $fileReal = realpath($file);
-    $tempReal = realpath(sys_get_temp_dir());
-
-    if ($fileReal && $tempReal && strpos($fileReal, $tempReal) === 0) {
-        @unlink($file);
-
-        $dir = dirname($file);
-        $files = @scandir($dir);
-        if ($files !== false && count($files) <= 2) {
-            @rmdir($dir);
-        }
-    }
-}
-
 // --- Main Worker Loop (Single Task) ---
 
 $taskProcessed = false;
@@ -309,7 +285,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         update_status_file('ERROR', $e->getMessage(), $errorStatus);
     } finally {
         $taskProcessed = true;
-        cleanup_temp_file($statusFile);
     }
 }
 

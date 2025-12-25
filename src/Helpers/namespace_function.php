@@ -72,10 +72,10 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
         $process = await(spawn($task, $context));
 
         $source->token->onCancel(function () use ($process, $source) {
-            $process->cancel();
+            $process->terminate();
         });
 
-        return await($process->await($timeout), $source->token);
+        return await($process->getResult($timeout), $source->token);
     })->onCancel(function () use ($source) {
         $source->cancel();
     });

@@ -19,7 +19,7 @@ use Hibla\Parallel\Utilities\TaskRegistry;
 class BackgroundProcessManager
 {
     private static ?self $instance = null;
-    
+
     private ConfigLoader $config;
     private CallbackSerializationManager $serializationManager;
     private ProcessSpawnHandler $processSpawnHandler;
@@ -88,13 +88,16 @@ class BackgroundProcessManager
         $this->taskRegistry->registerTask($taskId, $callback, $context);
         $this->taskStatusHandler->createInitialStatus($taskId, $callback, $context);
 
+        $loggingEnabled = $this->logger->isDetailedLoggingEnabled();
+
         try {
             $process = $this->processSpawnHandler->spawnStreamedTask(
                 $taskId,
                 $callback,
                 $context,
                 $this->frameworkInfo,
-                $this->serializationManager
+                $this->serializationManager,
+                $loggingEnabled  
             );
 
             $this->logger->logTaskEvent($taskId, 'SPAWNED', "Streamed process spawned successfully with PID {$process->getPid()}");
@@ -162,11 +165,6 @@ class BackgroundProcessManager
             $this->logger,
             $this->serializationManager
         );
-    }
-
-    public function testCapabilities(bool $verbose = false): array
-    {
-        return $this->processSpawnHandler->testCapabilities($verbose, $this->serializationManager);
     }
 
     public function getStats(): array

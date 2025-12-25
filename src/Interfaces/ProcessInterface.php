@@ -18,7 +18,7 @@ interface ProcessInterface
      * @return PromiseInterface<TResult> A promise that resolves with the task's result or rejects on timeout/error.
      * @throws \RuntimeException If the task times out or fails.
      */
-    public function await(int $timeoutSeconds = 60): PromiseInterface;
+    public function getResult(int $timeoutSeconds = 60): PromiseInterface;
 
     /**
      * Cancels the process immediately and all its child processes.
@@ -28,7 +28,7 @@ interface ProcessInterface
      *
      * @return void
      */
-    public function cancel(): void;
+    public function terminate(): void;
 
     /**
      * Checks if the process is still running.

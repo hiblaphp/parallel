@@ -113,7 +113,7 @@ class ProcessPool
                     /** @var Process $process */
                     $process = await(spawn($task), $cancellation);
                 
-                    $this->results[$key] = await($process->await(), $cancellation);
+                    $this->results[$key] = await($process->getResult(), $cancellation);
                 } catch (\Throwable $e) {
                     if ($this->firstError === null) {
                         $this->firstError = $e;
@@ -139,7 +139,7 @@ class ProcessPool
                 try {
                     /** @var Process $process */
                     $process = await(spawn($task), $cancellation);
-                    $value = await($process->await(), $cancellation);
+                    $value = await($process->getResult(), $cancellation);
                     $this->results[$key] = ['status' => 'fulfilled', 'value' => $value];
                 } catch (\Throwable $e) {
                      $this->results[$key] = ['status' => 'rejected', 'reason' => $e->getMessage()];
