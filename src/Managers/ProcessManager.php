@@ -43,6 +43,10 @@ class ProcessManager
 
     private array $frameworkInfo;
 
+    private int $spawnCount = 0;
+
+    private float $lastSpawnReset = 0.0;
+
     /**
      * Gets or creates the global singleton instance.
      *
@@ -91,10 +95,10 @@ class ProcessManager
     {
         $this->validate($callback);
         $taskId = $this->systemUtils->generateTaskId();
-        
+
         $this->taskRegistry->registerTask($taskId, $callback, $context);
         $this->statusHandler->createInitialStatus($taskId, $callback, $context);
-        
+
         $logging = $this->logger->isDetailedLoggingEnabled();
 
         $process = $this->spawnHandler->spawnStreamedTask(
@@ -105,7 +109,7 @@ class ProcessManager
             $this->serializer,
             $logging
         );
-        
+
         $this->logger->logTaskEvent($taskId, 'SPAWNED', "Streamed task PID: " . $process->getPid());
         return $process;
     }
@@ -126,6 +130,17 @@ class ProcessManager
      */
     public function spawnFireAndForgetTask(callable $callback, array $context = []): BackgroundProcess
     {
+        if (microtime(true) - $this->lastSpawnReset > 1.0) {
+            $this->spawnCount = 0;
+            $this->lastSpawnReset = microtime(true);
+        }
+
+        if ($this->spawnCount > 49) { // 49 process + 1 current initial process 
+            throw new \RuntimeException(message: "Safety Limit: Cannot spawn more than 50 background tasks per second.");
+        }
+
+        $this->spawnCount++;
+
         $this->validate($callback);
         $taskId = $this->systemUtils->generateTaskId();
         $logging = $this->logger->isDetailedLoggingEnabled();

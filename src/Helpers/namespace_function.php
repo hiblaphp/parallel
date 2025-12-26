@@ -41,7 +41,7 @@ use function Hibla\await;
  *
  * @template TResult
  *
- * @param callable(array): TResult $task The task to execute in parallel
+ * @param callable(): TResult $task The task to execute in parallel
  * @param array<string, mixed> $context Optional context/parameters to pass to the task
  * @param int $timeout Maximum seconds to wait for task completion (default: 60)
  * @return PromiseInterface<TResult> Promise resolving to the task's return value
@@ -107,7 +107,7 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
  *
  * @template TResult
  *
- * @param callable(array): TResult $task The task to execute in parallel
+ * @param callable(): TResult $task The task to execute in parallel
  * @param array<string, mixed> $context Optional context/parameters to pass to the task
  * @return PromiseInterface<BackgroundProcess> Promise resolving to the Process instance
  *
