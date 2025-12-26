@@ -24,6 +24,7 @@ if ($nestingLevel > 1) {
 // ==========================================
 
 $outputBuffer = '';
+$isWindows = PHP_OS_FAMILY === 'Windows';
 
 register_shutdown_function(function () {
     $error = error_get_last();
@@ -62,8 +63,10 @@ function write_status_to_stdout(array $data): void
 
 function update_status_file_with_output(): void
 {
-    global $statusFile, $startTime, $taskId, $outputBuffer;
-    if ($statusFile === null) return;
+    global $statusFile, $startTime, $taskId, $outputBuffer, $isWindows;
+    
+    // Only write to file on Windows
+    if (!$isWindows || $statusFile === null) return;
 
     $existing = [];
     if (file_exists($statusFile)) {
@@ -101,7 +104,6 @@ function update_status_file_with_output(): void
 function update_status_file(string $status, string $message, array $extra = []): void
 {
     global $statusFile, $startTime, $taskId, $outputBuffer;
-    if ($statusFile === null) return;
 
     $existing = [];
     if (file_exists($statusFile)) {
@@ -144,13 +146,13 @@ function stream_output_handler($buffer, $phase): string
     if ($buffer !== '') {
         $outputBuffer .= $buffer;
         
-        // Write to stdout for Linux
+        // Always write to stdout (for Linux and Windows)
         write_status_to_stdout([
             'status' => 'OUTPUT',
             'output' => $buffer
         ]);
         
-        // Also update status file for Windows
+        // Update status file only on Windows
         update_status_file_with_output();
     }
     return '';
@@ -189,10 +191,11 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         $taskId = $taskData['task_id'] ?? 'unknown';
         $statusFile = $taskData['status_file'] ?? null;
         
-        if ($statusFile) {
+        // Only create status directory on Windows
+        if ($isWindows && $statusFile) {
             $statusDir = dirname($statusFile);
             if (!is_dir($statusDir)) {
-                $permissions = PHP_OS_FAMILY === 'Windows' ? 0777 : 0755;
+                $permissions = 0777;
                 if (!@mkdir($statusDir, $permissions, true) && !is_dir($statusDir)) {
                     $error = error_get_last();
                     $errorMsg = $error ? $error['message'] : 'Unknown error';
@@ -205,7 +208,8 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
             }
         }
         
-        if ($statusFile) {
+        // Only write initial status on Windows
+        if ($isWindows && $statusFile) {
             if (file_exists($statusFile)) {
                 $initialStatus = @json_decode(file_get_contents($statusFile), true) ?: [];
                 $statusData = array_merge($initialStatus, [

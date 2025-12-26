@@ -7,10 +7,17 @@ namespace Hibla\Parallel\Utilities;
  */
 class TaskRegistry
 {
+    /**
+     * @var array<string, array{created_at: int, callback_type: string, context_size: int}>
+     */
     private array $taskRegistry = [];
 
     /**
      * Register a new task
+     *
+     * @param string $taskId Unique identifier for the task
+     * @param callable $callback The callback to execute
+     * @param array<string, mixed> $context Context data for the task
      */
     public function registerTask(string $taskId, callable $callback, array $context): void
     {
@@ -22,44 +29,8 @@ class TaskRegistry
     }
 
     /**
-     * Get all registered tasks
-     */
-    public function getAllTasks(): array
-    {
-        return $this->taskRegistry;
-    }
-
-    /**
-     * Get task count
-     */
-    public function getTaskCount(): int
-    {
-        return count($this->taskRegistry);
-    }
-
-    /**
-     * Clear completed tasks from registry
-     */
-    public function clearCompletedTasks(int $maxAge, $statusManager): int
-    {
-        $cutoffTime = time() - $maxAge;
-        $cleared = 0;
-
-        foreach ($this->taskRegistry as $taskId => $info) {
-            if ($info['created_at'] < $cutoffTime) {
-                $status = $statusManager->getTaskStatus($taskId);
-                if (\in_array($status['status'], ['COMPLETED', 'ERROR', 'NOT_FOUND'])) {
-                    unset($this->taskRegistry[$taskId]);
-                    $cleared++;
-                }
-            }
-        }
-
-        return $cleared;
-    }
-
-    /**
-     * Get callable type for logging
+     * @param callable $callback The callable to inspect
+     * @return string Type description (function|method|closure|callable_object)
      */
     private function getCallableType(callable $callback): string
     {

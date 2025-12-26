@@ -9,12 +9,10 @@ use Hibla\Parallel\Config\ConfigLoader;
  */
 class SystemUtilities
 {
-    private ConfigLoader $config;
     private string $tempDir;
 
-    public function __construct(ConfigLoader $config)
+    public function __construct(private ConfigLoader $config)
     {
-        $this->config = $config;
         $tempDir = $this->config->get('temp_directory');
         $this->tempDir = $tempDir ?: (sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'defer_tasks');
         $this->ensureDirectories();
@@ -22,6 +20,8 @@ class SystemUtilities
 
     /**
      * Generate unique task ID with timestamp
+     *
+     * @return string Unique task identifier with format defer_YYYYMMDD_HHMMSS_uniqid
      */
     public function generateTaskId(): string
     {
@@ -30,10 +30,12 @@ class SystemUtilities
 
     /**
      * Get PHP binary path with enhanced detection
+     *
+     * @return string Path to PHP binary executable
      */
     public function getPhpBinary(): string
     {
-        if (defined('PHP_BINARY') && is_executable(PHP_BINARY)) {
+        if (\defined('PHP_BINARY') && is_executable(PHP_BINARY)) {
             return PHP_BINARY;
         }
 
@@ -69,6 +71,8 @@ class SystemUtilities
 
     /**
      * Find the autoload path with multiple fallback strategies
+     *
+     * @return string Path to composer autoload.php file
      */
     public function findAutoloadPath(): string
     {
@@ -89,19 +93,21 @@ class SystemUtilities
 
         foreach ($possiblePaths as $path) {
             if (file_exists($path) && is_readable($path)) {
-                return realpath($path);
+                return realpath($path) ?: $path;
             }
         }
-
 
         return 'vendor/autoload.php';
     }
 
     /**
      * Detect framework and return bootstrap information
+     *
+     * @return array{name: string, bootstrap_file: string|null, init_code: string}
      */
     public function detectFramework(): array
     {
+        /** @var array<string, array{bootstrap_files: list<string>, detector_files: list<string>, init_code: string}> $frameworks */
         $frameworks = [
             'laravel' => [
                 'bootstrap_files' => ['bootstrap/app.php', '../bootstrap/app.php'],
@@ -134,32 +140,9 @@ class SystemUtilities
     }
 
     /**
-     * Get environment information
-     */
-    public function getEnvironmentInfo(): array
-    {
-        return [
-            'os_family' => PHP_OS_FAMILY,
-            'sapi' => PHP_SAPI,
-            'php_version' => PHP_VERSION,
-        ];
-    }
-
-    /**
-     * Get disk usage information
-     */
-    public function getDiskUsage(): array
-    {
-        $tempDirSize = $this->getDirectorySize($this->tempDir);
-
-        return [
-            'temp_dir_size' => $tempDirSize,
-            'temp_dir_files' => count(glob($this->tempDir . DIRECTORY_SEPARATOR . '*')),
-        ];
-    }
-
-    /**
      * Get temporary directory path
+     *
+     * @return string Path to temporary directory
      */
     public function getTempDirectory(): string
     {
@@ -168,13 +151,16 @@ class SystemUtilities
 
     /**
      * Calculate directory size recursively
+     *
+     * @param string $directory Directory path to calculate size for
+     * @return int Total size in bytes
      */
     private function getDirectorySize(string $directory): int
     {
         $size = 0;
         if (is_dir($directory)) {
-            foreach (glob($directory . DIRECTORY_SEPARATOR . '*', GLOB_NOSORT) as $file) {
-                $size += is_file($file) ? filesize($file) : $this->getDirectorySize($file);
+            foreach (glob($directory . DIRECTORY_SEPARATOR . '*', GLOB_NOSORT) ?: [] as $file) {
+                $size += is_file($file) ? (filesize($file) ?: 0) : $this->getDirectorySize($file);
             }
         }
         return $size;
@@ -182,6 +168,9 @@ class SystemUtilities
 
     /**
      * Find framework bootstrap file from possible paths
+     *
+     * @param list<string> $possibleFiles List of possible bootstrap file paths
+     * @return string|null Absolute path to bootstrap file or null if not found
      */
     private function findFrameworkBootstrap(array $possibleFiles): ?string
     {
@@ -191,7 +180,7 @@ class SystemUtilities
             foreach ($possibleFiles as $file) {
                 $fullPath = $basePath . '/' . $file;
                 if (file_exists($fullPath)) {
-                    return realpath($fullPath);
+                    return realpath($fullPath) ?: null;
                 }
             }
         }
@@ -201,6 +190,8 @@ class SystemUtilities
 
     /**
      * Ensure necessary directories exist
+     *
+     * @return void
      */
     private function ensureDirectories(): void
     {

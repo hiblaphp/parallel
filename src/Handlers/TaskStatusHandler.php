@@ -10,22 +10,29 @@ use Hibla\Parallel\Utilities\BackgroundLogger;
  * This class is strictly responsible for reading and writing task metadata 
  * to the storage (JSON files). It does not control process execution.
  */
-class TaskStatusHandler
+final readonly class TaskStatusHandler
 {
-    protected string $logDir;
-
-    public function __construct(string $logDir)
-    {
-        $this->logDir = $logDir;
-    }
+    /**
+     * @param string $logDir Directory path for storing task status files
+     */
+    public function __construct(private string $logDir) {}
 
     /**
-     * Create initial status file for a new task.
+     * Creates initial status file for a new task.
+     *
+     * Generates a JSON status file containing initial task metadata including
+     * callback type, context size, and timestamps.
+     *
+     * @param string $taskId Unique identifier for the task
+     * @param callable $callback The callback function to be executed
+     * @param array<string, mixed> $context Contextual data for the task
+     * @return void
      */
     public function createInitialStatus(string $taskId, callable $callback, array $context): void
     {
         $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
+        /** @var array<string, mixed> $initialStatus */
         $initialStatus = [
             'task_id' => $taskId,
             'status' => 'PENDING',
@@ -45,12 +52,22 @@ class TaskStatusHandler
     }
 
     /**
-     * Update task status file with new state.
+     * Updates task status file with new state.
+     *
+     * Merges the provided status information with existing data and writes
+     * the updated status to the task's JSON file.
+     *
+     * @param string $taskId Unique identifier for the task
+     * @param string $status New status value (e.g., 'RUNNING', 'COMPLETED', 'ERROR')
+     * @param string $message Status message description
+     * @param array<string, mixed> $extra Additional metadata to include in the status
+     * @return void
      */
     public function updateStatus(string $taskId, string $status, string $message, array $extra = []): void
     {
         $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
+        /** @var array<string, mixed> $statusData */
         $statusData = array_merge([
             'task_id' => $taskId,
             'status' => $status,
@@ -63,7 +80,13 @@ class TaskStatusHandler
     }
 
     /**
-     * Get task status from file.
+     * Retrieves task status from file.
+     *
+     * Reads and parses the task's JSON status file. Returns a default status
+     * structure if the file doesn't exist or is corrupted.
+     *
+     * @param string $taskId Unique identifier for the task
+     * @return array<string, mixed> Task status data including status, message, and timestamps
      */
     public function getTaskStatus(string $taskId): array
     {
@@ -79,57 +102,98 @@ class TaskStatusHandler
         }
 
         $statusContent = file_get_contents($statusFile);
+
+        if ($statusContent === false) {
+            return [
+                'task_id' => $taskId,
+                'status' => 'UNREADABLE',
+                'message' => 'Unable to read status file',
+                'timestamp' => null
+            ];
+        }
+
+        /** @var array<string, mixed>|null $status */
         $status = json_decode($statusContent, true);
 
         if ($status === null) {
+            $fileModTime = filemtime($statusFile);
+            $timestamp = $fileModTime !== false ? $fileModTime : time();
+
             return [
                 'task_id' => $taskId,
                 'status' => 'CORRUPTED',
                 'message' => 'Status file corrupted',
-                'timestamp' => filemtime($statusFile),
-                'created_at' => date('Y-m-d H:i:s', filemtime($statusFile)),
-                'updated_at' => date('Y-m-d H:i:s', filemtime($statusFile))
+                'timestamp' => $timestamp,
+                'created_at' => date('Y-m-d H:i:s', $timestamp),
+                'updated_at' => date('Y-m-d H:i:s', $timestamp)
             ];
         }
 
         if (!isset($status['file_created_at'])) {
-            $status['file_created_at'] = date('Y-m-d H:i:s', filectime($statusFile));
+            $fileCreateTime = filectime($statusFile);
+            $status['file_created_at'] = $fileCreateTime !== false
+                ? date('Y-m-d H:i:s', $fileCreateTime)
+                : date('Y-m-d H:i:s');
         }
+
         if (!isset($status['file_modified_at'])) {
-            $status['file_modified_at'] = date('Y-m-d H:i:s', filemtime($statusFile));
+            $fileModTime = filemtime($statusFile);
+            $status['file_modified_at'] = $fileModTime !== false
+                ? date('Y-m-d H:i:s', $fileModTime)
+                : date('Y-m-d H:i:s');
         }
 
         return $status;
     }
 
     /**
-     * Get all tasks status by scanning the directory.
+     * Gets all tasks status by scanning the log directory.
+     *
+     * Scans all JSON files in the log directory and returns their status
+     * information sorted by timestamp in descending order.
+     *
+     * @return array<string, array<string, mixed>> Associative array of task statuses keyed by task ID
      */
     public function getAllTasksStatus(): array
     {
+        /** @var array<string, array<string, mixed>> $tasks */
         $tasks = [];
         $pattern = $this->logDir . DIRECTORY_SEPARATOR . '*.json';
 
-        $files = glob($pattern) ?: [];
+        $files = glob($pattern);
+
+        if ($files === false) {
+            return [];
+        }
 
         foreach ($files as $statusFile) {
             $taskId = basename($statusFile, '.json');
             $tasks[$taskId] = $this->getTaskStatus($taskId);
         }
 
-        uasort($tasks, function ($a, $b) {
-            return ($b['timestamp'] ?? 0) - ($a['timestamp'] ?? 0);
+        uasort($tasks, function (array $a, array $b): int {
+            $timestampA = $a['timestamp'] ?? 0;
+            $timestampB = $b['timestamp'] ?? 0;
+
+            return (int)$timestampB - (int)$timestampA;
         });
 
         return $tasks;
     }
 
     /**
-     * Get aggregated statistics from all log files.
+     * Gets aggregated statistics from all log files.
+     *
+     * Analyzes all task status files to generate comprehensive statistics
+     * including counts by status, execution times, and memory usage metrics.
+     *
+     * @return array<string, mixed> Summary statistics including totals, averages, and aggregated metrics
      */
     public function getTasksSummary(): array
     {
         $allTasks = $this->getAllTasksStatus();
+
+        /** @var array<string, mixed> $summary */
         $summary = [
             'total_tasks' => \count($allTasks),
             'running' => 0,
@@ -140,32 +204,40 @@ class TaskStatusHandler
             'unknown' => 0,
             'oldest_task' => null,
             'newest_task' => null,
-            'total_execution_time' => 0,
-            'average_execution_time' => 0,
-            'longest_execution_time' => 0,
+            'total_execution_time' => 0.0,
+            'average_execution_time' => 0.0,
+            'longest_execution_time' => 0.0,
             'shortest_execution_time' => null,
             'total_memory_usage' => 0,
-            'average_memory_usage' => 0,
+            'average_memory_usage' => 0.0,
             'peak_memory_usage' => 0
         ];
 
+        /** @var array<int, int> $timestamps */
         $timestamps = [];
+
+        /** @var array<int, float> $executionTimes */
         $executionTimes = [];
+
+        /** @var array<int, int> $memoryUsages */
         $memoryUsages = [];
 
         foreach ($allTasks as $task) {
-            switch ($task['status'] ?? 'UNKNOWN') {
+            $taskStatus = $task['status'] ?? 'UNKNOWN';
+
+            switch ($taskStatus) {
                 case 'RUNNING':
                     $summary['running']++;
                     break;
                 case 'COMPLETED':
                     $summary['completed']++;
-                    if (isset($task['duration']) && $task['duration']) {
-                        $executionTimes[] = $task['duration'];
-                        $summary['longest_execution_time'] = max($summary['longest_execution_time'], $task['duration']);
+                    if (isset($task['duration']) && is_numeric($task['duration']) && $task['duration'] > 0) {
+                        $duration = (float)$task['duration'];
+                        $executionTimes[] = $duration;
+                        $summary['longest_execution_time'] = max((float)$summary['longest_execution_time'], $duration);
                         $summary['shortest_execution_time'] = $summary['shortest_execution_time'] === null
-                            ? $task['duration']
-                            : min($summary['shortest_execution_time'], $task['duration']);
+                            ? $duration
+                            : min((float)$summary['shortest_execution_time'], $duration);
                     }
                     break;
                 case 'ERROR':
@@ -184,13 +256,14 @@ class TaskStatusHandler
                     $summary['unknown']++;
             }
 
-            if (isset($task['timestamp']) && $task['timestamp']) {
-                $timestamps[] = $task['timestamp'];
+            if (isset($task['timestamp']) && is_numeric($task['timestamp']) && $task['timestamp'] > 0) {
+                $timestamps[] = (int)$task['timestamp'];
             }
 
-            if (isset($task['memory_usage']) && $task['memory_usage']) {
-                $memoryUsages[] = $task['memory_usage'];
-                $summary['peak_memory_usage'] = max($summary['peak_memory_usage'], $task['memory_usage']);
+            if (isset($task['memory_usage']) && is_numeric($task['memory_usage']) && $task['memory_usage'] > 0) {
+                $memoryUsage = (int)$task['memory_usage'];
+                $memoryUsages[] = $memoryUsage;
+                $summary['peak_memory_usage'] = max((int)$summary['peak_memory_usage'], $memoryUsage);
             }
         }
 
@@ -213,32 +286,59 @@ class TaskStatusHandler
     }
 
     /**
-     * Clean up old task logs and status files.
+     * Cleans up old task logs and status files.
+     *
+     * Removes task status files and temporary task files older than the specified
+     * age. Running tasks are preserved regardless of age.
+     *
+     * @param int $maxAgeHours Maximum age in hours before a file is eligible for cleanup
+     * @param string $tempDir Directory containing temporary task files
+     * @return int Number of files successfully deleted
      */
     public function cleanupOldTasks(int $maxAgeHours, string $tempDir): int
     {
         $cutoffTime = time() - ($maxAgeHours * 3600);
         $cleanedCount = 0;
 
-        $statusFiles = glob($this->logDir . DIRECTORY_SEPARATOR . '*.json') ?: [];
+        $statusFiles = glob($this->logDir . DIRECTORY_SEPARATOR . '*.json');
+
+        if ($statusFiles === false) {
+            $statusFiles = [];
+        }
+
         foreach ($statusFiles as $file) {
-            if (filemtime($file) < $cutoffTime) {
-                $content = @file_get_contents($file);
-                $status = $content ? json_decode($content, true) : null;
-                
-                if ($status && isset($status['status']) && $status['status'] === 'RUNNING') {
+            $fileModTime = filemtime($file);
+
+            if ($fileModTime === false || $fileModTime >= $cutoffTime) {
+                continue;
+            }
+
+            $content = @file_get_contents($file);
+
+            if ($content !== false) {
+                /** @var array<string, mixed>|null $status */
+                $status = json_decode($content, true);
+
+                if ($status !== null && isset($status['status']) && $status['status'] === 'RUNNING') {
                     continue;
                 }
+            }
 
-                if (@unlink($file)) {
-                    $cleanedCount++;
-                }
+            if (@unlink($file)) {
+                $cleanedCount++;
             }
         }
 
-        $taskFiles = glob($tempDir . DIRECTORY_SEPARATOR . 'defer_*.php') ?: [];
+        $taskFiles = glob($tempDir . DIRECTORY_SEPARATOR . 'defer_*.php');
+
+        if ($taskFiles === false) {
+            $taskFiles = [];
+        }
+
         foreach ($taskFiles as $file) {
-            if (filemtime($file) < $cutoffTime) {
+            $fileModTime = filemtime($file);
+
+            if ($fileModTime !== false && $fileModTime < $cutoffTime) {
                 if (@unlink($file)) {
                     $cleanedCount++;
                 }
@@ -249,15 +349,22 @@ class TaskStatusHandler
     }
 
     /**
-     * Export task data for external monitoring.
+     * Exports task data for external monitoring.
+     *
+     * Creates a comprehensive export containing task statuses, summary statistics,
+     * system information, and health check data. Can be filtered by task IDs.
+     *
+     * @param array<int, string> $taskIds Optional array of task IDs to export (empty for all)
+     * @param array<string, mixed> $systemStats System statistics to include in export
+     * @return array<string, mixed> Exported data structure with tasks and metadata
      */
     public function exportTaskData(array $taskIds, array $systemStats): array
     {
         $allTasks = $this->getAllTasksStatus();
 
         if (!empty($taskIds)) {
-            $allTasks = array_filter($allTasks, function ($taskId) use ($taskIds) {
-                return in_array($taskId, $taskIds);
+            $allTasks = array_filter($allTasks, function (string $taskId) use ($taskIds): bool {
+                return in_array($taskId, $taskIds, true);
             }, ARRAY_FILTER_USE_KEY);
         }
 
@@ -272,7 +379,14 @@ class TaskStatusHandler
     }
 
     /**
-     * Import task data from external source.
+     * Imports task data from external source.
+     *
+     * Restores task status files from an exported data structure. Each task's
+     * status is written as a JSON file in the log directory.
+     *
+     * @param array<string, mixed> $data Exported data structure containing tasks
+     * @param BackgroundLogger $logger Logger instance for recording import events
+     * @return bool True if at least one task was successfully imported, false otherwise
      */
     public function importTaskData(array $data, BackgroundLogger $logger): bool
     {
@@ -281,10 +395,20 @@ class TaskStatusHandler
         }
 
         $imported = 0;
-        foreach ($data['tasks'] as $taskId => $taskData) {
+
+        /** @var array<string, array<string, mixed>> $tasks */
+        $tasks = $data['tasks'];
+
+        foreach ($tasks as $taskId => $taskData) {
+            if (!is_string($taskId) || !is_array($taskData)) {
+                continue;
+            }
+
             $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
-            if (file_put_contents($statusFile, json_encode($taskData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES))) {
+            $jsonData = json_encode($taskData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+
+            if ($jsonData !== false && file_put_contents($statusFile, $jsonData) !== false) {
                 $imported++;
             }
         }
@@ -294,10 +418,20 @@ class TaskStatusHandler
     }
 
     /**
-     * Get health check information regarding file access.
+     * Gets health check information regarding file access and system components.
+     *
+     * Performs health checks on log directory, temp directory, PHP binary,
+     * log files, and serialization components. Returns a structured health
+     * status with individual check results.
+     *
+     * @param \Hibla\Parallel\Utilities\SystemUtilities|null $systemUtils Optional system utilities for additional checks
+     * @param BackgroundLogger|null $logger Optional logger for log file checks
+     * @param \Hibla\Parallel\Serialization\CallbackSerializationManager|null $serializationManager Optional serialization manager for serializer checks
+     * @return array<string, mixed> Health check results with overall status and individual component checks
      */
     public function getHealthCheck($systemUtils = null, $logger = null, $serializationManager = null): array
     {
+        /** @var array<string, mixed> $health */
         $health = [
             'status' => 'healthy',
             'checks' => [],
@@ -310,7 +444,7 @@ class TaskStatusHandler
             'writable' => is_writable($this->logDir)
         ];
 
-        if ($systemUtils) {
+        if ($systemUtils !== null) {
             $tempDir = $systemUtils->getTempDirectory();
             $health['checks']['temp_directory'] = [
                 'status' => is_writable($tempDir) ? 'ok' : 'error',
@@ -326,27 +460,37 @@ class TaskStatusHandler
             ];
         }
 
-        if ($logger) {
+        if ($logger !== null) {
             $logFile = $logger->getLogFile();
-            if ($logFile) {
+            if ($logFile !== null) {
+                $fileExists = file_exists($logFile);
+                $fileSize = $fileExists ? filesize($logFile) : 0;
+
                 $health['checks']['log_file'] = [
-                    'status' => (file_exists($logFile) && is_writable($logFile)) ? 'ok' : 'warning',
+                    'status' => ($fileExists && is_writable($logFile)) ? 'ok' : 'warning',
                     'path' => $logFile,
-                    'exists' => file_exists($logFile),
-                    'writable' => file_exists($logFile) ? is_writable($logFile) : null,
-                    'size' => file_exists($logFile) ? filesize($logFile) : 0
+                    'exists' => $fileExists,
+                    'writable' => $fileExists ? is_writable($logFile) : null,
+                    'size' => $fileSize !== false ? $fileSize : 0
                 ];
             }
         }
 
-        if ($serializationManager) {
+        if ($serializationManager !== null) {
             $health['checks']['serialization'] = [
                 'status' => 'ok',
                 'available_serializers' => $serializationManager->getSerializerInfo()
             ];
         }
 
-        foreach ($health['checks'] as $check) {
+        /** @var array<string, mixed> $checks */
+        $checks = $health['checks'];
+
+        foreach ($checks as $check) {
+            if (!is_array($check) || !isset($check['status'])) {
+                continue;
+            }
+
             if ($check['status'] === 'error') {
                 $health['status'] = 'error';
                 break;
@@ -359,7 +503,13 @@ class TaskStatusHandler
     }
 
     /**
-     * Get callable type for logging metadata.
+     * Gets callable type string for logging metadata.
+     *
+     * Determines the type of callable (function, method, closure, or callable object)
+     * for metadata and debugging purposes.
+     *
+     * @param callable $callback The callback to analyze
+     * @return string Type identifier ('function', 'method', 'closure', or 'callable_object')
      */
     protected function getCallableType(callable $callback): string
     {

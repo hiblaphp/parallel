@@ -2,7 +2,7 @@
 
 namespace Hibla\Parallel;
 
-use Hibla\Cancellation\CancellationToken;
+use Hibla\Cancellation\CancellationTokenSource;
 use Hibla\Parallel\ProcessPool;
 use Hibla\Promise\Exceptions\TimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
@@ -24,36 +24,63 @@ class Parallel
      * keys from the input array. The promise will reject if any single task
      * fails or if the overall operation exceeds the specified timeout.
      *
-     * Example:
+     * The returned promise can be cancelled, which will terminate all running processes.
+     *
+     * @template TResult
+     * @param array<int|string, callable(): TResult> $tasks An associative array of callables to execute in parallel.
+     * @param int $maxConcurrency The maximum number of processes to run at the same time. Defaults to 8.
+     * @param float $timeoutSeconds An overall timeout for the entire operation in seconds. If exceeded,
+     *                              the returned promise will reject. Defaults to 60.0.
+     * @return PromiseInterface<array<int|string, TResult>> A promise that resolves to an array of results with keys preserved.
+     * @throws \RuntimeException If the operation times out
+     * @throws \Throwable If any task fails
+     *
+     * @example
      * ```php
+     * // Basic usage
      * $results = await(Parallel::all([
      *     'image1' => fn() => processImage('path1.jpg'),
      *     'image2' => fn() => processImage('path2.jpg'),
-     * ], maxConcurrency: 4, timeoutSeconds: 30));
+     * ], maxConcurrency: 4, timeoutSeconds: 30.0));
+     * 
+     * // With cancellation
+     * $promise = Parallel::all($tasks, maxConcurrency: 8);
+     * // Later: $promise->cancel();
+     * 
+     * // With timeout using Promise::timeout
+     * try {
+     *     $results = await(Promise::timeout(
+     *         Parallel::all($tasks, maxConcurrency: 4),
+     *         30.0
+     *     ));
+     * } catch (TimeoutException $e) {
+     *     // All processes automatically terminated
+     * }
      * ```
-     *
-     * @param array<string|int, callable> $tasks An associative array of callables to execute in parallel.
-     * @param int $maxConcurrency The maximum number of processes to run at the same time. Defaults to 8.
-     * @param int $timeoutSeconds An overall timeout for the entire operation in seconds. If it's exceeded,
-     *                            the returned promise will reject. Defaults to 60.
-     * @return PromiseInterface<array> A promise that resolves to an array of results with keys preserved.
      */
     public static function all(
         array $tasks,
         int $maxConcurrency = 8,
-        int $timeoutSeconds = 60,
-        ?CancellationToken $cancellation = null
+        float $timeoutSeconds = 60.0
     ): PromiseInterface {
-        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $cancellation) {
+        $source = new CancellationTokenSource();
+
+        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $source) {
             if (empty($tasks)) {
                 return [];
             }
 
             $pool = new ProcessPool($maxConcurrency);
-            $poolPromise = $pool->run($tasks, $cancellation);
+            $poolPromise = $pool->run($tasks);
+            $timeoutPromise = Promise::timeout($poolPromise, $timeoutSeconds);
+
+            $source->token->onCancel(function () use ($poolPromise, $timeoutPromise) {
+                $poolPromise->cancel();
+                $timeoutPromise->cancel();
+            });
 
             try {
-                return await(Promise::timeout($poolPromise, $timeoutSeconds));
+                return await($timeoutPromise);
             } catch (TimeoutException $e) {
                 throw new \RuntimeException(
                     "Parallel::all operation timed out after {$timeoutSeconds} seconds.",
@@ -61,52 +88,76 @@ class Parallel
                     $e
                 );
             }
+        })->onCancel(function () use ($source) {
+            $source->cancel();
         });
     }
 
     /**
      * Executes multiple tasks concurrently and returns a settled result for each.
      *
-     * This promise will never reject, even if individual tasks fail or the timeout is exceeded.
-     * Instead, it resolves with an array where each result is an object containing
-     * a `status` ('fulfilled' or 'rejected') and either a 'value' or a 'reason'.
+     * This promise will never reject due to task failures. Individual task failures
+     * are captured in TaskResult objects. The promise may reject if the overall
+     * timeout is exceeded or if the operation is cancelled.
      *
-     * Example:
+     * The returned promise can be cancelled, which will terminate all running processes.
+     *
+     * @template TResult
+     * @param array<int|string, callable(): TResult> $tasks An associative array of callables to execute.
+     * @param int $maxConcurrency The maximum number of processes to run at the same time. Defaults to 8.
+     * @param float $timeoutSeconds An overall timeout for the entire operation in seconds. Any tasks
+     *                              not completed by this time will be marked as rejected.
+     * @return PromiseInterface<array<int|string, TaskResult<TResult>>> A promise resolving to an array of TaskResult objects.
+     * @throws \RuntimeException If the operation times out
+     *
+     * @example
      * ```php
-     * $results = await(Parallel::allSettled([...]));
+     * // Basic usage
+     * $results = await(Parallel::allSettled([
+     *     'task1' => fn() => riskyOperation1(),
+     *     'task2' => fn() => riskyOperation2(),
+     * ]));
+     * 
      * foreach ($results as $key => $result) {
-     *     if ($result['status'] === 'fulfilled') {
-     *         echo "Task {$key} succeeded with value: " . $result['value'];
+     *     if ($result->isFulfilled()) {
+     *         echo "Task {$key} succeeded: " . $result->getValue() . "\n";
      *     } else {
-     *         echo "Task {$key} failed with reason: " . $result['reason'];
+     *         echo "Task {$key} failed: " . $result->getReason() . "\n";
      *     }
      * }
+     * 
+     * // With cancellation
+     * $promise = Parallel::allSettled($tasks);
+     * // Later: $promise->cancel();
+     * 
+     * // Convert to arrays if needed
+     * $results = await(Parallel::allSettled($tasks));
+     * $arrays = array_map(fn($r) => $r->toArray(), $results);
      * ```
-     *
-     * @param array<string|int, callable> $tasks An associative array of callables to execute.
-     * @param int $maxConcurrency The maximum number of processes to run at the same time. Defaults to 8.
-     * @param int $timeoutSeconds An overall timeout for the entire operation in seconds. Any tasks
-     *                            not completed by this time will be marked as rejected.
-     * @return PromiseInterface<array> A promise resolving to an array of settled result objects.
      */
     public static function allSettled(
         array $tasks,
         int $maxConcurrency = 8,
-        int $timeoutSeconds = 60,
-        ?CancellationToken $cancellation = null
+        float $timeoutSeconds = 60.0
     ): PromiseInterface {
-        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $cancellation) {
+        $source = new CancellationTokenSource();
+
+        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $source) {
             if (empty($tasks)) {
                 return [];
             }
 
             $pool = new ProcessPool($maxConcurrency);
+            $poolPromise = $pool->runSettled($tasks);
+            $timeoutPromise = Promise::timeout($poolPromise, $timeoutSeconds);
+
+            $source->token->onCancel(function () use ($poolPromise, $timeoutPromise) {
+                $poolPromise->cancel();
+                $timeoutPromise->cancel();
+            });
 
             try {
-                return await(Promise::timeout(
-                    $pool->runSettled($tasks, $cancellation),
-                    $timeoutSeconds
-                ));
+                return await($timeoutPromise);
             } catch (TimeoutException $e) {
                 throw new \RuntimeException(
                     "Parallel::allSettled operation timed out after {$timeoutSeconds} seconds.",
@@ -114,6 +165,49 @@ class Parallel
                     $e
                 );
             }
+        })->onCancel(function () use ($source) {
+            $source->cancel();
         });
+    }
+
+    /**
+     * Map an array of items through a function in parallel.
+     *
+     * This is a convenience method for transforming data in parallel,
+     * similar to array_map but with concurrent execution.
+     *
+     * @template TInput
+     * @template TOutput
+     * @param array<int|string, TInput> $items Items to transform
+     * @param callable(TInput): TOutput $mapper Function to apply to each item
+     * @param int $maxConcurrency Maximum number of concurrent processes. Defaults to 8.
+     * @param float $timeoutSeconds Overall timeout in seconds. Defaults to 60.0.
+     * @return PromiseInterface<array<int|string, TOutput>> A promise resolving to transformed items
+     * @throws \RuntimeException If the operation times out
+     * @throws \Throwable If any transformation fails
+     *
+     * @example
+     * ```php
+     * $images = ['img1.jpg', 'img2.jpg', 'img3.jpg'];
+     * 
+     * $processed = await(Parallel::map(
+     *     $images,
+     *     fn($path) => processImage($path),
+     *     maxConcurrency: 4
+     * ));
+     * ```
+     */
+    public static function map(
+        array $items,
+        callable $mapper,
+        int $maxConcurrency = 8,
+        float $timeoutSeconds = 60.0
+    ): PromiseInterface {
+        $tasks = [];
+        foreach ($items as $key => $item) {
+            $tasks[$key] = fn() => $mapper($item);
+        }
+
+        return self::all($tasks, $maxConcurrency, $timeoutSeconds);
     }
 }

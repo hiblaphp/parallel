@@ -11,22 +11,36 @@ use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Stream\PromiseReadableStream;
 use Hibla\Stream\PromiseWritableStream;
 
+/**
+ * Handles spawning and managing parallel worker processes.
+ *
+ * This class is responsible for creating both streamed and fire-and-forget
+ * background processes, setting up their communication channels, and preparing
+ * task payloads for execution.
+ */
 class ProcessSpawnHandler
 {
-    private ConfigLoader $config;
-    private SystemUtilities $systemUtils;
-    private BackgroundLogger $logger;
-
     public function __construct(
-        ConfigLoader $config,
-        SystemUtilities $systemUtils,
-        BackgroundLogger $logger
-    ) {
-        $this->config = $config;
-        $this->systemUtils = $systemUtils;
-        $this->logger = $logger;
-    }
+        private ConfigLoader $config,
+        private SystemUtilities $systemUtils,
+        private BackgroundLogger $logger
+    ) {}
 
+    /**
+     * Spawns a streamed task process with bidirectional communication.
+     *
+     * Creates a new process that maintains open pipes for stdin, stdout, and stderr,
+     * allowing real-time streaming of output and status updates.
+     *
+     * @param string $taskId Unique identifier for the task
+     * @param callable $callback The callback function to execute in the worker
+     * @param array<string, mixed> $context Contextual data to pass to the callback
+     * @param array<string, mixed> $frameworkInfo Framework bootstrap information
+     * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
+     * @param bool $loggingEnabled Whether logging is enabled for this task
+     * @return Process The spawned process instance with communication streams
+     * @throws \RuntimeException If process spawning fails
+     */
     public function spawnStreamedTask(
         string $taskId,
         callable $callback,
@@ -66,7 +80,15 @@ class ProcessSpawnHandler
         $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.json';
 
         try {
-            $payload = $this->createTaskPayload($taskId, $statusFile, $callback, $context, $frameworkInfo, $serializationManager, $loggingEnabled);
+            $payload = $this->createTaskPayload(
+                $taskId,
+                $statusFile,
+                $callback,
+                $context,
+                $frameworkInfo,
+                $serializationManager,
+                $loggingEnabled
+            );
             $stdin->writeAsync($payload . PHP_EOL);
         } catch (\Throwable $e) {
             proc_terminate($processResource);
@@ -74,9 +96,34 @@ class ProcessSpawnHandler
             throw $e;
         }
 
-        return new Process($taskId, $pid, $processResource, $stdin, $stdout, $stderr, $statusFile, $loggingEnabled);
+        return new Process(
+            $taskId,
+            $pid,
+            $processResource,
+            $stdin,
+            $stdout,
+            $stderr,
+            $statusFile,
+            $loggingEnabled
+        );
     }
 
+    /**
+     * Spawns a fire-and-forget background task process.
+     *
+     * Creates a detached background process that runs independently without
+     * maintaining communication channels. Suitable for tasks that don't require
+     * real-time output monitoring.
+     *
+     * @param string $taskId Unique identifier for the task
+     * @param callable $callback The callback function to execute in the worker
+     * @param array<string, mixed> $context Contextual data to pass to the callback
+     * @param array<string, mixed> $frameworkInfo Framework bootstrap information
+     * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
+     * @param bool $loggingEnabled Whether logging is enabled for this task
+     * @return BackgroundProcess The spawned background process instance
+     * @throws \RuntimeException If process spawning fails
+     */
     public function spawnFireAndForgetTask(
         string $taskId,
         callable $callback,
@@ -109,7 +156,15 @@ class ProcessSpawnHandler
         $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.json';
 
         try {
-            $payload = $this->createTaskPayload($taskId, $statusFile, $callback, $context, $frameworkInfo, $serializationManager, $loggingEnabled);
+            $payload = $this->createTaskPayload(
+                $taskId,
+                $statusFile,
+                $callback,
+                $context,
+                $frameworkInfo,
+                $serializationManager,
+                $loggingEnabled
+            );
 
             fwrite($pipes[0], $payload . PHP_EOL);
             fflush($pipes[0]);
@@ -120,6 +175,22 @@ class ProcessSpawnHandler
         return new BackgroundProcess($taskId, $pid, $statusFile, $loggingEnabled);
     }
 
+    /**
+     * Creates a JSON-encoded task payload for the worker process.
+     *
+     * Serializes the callback, context, and framework information into a JSON
+     * payload that can be passed to the worker process via stdin.
+     *
+     * @param string $taskId Unique identifier for the task
+     * @param string $statusFile Path to the status file for tracking
+     * @param callable $callback The callback function to serialize
+     * @param array<string, mixed> $context Contextual data to serialize
+     * @param array<string, mixed> $frameworkInfo Framework bootstrap information
+     * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
+     * @param bool $loggingEnabled Whether logging is enabled for this task
+     * @return string JSON-encoded payload string
+     * @throws \RuntimeException If serialization fails
+     */
     private function createTaskPayload(
         string $taskId,
         string $statusFile,
@@ -132,6 +203,7 @@ class ProcessSpawnHandler
         $callbackCode = $serializationManager->serializeCallback($callback);
         $contextCode = $serializationManager->serializeContext($context);
 
+        /** @var array<string, mixed> $payloadData */
         $payloadData = [
             'task_id' => $taskId,
             'status_file' => $statusFile,
@@ -143,23 +215,49 @@ class ProcessSpawnHandler
             'logging_enabled' => $loggingEnabled,
         ];
 
-        return json_encode($payloadData, JSON_UNESCAPED_SLASHES);
-    }
+        $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);
 
-    private function getWorkerPath(string $scriptName): string
-    {
-        $possiblePaths = [];
-        try {
-            $reflector = new \ReflectionClass(\Composer\Autoload\ClassLoader::class);
-            $possiblePaths[] = dirname($reflector->getFileName(), 2) . '/hiblaphp/parallel/src/' . $scriptName;
-        } catch (\ReflectionException $e) {
+        if ($json === false) {
+            throw new \RuntimeException('Failed to encode task payload: ' . json_last_error_msg());
         }
 
-        $possiblePaths[] = dirname(__DIR__) . '/../' . $scriptName; 
-        $possiblePaths[] = dirname(__DIR__) . '/' . $scriptName;   
+        return $json;
+    }
+
+    /**
+     * Resolves the full path to a worker script.
+     *
+     * Attempts to locate the worker script in various possible installation
+     * locations, including Composer vendor directories and relative paths.
+     *
+     * @param string $scriptName Name of the worker script file (e.g., 'worker.php')
+     * @return string Absolute path to the worker script
+     * @throws \RuntimeException If the worker script cannot be found
+     */
+    private function getWorkerPath(string $scriptName): string
+    {
+        /** @var array<int, string> $possiblePaths */
+        $possiblePaths = [];
+
+        try {
+            $reflector = new \ReflectionClass(\Composer\Autoload\ClassLoader::class);
+            $fileName = $reflector->getFileName();
+
+            if ($fileName !== false) {
+                $possiblePaths[] = dirname($fileName, 2) . '/hiblaphp/parallel/src/' . $scriptName;
+            }
+        } catch (\ReflectionException $e) {
+            // Composer autoloader not found, continue with other paths
+        }
+
+        $possiblePaths[] = dirname(__DIR__) . '/../' . $scriptName;
+        $possiblePaths[] = dirname(__DIR__) . '/' . $scriptName;
 
         foreach ($possiblePaths as $path) {
-            if (($real = realpath($path)) && is_readable($real)) return $real;
+            $realPath = realpath($path);
+            if ($realPath !== false && is_readable($realPath)) {
+                return $realPath;
+            }
         }
 
         throw new \RuntimeException("Worker script '$scriptName' not found.");

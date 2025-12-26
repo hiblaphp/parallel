@@ -21,6 +21,11 @@ final class BackgroundProcess
         private readonly bool $loggingEnabled = false
     ) {}
 
+    /**
+     * Terminate the background process forcefully
+     *
+     * @return void
+     */
     public function terminate(): void
     {
         if ($this->isRunning()) {
@@ -34,27 +39,47 @@ final class BackgroundProcess
         $this->updateStatusOnTermination();
     }
 
+    /**
+     * Check if the process is currently running
+     *
+     * @return bool True if process is running, false otherwise
+     */
     public function isRunning(): bool
     {
         if (PHP_OS_FAMILY === 'Windows') {
             $cmd = "tasklist /FI \"PID eq {$this->pid}\" 2>nul";
             $output = shell_exec($cmd);
-            return $output && strpos($output, (string)$this->pid) !== false;
+            return $output !== null && strpos($output, (string)$this->pid) !== false;
         }
 
         return posix_kill($this->pid, 0);
     }
 
+    /**
+     * Get the process ID
+     *
+     * @return int The process ID
+     */
     public function getPid(): int
     {
         return $this->pid;
     }
 
+    /**
+     * Get the task ID
+     *
+     * @return string The task ID
+     */
     public function getTaskId(): string
     {
         return $this->taskId;
     }
 
+    /**
+     * Update the status file when process is terminated
+     *
+     * @return void
+     */
     private function updateStatusOnTermination(): void
     {
         if (!$this->loggingEnabled || !$this->statusFilePath || !file_exists($this->statusFilePath)) {
@@ -62,7 +87,7 @@ final class BackgroundProcess
         }
 
         $content = @file_get_contents($this->statusFilePath);
-        $statusData = $content ? json_decode($content, true) : [];
+        $statusData = $content !== false ? json_decode($content, true) : [];
 
         if (!\is_array($statusData)) {
             $statusData = ['task_id' => $this->taskId];
