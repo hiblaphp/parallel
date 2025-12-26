@@ -174,7 +174,6 @@ final class Process
             $startTime = microtime(true);
             $pollInterval = 0.05;
             $lastOutputPosition = 0;
-            $lastMtime = null;
 
             while ((microtime(true) - $startTime) < $timeoutSeconds) {
                 if (!file_exists($this->statusFilePath)) {
@@ -184,20 +183,11 @@ final class Process
                 }
 
                 clearstatcache(true, $this->statusFilePath);
-                $currentMtime = @filemtime($this->statusFilePath);
-
-                if ($currentMtime === false || $currentMtime === $lastMtime) {
-                    await(delay($pollInterval));
-                    continue;
-                }
-
                 $content = @file_get_contents($this->statusFilePath);
                 if ($content === false) {
                     await(delay($pollInterval));
                     continue;
                 }
-
-                $lastMtime = $currentMtime;
 
                 $status = json_decode($content, true);
                 if (!\is_array($status)) {
