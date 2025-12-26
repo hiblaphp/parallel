@@ -3,11 +3,11 @@
 namespace Hibla;
 
 use Hibla\Cancellation\CancellationTokenSource;
-use Hibla\Parallel\Interfaces\ProcessInterface;
-use Hibla\Parallel\Managers\BackgroundProcessManager;
+use Hibla\Parallel\Managers\ProcessManager;
+use Hibla\Parallel\BackgroundProcess;
+use Hibla\Parallel\Process;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
-use RuntimeException;
 
 use function Hibla\async;
 use function Hibla\await;
@@ -66,12 +66,13 @@ use function Hibla\await;
  */
 function parallel(callable $task, array $context = [], int $timeout = 60): PromiseInterface
 {
-    $source =  new CancellationTokenSource();
+    $source = new CancellationTokenSource();
 
-    return async(function () use ($task,  $timeout, $context, $source) {
-        $process = await(spawn($task, $context));
+    return async(function () use ($task, $timeout, $context, $source) {
+        /** @var Process $process */
+        $process = ProcessManager::getGlobal()->spawnStreamedTask($task, $context);
 
-        $source->token->onCancel(function () use ($process, $source) {
+        $source->token->onCancel(function () use ($process) {
             $process->terminate();
         });
 
@@ -108,17 +109,13 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
  *
  * @param callable(array): TResult $task The task to execute in parallel
  * @param array<string, mixed> $context Optional context/parameters to pass to the task
- * @return PromiseInterface<ProcessInterface<TResult>> Promise resolving to the Process instance
+ * @return PromiseInterface<BackgroundProcess> Promise resolving to the Process instance
  *
  * @throws \RuntimeException If process spawning fails
  * @throws \Hibla\Parallel\Serialization\SerializationException If task cannot be serialized
  * 
  * @example
  * ```php
- * // Spawn and wait later
- * $process = await(spawn(fn() => heavyTask()));
- * // ... do other work ...
- * $result = await($process->await());
  * 
  * // Spawn multiple processes
  * $process1 = await(spawn(fn() => task1()));
@@ -144,5 +141,7 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
  */
 function spawn(callable $task, array $context = []): PromiseInterface
 {
-    return Promise::resolved(BackgroundProcessManager::getGlobal()->spawnStreamedTask($task, $context));
+    return Promise::resolved(
+        ProcessManager::getGlobal()->spawnFireAndForgetTask($task, $context)
+    );
 }

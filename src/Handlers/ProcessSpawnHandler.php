@@ -4,8 +4,8 @@ namespace Hibla\Parallel\Handlers;
 
 use Hibla\Parallel\Config\ConfigLoader;
 use Hibla\Parallel\Process;
+use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Serialization\CallbackSerializationManager;
-use Hibla\Parallel\Serialization\SerializationException;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Stream\PromiseReadableStream;
@@ -36,7 +36,7 @@ class ProcessSpawnHandler
         bool $loggingEnabled
     ): Process {
         $phpBinary = $this->systemUtils->getPhpBinary();
-        $workerScript = $this->getWorkerPath();
+        $workerScript = $this->getWorkerPath('worker.php');
 
         $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript);
 
@@ -50,7 +50,7 @@ class ProcessSpawnHandler
         $processResource = @proc_open($command, $descriptorSpec, $pipes);
 
         if (!\is_resource($processResource)) {
-            throw new \RuntimeException("Failed to spawn background process using proc_open. Command: {$command}");
+            throw new \RuntimeException("Failed to spawn process.");
         }
 
         stream_set_blocking($pipes[0], false);
@@ -62,14 +62,8 @@ class ProcessSpawnHandler
         $stderr = new PromiseReadableStream($pipes[2]);
 
         $status = proc_get_status($processResource);
-        if (!$status || !$status['running']) {
-            proc_close($processResource);
-            throw new \RuntimeException("Process failed to start. PID: " . ($status['pid'] ?? 'N/A'));
-        }
         $pid = $status['pid'];
-
         $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.json';
-        $loggingEnabled = $this->logger->isDetailedLoggingEnabled();
 
         try {
             $payload = $this->createTaskPayload($taskId, $statusFile, $callback, $context, $frameworkInfo, $serializationManager, $loggingEnabled);
@@ -81,6 +75,49 @@ class ProcessSpawnHandler
         }
 
         return new Process($taskId, $pid, $processResource, $stdin, $stdout, $stderr, $statusFile, $loggingEnabled);
+    }
+
+    public function spawnFireAndForgetTask(
+        string $taskId,
+        callable $callback,
+        array $context,
+        array $frameworkInfo,
+        CallbackSerializationManager $serializationManager,
+        bool $loggingEnabled
+    ): BackgroundProcess {
+        $phpBinary = $this->systemUtils->getPhpBinary();
+        $workerScript = $this->getWorkerPath(scriptName: 'worker_background.php');
+
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript);
+
+        $descriptorSpec = [
+            0 => ['pipe', 'r'],
+            1 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
+            2 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
+        ];
+
+        $pipes = [];
+        $processResource = @proc_open($command, $descriptorSpec, $pipes);
+
+        if (!\is_resource($processResource)) {
+            throw new \RuntimeException("Failed to spawn fire-and-forget process.");
+        }
+
+        $status = proc_get_status($processResource);
+        $pid = $status['pid'];
+
+        $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.json';
+
+        try {
+            $payload = $this->createTaskPayload($taskId, $statusFile, $callback, $context, $frameworkInfo, $serializationManager, $loggingEnabled);
+
+            fwrite($pipes[0], $payload . PHP_EOL);
+            fflush($pipes[0]);
+        } finally {
+            fclose($pipes[0]);
+        }
+
+        return new BackgroundProcess($taskId, $pid, $statusFile, $loggingEnabled);
     }
 
     private function createTaskPayload(
@@ -106,46 +143,25 @@ class ProcessSpawnHandler
             'logging_enabled' => $loggingEnabled,
         ];
 
-        $jsonPayload = json_encode($payloadData, JSON_UNESCAPED_SLASHES);
-        if ($jsonPayload === false) {
-            throw new SerializationException('Failed to JSON-encode the task payload: ' . json_last_error_msg());
-        }
-
-        return $jsonPayload;
+        return json_encode($payloadData, JSON_UNESCAPED_SLASHES);
     }
 
-    private function getWorkerPath(): string
+    private function getWorkerPath(string $scriptName): string
     {
         $possiblePaths = [];
-
         try {
             $reflector = new \ReflectionClass(\Composer\Autoload\ClassLoader::class);
-            $vendorDir = dirname($reflector->getFileName(), 2);
-
-            $possiblePaths[] = $vendorDir . '/hiblaphp/parallel/src/worker.php';
+            $possiblePaths[] = dirname($reflector->getFileName(), 2) . '/hiblaphp/parallel/src/' . $scriptName;
         } catch (\ReflectionException $e) {
-            // Composer ClassLoader not available, continue with fallback
         }
 
-        $possiblePaths[] = dirname(__DIR__) . '/worker.php';
-
-        $autoloadPath = $this->systemUtils->findAutoloadPath();
-        if ($autoloadPath) {
-            $vendorDir = dirname($autoloadPath);
-            $possiblePaths[] = $vendorDir . '/hiblaphp/parallel/src/worker.php';
-        }
+        $possiblePaths[] = dirname(__DIR__) . '/../' . $scriptName; 
+        $possiblePaths[] = dirname(__DIR__) . '/' . $scriptName;   
 
         foreach ($possiblePaths as $path) {
-            $realPath = realpath($path);
-            if ($realPath !== false && is_readable($realPath)) {
-                return $realPath;
-            }
+            if (($real = realpath($path)) && is_readable($real)) return $real;
         }
 
-        $attemptedPaths = array_unique($possiblePaths);
-        throw new \RuntimeException(
-            "Critical library file 'worker.php' is missing or not readable.\n" .
-                "Attempted locations:\n  - " . implode("\n  - ", $attemptedPaths)
-        );
+        throw new \RuntimeException("Worker script '$scriptName' not found.");
     }
 }
