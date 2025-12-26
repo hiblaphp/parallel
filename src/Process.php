@@ -266,4 +266,9 @@ final class Process
             }
         }
     }
+
+    public function __destruct()
+    {
+       $this->terminate();
+    }
 }
