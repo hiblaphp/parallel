@@ -70,7 +70,7 @@ class ProcessManager
     {
         $this->config = ConfigLoader::getInstance();
         $this->serializer = new CallbackSerializationManager();
-        $this->systemUtils = new SystemUtilities($this->config);
+        $this->systemUtils = new SystemUtilities();
         $this->logger = new BackgroundLogger($this->config);
         $this->statusHandler = new TaskStatusHandler($this->logger->getLogDirectory());
         $this->spawnHandler = new ProcessSpawnHandler($this->config, $this->systemUtils, $this->logger);

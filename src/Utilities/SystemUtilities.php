@@ -2,22 +2,11 @@
 
 namespace Hibla\Parallel\Utilities;
 
-use Hibla\Parallel\Config\ConfigLoader;
-
 /**
  * System utilities and helper functions
  */
 class SystemUtilities
 {
-    private string $tempDir;
-
-    public function __construct(private ConfigLoader $config)
-    {
-        $tempDir = $this->config->get('temp_directory');
-        $this->tempDir = $tempDir ?: (sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'defer_tasks');
-        $this->ensureDirectories();
-    }
-
     /**
      * Generate unique task ID with timestamp
      *
@@ -140,33 +129,6 @@ class SystemUtilities
     }
 
     /**
-     * Get temporary directory path
-     *
-     * @return string Path to temporary directory
-     */
-    public function getTempDirectory(): string
-    {
-        return $this->tempDir;
-    }
-
-    /**
-     * Calculate directory size recursively
-     *
-     * @param string $directory Directory path to calculate size for
-     * @return int Total size in bytes
-     */
-    private function getDirectorySize(string $directory): int
-    {
-        $size = 0;
-        if (is_dir($directory)) {
-            foreach (glob($directory . DIRECTORY_SEPARATOR . '*', GLOB_NOSORT) ?: [] as $file) {
-                $size += is_file($file) ? (filesize($file) ?: 0) : $this->getDirectorySize($file);
-            }
-        }
-        return $size;
-    }
-
-    /**
      * Find framework bootstrap file from possible paths
      *
      * @param list<string> $possibleFiles List of possible bootstrap file paths
@@ -186,17 +148,5 @@ class SystemUtilities
         }
 
         return null;
-    }
-
-    /**
-     * Ensure necessary directories exist
-     *
-     * @return void
-     */
-    private function ensureDirectories(): void
-    {
-        if (!is_dir($this->tempDir)) {
-            mkdir($this->tempDir, 0755, true);
-        }
     }
 }

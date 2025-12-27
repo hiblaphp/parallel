@@ -269,6 +269,8 @@ final class Process
 
     public function __destruct()
     {
-       $this->terminate();
+        if ($this->isRunning()) {
+            $this->terminate();
+        }
     }
 }
