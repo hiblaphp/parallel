@@ -2,6 +2,8 @@
 
 namespace Hibla\Parallel\Utilities;
 
+use function Rcalicdan\ConfigLoader\configRoot;
+
 /**
  * System utilities and helper functions
  */
@@ -74,7 +76,6 @@ class SystemUtilities
             __DIR__ . '/../vendor/autoload.php',
             dirname($_SERVER['SCRIPT_FILENAME'] ?? __FILE__) . '/vendor/autoload.php',
             dirname($_SERVER['SCRIPT_FILENAME'] ?? __FILE__) . '/../vendor/autoload.php',
-
             ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/../vendor/autoload.php',
         ];
 
@@ -90,63 +91,31 @@ class SystemUtilities
     }
 
     /**
-     * Detect framework and return bootstrap information
+     * Get framework bootstrap information from config
      *
      * @return array{name: string, bootstrap_file: string|null, init_code: string}
      */
-    public function detectFramework(): array
+    public function getFrameworkBootstrap(): array
     {
-        /** @var array<string, array{bootstrap_files: list<string>, detector_files: list<string>, init_code: string}> $frameworks */
-        $frameworks = [
-            'laravel' => [
-                'bootstrap_files' => ['bootstrap/app.php', '../bootstrap/app.php'],
-                'detector_files' => ['artisan', 'app/Http/Kernel.php'],
-                'init_code' => '$app = require $bootstrapFile; $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class); $kernel->bootstrap();'
-            ],
-            'symfony' => [
-                'bootstrap_files' => ['config/bootstrap.php', '../config/bootstrap.php'],
-                'detector_files' => ['bin/console', 'symfony.lock'],
-                'init_code' => 'require $bootstrapFile;'
-            ],
+        $bootstrap = configRoot('hibla_parallel', 'bootstrap', null);
+
+        if (!\is_array($bootstrap) || empty($bootstrap)) {
+            return ['name' => 'none', 'bootstrap_file' => null, 'init_code' => ''];
+        }
+
+        $bootstrapFile = $bootstrap['file'] ?? null;
+        $initCode = $bootstrap['init'] ?? '';
+
+        if (!empty($bootstrapFile) && !file_exists($bootstrapFile)) {
+            throw new \RuntimeException(
+                "Bootstrap file not found: {$bootstrapFile}"
+            );
+        }
+
+        return [
+            'name' => 'custom',
+            'bootstrap_file' => $bootstrapFile ? (realpath($bootstrapFile) ?: $bootstrapFile) : null,
+            'init_code' => $initCode,
         ];
-
-        foreach ($frameworks as $name => $config) {
-            foreach ($config['detector_files'] as $detectorFile) {
-                if (file_exists($detectorFile) || file_exists('../' . $detectorFile)) {
-                    $bootstrapFile = $this->findFrameworkBootstrap($config['bootstrap_files']);
-                    if ($bootstrapFile) {
-                        return [
-                            'name' => $name,
-                            'bootstrap_file' => $bootstrapFile,
-                            'init_code' => $config['init_code']
-                        ];
-                    }
-                }
-            }
-        }
-
-        return ['name' => 'none', 'bootstrap_file' => null, 'init_code' => ''];
-    }
-
-    /**
-     * Find framework bootstrap file from possible paths
-     *
-     * @param list<string> $possibleFiles List of possible bootstrap file paths
-     * @return string|null Absolute path to bootstrap file or null if not found
-     */
-    private function findFrameworkBootstrap(array $possibleFiles): ?string
-    {
-        $basePaths = [getcwd(), dirname($_SERVER['SCRIPT_FILENAME'] ?? __FILE__)];
-
-        foreach ($basePaths as $basePath) {
-            foreach ($possibleFiles as $file) {
-                $fullPath = $basePath . '/' . $file;
-                if (file_exists($fullPath)) {
-                    return realpath($fullPath) ?: null;
-                }
-            }
-        }
-
-        return null;
     }
 }

@@ -8,7 +8,6 @@ require __DIR__ . '/vendor/autoload.php';
  * Hibla Parallel Library Configuration
  *
  * This file allows you to configure the behavior of the Hibla Parallel background processing system.
- * It reads values directly from environment variables loaded from your project's .env file.
  */
 return [
     /*
@@ -21,11 +20,9 @@ return [
     |              don't need detailed per-task logs.
     |
     | 'directory': The absolute path to store logs and status files.
-    |              If null, a system temporary directory will be used. It is
-    |              highly recommended to set a persistent path for production.
+    |              If null, a system temporary directory will be used.
     |
     | .env variable: HIBLA_PARALLEL_LOGGING_ENABLED (true|false)
-    | .env variable: HIBLA_PARALLEL_LOG_DIRECTORY (/path/to/your/logs)
     |
     */
     'logging' => [
@@ -38,9 +35,10 @@ return [
     | Background Process Settings
     |--------------------------------------------------------------------------
     |
-    | 'memory_limit': The memory limit for each background process (e.g., '256M').
+    | 'memory_limit': The memory limit for each background process (e.g., '512M').
     |
     | .env variable: HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT
+    |
     */
     'background_process' => [
         'memory_limit' => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT', '512M'),
@@ -48,40 +46,39 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Framework Integration
+    | Framework Bootstrap Configuration
     |--------------------------------------------------------------------------
     |
-    | 'auto_detect': Automatically detect and bootstrap for Laravel/Symfony frameworks.
-    |                Set to false if you want to use custom bootstrap config below.
+    | Configure custom bootstrap for your application/framework.
+    | If null, no framework bootstrap will be loaded (pure PHP mode).
     |
-    | 'custom': Define your own bootstrap configuration for any framework/app.
-    |           When configured, this takes precedence over auto-detection.
-    |
-    | Example for WordPress:
-    | 'custom' => [
-    |     'bootstrap_file' => __DIR__ . '/../wp-load.php',
-    |     'init_code' => 'require $bootstrapFile; do_action("init");'
+    | Laravel Example:
+    | 'bootstrap' => [
+    |     'file' => __DIR__ . '/bootstrap/app.php',
+    |     'init' => <<<'PHP'
+    |         $app = require $bootstrapFile;
+    |         $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
+    |         $kernel->bootstrap();
+    |     PHP,
     | ]
     |
-    | Example for custom app:
-    | 'custom' => [
-    |     'bootstrap_file' => __DIR__ . '/bootstrap/app.php',
-    |     'init_code' => '$app = require $bootstrapFile; $app->boot();'
+    | Symfony Example:
+    | 'bootstrap' => [
+    |     'file' => __DIR__ . '/config/bootstrap.php',
+    |     'init' => <<<'PHP'
+    |         require $bootstrapFile;
+    |     PHP,
     | ]
     |
-    | .env variable: HIBLA_PARALLEL_BOOTSTRAP_FRAMEWORK (true|false)
+    | Custom App Example:
+    | 'bootstrap' => [
+    |     'file' => __DIR__ . '/bootstrap/worker.php',
+    |     'init' => <<<'PHP'
+    |         $app = require $bootstrapFile;
+    |         $app->initialize();
+    |     PHP,
+    | ]
     |
     */
-    'bootstrap_framework' => [
-        'auto_detect' => env('HIBLA_PARALLEL_BOOTSTRAP_FRAMEWORK', true),
-        
-        // Custom bootstrap configuration (leave null to use auto-detection)
-        'custom' => null,
-        
-        // Example configurations (uncomment and modify as needed):
-        // 'custom' => [
-        //     'bootstrap_file' => __DIR__ . '/bootstrap/app.php',
-        //     'init_code' => '$app = require $bootstrapFile; $app->boot();'
-        // ],
-    ],
+    'bootstrap' => null,
 ];

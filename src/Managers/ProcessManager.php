@@ -71,7 +71,7 @@ class ProcessManager
         $this->statusHandler = new TaskStatusHandler($this->logger->getLogDirectory());
         $this->spawnHandler = new ProcessSpawnHandler( $this->systemUtils, $this->logger);
         $this->taskRegistry = new TaskRegistry();
-        $this->frameworkInfo = $this->systemUtils->detectFramework();
+        $this->frameworkInfo = $this->systemUtils->getFrameworkBootstrap();
     }
 
     /**

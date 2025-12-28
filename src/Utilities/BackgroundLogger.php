@@ -70,83 +70,6 @@ final class BackgroundLogger
     }
 
     /**
-     * Logs a system-level event without task context.
-     *
-     * Writes a timestamped log entry for system-wide events that aren't specific
-     * to any particular task. Uses 'SYSTEM' as the task ID placeholder.
-     *
-     * @param string $level Log level (e.g., 'INFO', 'ERROR', 'WARNING')
-     * @param string $message Log message describing the event
-     * @return void
-     */
-    public function logEvent(string $level, string $message): void
-    {
-        if (!$this->enableDetailedLogging || $this->logFile === null) {
-            return;
-        }
-
-        $timestamp = date('Y-m-d H:i:s');
-        $logEntry = "[{$timestamp}] [{$level}] [SYSTEM] {$message}" . PHP_EOL;
-
-        if (file_put_contents($this->logFile, $logEntry, FILE_APPEND | LOCK_EX) === false) {
-            error_log("Failed to write to log file: {$this->logFile}");
-        }
-    }
-
-    /**
-     * Retrieves recent log entries for monitoring purposes.
-     *
-     * Reads and parses the most recent log entries from the log file, extracting
-     * structured information including timestamp, level, task ID, and message.
-     * Returns entries in chronological order.
-     *
-     * @param int $limit Maximum number of recent entries to retrieve (default: 100)
-     * @return array<int, array<string, string|null>> Array of parsed log entries with structured fields
-     */
-    public function getRecentLogs(int $limit = 100): array
-    {
-        if ($this->logFile === null || !file_exists($this->logFile)) {
-            return [];
-        }
-
-        $lines = file($this->logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if ($lines === false) {
-            return [];
-        }
-
-        /** @var array<int, array<string, string|null>> $logs */
-        $logs = [];
-        $recentLines = \array_slice($lines, -$limit);
-
-        foreach ($recentLines as $line) {
-            if (preg_match('/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[([^\]]+)\] \[([^\]]+)\] (.+)$/', $line, $matches)) {
-                $logs[] = [
-                    'timestamp' => $matches[1],
-                    'level' => $matches[2],
-                    'task_id' => $matches[3] !== 'SYSTEM' ? $matches[3] : null,
-                    'message' => $matches[4],
-                    'raw_line' => $line
-                ];
-            }
-        }
-
-        return $logs;
-    }
-
-    /**
-     * Gets the path to the main log file.
-     *
-     * Returns the full path to the log file where detailed task and system
-     * events are written. Returns null if detailed logging is disabled.
-     *
-     * @return string|null Path to the log file, or null if detailed logging is disabled
-     */
-    public function getLogFile(): ?string
-    {
-        return $this->logFile;
-    }
-
-    /**
      * Gets the log directory path.
      *
      * Returns the directory path where log files and status files are stored.
@@ -173,22 +96,29 @@ final class BackgroundLogger
     }
 
     /**
-     * Sets the detailed logging state.
+     * Logs a system-level event without task context.
      *
-     * Enables or disables detailed logging to files. When enabling, logs
-     * an informational message about the state change.
-     * 
-     * @param bool $enabled True to enable detailed logging, false to disable
+     * Writes a timestamped log entry for system-wide events that aren't specific
+     * to any particular task. Uses 'SYSTEM' as the task ID placeholder.
+     *
+     * @param string $level Log level (e.g., 'INFO', 'ERROR', 'WARNING')
+     * @param string $message Log message describing the event
      * @return void
      */
-    public function setDetailedLogging(bool $enabled): void
+    private function logEvent(string $level, string $message): void
     {
-        $this->enableDetailedLogging = $enabled;
+        if (!$this->enableDetailedLogging || $this->logFile === null) {
+            return;
+        }
 
-        if ($enabled && $this->logFile !== null) {
-            $this->logEvent('INFO', 'Detailed logging enabled');
+        $timestamp = date('Y-m-d H:i:s');
+        $logEntry = "[{$timestamp}] [{$level}] [SYSTEM] {$message}" . PHP_EOL;
+
+        if (file_put_contents($this->logFile, $logEntry, FILE_APPEND | LOCK_EX) === false) {
+            error_log("Failed to write to log file: {$this->logFile}");
         }
     }
+
 
     private function ensureDirectories(): void
     {
