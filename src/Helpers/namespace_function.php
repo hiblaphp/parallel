@@ -68,18 +68,17 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
 {
     $source = new CancellationTokenSource();
 
-    return async(function () use ($task, $timeout, $context, $source) {
-        /** @var Process $process */
-        $process = ProcessManager::getGlobal()->spawnStreamedTask($task, $context, $timeout);
+    /** @var Process $process */
+    $process = ProcessManager::getGlobal()->spawnStreamedTask($task, $context, $timeout);
 
-        $source->token->onCancel(function () use ($process) {
-            $process->terminate();
-        });
-
-        return await($process->getResult($timeout), $source->token);
-    })->onCancel(function () use ($source) {
-        $source->cancel();
+    $source->token->onCancel(function () use ($process) {
+        $process->terminate();
     });
+
+    return $process->getResult($timeout)
+        ->finally(function () use ($source) {
+            $source->cancel();
+        });
 }
 
 /**

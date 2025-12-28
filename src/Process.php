@@ -20,6 +20,8 @@ use function Hibla\delay;
  */
 final class Process
 {
+    private bool $isSystemRunning = true;
+
     /**
      * @param string $taskId Unique identifier for the task
      * @param int $pid Process ID
@@ -83,6 +85,10 @@ final class Process
      */
     public function terminate(): void
     {
+        if (!$this->isSystemRunning) {
+            return;
+        }
+
         if ($this->isRunning()) {
             if (PHP_OS_FAMILY === 'Windows') {
                 exec("taskkill /F /T /PID {$this->pid} 2>nul");
@@ -101,18 +107,30 @@ final class Process
      */
     public function isRunning(): bool
     {
+        if (!$this->isSystemRunning) {
+            return false;
+        }
+
         if (PHP_OS_FAMILY === 'Windows') {
             $cmd = "tasklist /FI \"PID eq {$this->pid}\" 2>nul";
             $output = shell_exec($cmd);
-            return $output !== null && strpos($output, (string)$this->pid) !== false;
+            $this->isSystemRunning = $output !== null && strpos($output, (string)$this->pid) !== false;
+            return $this->isSystemRunning;
         }
 
-        if (!is_resource($this->processResource)) {
+        if (!\is_resource($this->processResource)) {
+            $this->isSystemRunning = false;
             return false;
         }
 
         $status = proc_get_status($this->processResource);
-        return $status['running'] ?? false;
+        $running = $status['running'] ?? false;
+
+        if (!$running) {
+            $this->isSystemRunning = false;
+        }
+
+        return $running;
     }
 
     /**
@@ -180,8 +198,9 @@ final class Process
             $lastOutputPosition = 0;
 
             while ((microtime(true) - $startTime) < $timeoutSeconds) {
+                if (!$this->isSystemRunning && !file_exists($this->statusFilePath)) return null;
+
                 if (!file_exists($this->statusFilePath)) {
-                    if (!$this->isRunning()) return null;
                     await(delay($pollInterval));
                     continue;
                 }
@@ -246,12 +265,19 @@ final class Process
      */
     private function close(): void
     {
-        $this->stdin->close();
-        $this->stdout->close();
-        $this->stderr->close();
+        if (!$this->isSystemRunning) {
+            return;
+        }
+
+        if (isset($this->stdin)) $this->stdin->close();
+        if (isset($this->stdout)) $this->stdout->close();
+        if (isset($this->stderr)) $this->stderr->close();
+
         if (\is_resource($this->processResource)) {
             proc_close($this->processResource);
         }
+
+        $this->isSystemRunning = false;
     }
 
     /**
@@ -273,7 +299,7 @@ final class Process
 
     public function __destruct()
     {
-        if ($this->isRunning()) {
+        if ($this->isSystemRunning) {
             $this->terminate();
         }
     }
