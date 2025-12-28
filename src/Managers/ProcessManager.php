@@ -2,7 +2,6 @@
 
 namespace Hibla\Parallel\Managers;
 
-use Hibla\Parallel\Config\ConfigLoader;
 use Hibla\Parallel\Process;
 use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
@@ -26,8 +25,6 @@ class ProcessManager
      * @var self|null Singleton instance of the ProcessManager
      */
     private static ?self $instance = null;
-
-    private ConfigLoader $config;
 
     private ProcessSpawnHandler $spawnHandler;
 
@@ -68,12 +65,11 @@ class ProcessManager
      */
     public function __construct()
     {
-        $this->config = ConfigLoader::getInstance();
         $this->serializer = new CallbackSerializationManager();
         $this->systemUtils = new SystemUtilities();
-        $this->logger = new BackgroundLogger($this->config);
+        $this->logger = new BackgroundLogger();
         $this->statusHandler = new TaskStatusHandler($this->logger->getLogDirectory());
-        $this->spawnHandler = new ProcessSpawnHandler($this->config, $this->systemUtils, $this->logger);
+        $this->spawnHandler = new ProcessSpawnHandler( $this->systemUtils, $this->logger);
         $this->taskRegistry = new TaskRegistry();
         $this->frameworkInfo = $this->systemUtils->detectFramework();
     }
@@ -124,7 +120,7 @@ class ProcessManager
      * @throws \RuntimeException If task nesting is detected or validation fails
      * @throws SerializationException If the callback cannot be serialized
      */
-    public function spawnFireAndForgetTask(callable $callback, array $context = [], int $timeoutSeconds = 600): BackgroundProcess
+    public function spawnBackgroundTask(callable $callback, array $context = [], int $timeoutSeconds = 600): BackgroundProcess
     {
         if (microtime(true) - $this->lastSpawnReset > 1.0) {
             $this->spawnCount = 0;
@@ -146,7 +142,7 @@ class ProcessManager
             $this->statusHandler->createInitialStatus($taskId, $callback, $context);
         }
 
-        $process = $this->spawnHandler->spawnFireAndForgetTask(
+        $process = $this->spawnHandler->spawnBackgroundTask(
             $taskId,
             $callback,
             $context,

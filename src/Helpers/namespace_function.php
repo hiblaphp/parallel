@@ -142,6 +142,6 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
 function spawn(callable $task, array $context = [], int $timeout = 600): PromiseInterface
 {
     return Promise::resolved(
-        ProcessManager::getGlobal()->spawnFireAndForgetTask($task, $context, $timeout)
+        ProcessManager::getGlobal()->spawnBackgroundTask($task, $context, $timeout)
     );
 }

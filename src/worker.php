@@ -233,7 +233,9 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         $taskId = $taskData['task_id'] ?? 'unknown';
         $statusFile = $taskData['status_file'] ?? null;
         $timeoutSeconds = $taskData['timeout_seconds'] ?? 60;
-
+        $memoryLimit = $taskData['memory_limit'] ?? "512M";
+        
+        ini_set('memory_limit', $memoryLimit);
         ini_set('max_execution_time', (string)$timeoutSeconds);
         set_time_limit($timeoutSeconds);
 

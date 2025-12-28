@@ -2,7 +2,6 @@
 
 namespace Hibla\Parallel\Handlers;
 
-use Hibla\Parallel\Config\ConfigLoader;
 use Hibla\Parallel\Process;
 use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Serialization\CallbackSerializationManager;
@@ -10,6 +9,7 @@ use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Stream\PromiseReadableStream;
 use Hibla\Stream\PromiseWritableStream;
+use Rcalicdan\ConfigLoader\Config;
 
 /**
  * Handles spawning and managing parallel worker processes.
@@ -20,11 +20,14 @@ use Hibla\Stream\PromiseWritableStream;
  */
 class ProcessSpawnHandler
 {
+    private string|int $defaultMemoryLimit;
+
     public function __construct(
-        private ConfigLoader $config,
         private SystemUtilities $systemUtils,
         private BackgroundLogger $logger
-    ) {}
+    ) {
+        $this->defaultMemoryLimit = Config::loadFromRoot('hibla_parallel', 'background_process.memory_limit', '512M');
+    }
 
     /**
      * Spawns a streamed task process with bidirectional communication.
@@ -127,7 +130,7 @@ class ProcessSpawnHandler
      * @return BackgroundProcess The spawned background process instance
      * @throws \RuntimeException If process spawning fails
      */
-    public function spawnFireAndForgetTask(
+    public function spawnBackgroundTask(
         string $taskId,
         callable $callback,
         array $context,
@@ -220,6 +223,7 @@ class ProcessSpawnHandler
             'framework_init_code' => $frameworkInfo['init_code'] ?? '',
             'logging_enabled' => $loggingEnabled,
             'timeout_seconds' => $timeoutSeconds,
+            'memory_limit' => $this->defaultMemoryLimit,
         ];
 
         $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);

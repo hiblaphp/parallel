@@ -81,8 +81,10 @@ try {
     $statusFile = $taskData['status_file'] ?? null;
     $taskId = $taskData['task_id'] ?? 'unknown';
     $timeoutSeconds = $taskData['timeout_seconds'] ?? 60;
+    $memoryLimit = $taskData['memory_limit'] ?? "512M";
 
-    @ini_set('max_execution_time', (string)$timeoutSeconds);
+    ini_set('memory_limit', $memoryLimit);
+    ini_set('max_execution_time', (string)$timeoutSeconds);
     set_time_limit($timeoutSeconds);
 
     if (!$isWindows && function_exists('pcntl_alarm') && function_exists('pcntl_signal')) {

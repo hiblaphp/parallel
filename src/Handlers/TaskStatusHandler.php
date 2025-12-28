@@ -2,8 +2,6 @@
 
 namespace Hibla\Parallel\Handlers;
 
-use Hibla\Parallel\Utilities\BackgroundLogger;
-
 /**
  * Handles task status persistence and file management.
  * 

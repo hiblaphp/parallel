@@ -165,68 +165,57 @@ final class Process
         });
     }
 
-private function pollResultFromFile(int $timeoutSeconds): PromiseInterface
-{
-    return async(function () use ($timeoutSeconds) {
-        $startTime = microtime(true);
-        $pollInterval = 0.05;
-        $lastOutputPosition = 0;
+    /**
+     * Poll for task result from status file (Windows systems)
+     *
+     * @param int $timeoutSeconds Maximum time to poll in seconds
+     * @return PromiseInterface<TResult> Promise that resolves with task result
+     * @throws \RuntimeException If task fails, is cancelled, or times out
+     */
+    private function pollResultFromFile(int $timeoutSeconds): PromiseInterface
+    {
+        return async(function () use ($timeoutSeconds) {
+            $startTime = microtime(true);
+            $pollInterval = 0.05;
+            $lastOutputPosition = 0;
 
-        while ((microtime(true) - $startTime) < $timeoutSeconds) {
-            if (!file_exists($this->statusFilePath)) {
-                if (!$this->isRunning()) return null;
-                await(delay($pollInterval));
-                continue;
-            }
-
-            clearstatcache(true, $this->statusFilePath);
-            $content = @file_get_contents($this->statusFilePath);
-            if ($content === false) {
-                await(delay($pollInterval));
-                continue;
-            }
-
-            $status = json_decode($content, true);
-            if (!\is_array($status)) {
-                await(delay($pollInterval));
-                continue;
-            }
-
-            if (isset($status['buffered_output']) && \is_string($status['buffered_output'])) {
-                $output = $status['buffered_output'];
-                if (\strlen($output) > $lastOutputPosition) {
-                    echo substr($output, $lastOutputPosition);
-                    $lastOutputPosition = \strlen($output);
+            while ((microtime(true) - $startTime) < $timeoutSeconds) {
+                if (!file_exists($this->statusFilePath)) {
+                    if (!$this->isRunning()) return null;
+                    await(delay($pollInterval));
+                    continue;
                 }
-                
-                // Check if buffered output contains timeout message
-                if (stripos($output, 'Maximum execution time') !== false) {
-                    throw new \RuntimeException(
-                        "Task {$this->taskId} exceeded maximum execution time of {$this->timeoutSeconds} seconds."
-                    );
+
+                clearstatcache(true, $this->statusFilePath);
+                $content = @file_get_contents($this->statusFilePath);
+                if ($content === false) {
+                    await(delay($pollInterval));
+                    continue;
                 }
-            }
 
-            $statusType = $status['status'] ?? '';
-            
-            if ($statusType === 'COMPLETED') {
-                return $status['result'] ?? null;
-            }
-            if ($statusType === 'CANCELLED') {
-                throw new \RuntimeException("Task cancelled.");
-            }
-            if ($statusType === 'TIMEOUT') {
-                throw new \RuntimeException("Task timed out: " . ($status['message'] ?? 'Maximum execution time exceeded'));
-            }
-            if ($statusType === 'ERROR') {
-                throw new \RuntimeException("Task failed: " . ($status['message'] ?? 'Unknown'));
-            }
+                $status = json_decode($content, true);
+                if (!\is_array($status)) {
+                    await(delay($pollInterval));
+                    continue;
+                }
 
-            await(delay($pollInterval));
-        }
-        throw new \RuntimeException("Timeout polling status file.");
-    });
-}
+                if (isset($status['buffered_output']) && \is_string($status['buffered_output'])) {
+                    $output = $status['buffered_output'];
+                    if (\strlen($output) > $lastOutputPosition) {
+                        echo substr($output, $lastOutputPosition);
+                        $lastOutputPosition = \strlen($output);
+                    }
+                }
+
+                if (($status['status'] ?? '') === 'COMPLETED') return $status['result'] ?? null;
+                if (($status['status'] ?? '') === 'CANCELLED') throw new \RuntimeException("Task cancelled.");
+                if (($status['status'] ?? '') === 'ERROR') throw new \RuntimeException("Task failed: " . ($status['message'] ?? 'Unknown'));
+
+                await(delay($pollInterval));
+            }
+            throw new \RuntimeException("Timeout polling status file.");
+        });
+    }
 
     /**
      * Update the status file with new status and message
