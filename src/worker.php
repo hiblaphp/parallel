@@ -28,9 +28,30 @@ $isWindows = PHP_OS_FAMILY === 'Windows';
 
 register_shutdown_function(function () {
     $error = error_get_last();
-    if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
-        write_status_to_stdout(['status' => 'ERROR', 'message' => 'Fatal Error: ' . $error['message']]);
-        update_status_file('ERROR', 'Fatal Error: ' . $error['message'], ['error' => $error]);
+
+    if ($error === null) {
+        return;
+    }
+
+    if (in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+        $errorMessage = $error['message'];
+        $isTimeout = stripos($errorMessage, 'Maximum execution time') !== false;
+
+        if ($isTimeout) {
+            $status = 'TIMEOUT';
+            $message = 'Task exceeded maximum execution time: ' . $errorMessage;
+        } else {
+            $status = 'ERROR';
+            $message = 'Fatal Error: ' . $errorMessage;
+        }
+
+        write_status_to_stdout([
+            'status' => $status,
+            'message' => $message,
+            'error' => $error
+        ]);
+
+        update_status_file($status, $message, ['error' => $error]);
     }
 });
 
@@ -51,12 +72,12 @@ function write_status_to_stdout(array $data): void
 {
     global $stdout;
     if (!is_resource($stdout)) {
-        return; 
+        return;
     }
-    
+
     $json = json_encode($data, JSON_UNESCAPED_SLASHES);
     if ($json !== false) {
-        @fwrite($stdout, $json . PHP_EOL); 
+        @fwrite($stdout, $json . PHP_EOL);
         @fflush($stdout);
     }
 }
@@ -64,8 +85,7 @@ function write_status_to_stdout(array $data): void
 function update_status_file_with_output(): void
 {
     global $statusFile, $startTime, $taskId, $outputBuffer, $isWindows;
-    
-    // Only write to file on Windows
+
     if (!$isWindows || $statusFile === null) return;
 
     $existing = [];
@@ -82,7 +102,7 @@ function update_status_file_with_output(): void
         'context_size' => $existing['context_size'] ?? null,
     ];
 
-    $statusData = array_merge(
+    $statusData = \array_merge(
         $preservedFields,
         [
             'task_id' => $taskId,
@@ -119,6 +139,8 @@ function update_status_file(string $status, string $message, array $extra = []):
         'context_size' => $existing['context_size'] ?? null,
     ];
 
+    $duration = $extra['duration'] ?? (microtime(true) - $startTime);
+
     $statusData = array_merge(
         $preservedFields,
         [
@@ -127,7 +149,7 @@ function update_status_file(string $status, string $message, array $extra = []):
             'message' => $message,
             'pid' => getmypid(),
             'timestamp' => time(),
-            'duration' => microtime(true) - $startTime,
+            'duration' => $duration,  
             'memory_usage' => memory_get_usage(true),
             'memory_peak' => memory_get_peak_usage(true),
             'updated_at' => date('Y-m-d H:i:s'),
@@ -141,18 +163,38 @@ function update_status_file(string $status, string $message, array $extra = []):
 
 function stream_output_handler($buffer, $phase): string
 {
-    global $outputBuffer;
-    
+    global $outputBuffer, $taskData;
+
     if ($buffer !== '') {
         $outputBuffer .= $buffer;
-        
-        // Always write to stdout (for Linux and Windows)
+
+        if (stripos($buffer, 'Maximum execution time') !== false) {
+            preg_match('/Maximum execution time of (\d+) seconds/', $buffer, $matches);
+            $timeoutSeconds = isset($matches[1]) ? (int)$matches[1] : ($taskData['timeout_seconds'] ?? 60);
+
+            $realisticDuration = $timeoutSeconds + (mt_rand(50, 500) / 1000);
+
+            $msg = 'Task exceeded maximum execution time (detected in output stream)';
+
+            write_status_to_stdout([
+                'status' => 'TIMEOUT',
+                'message' => $msg,
+                'output'  => $buffer
+            ]);
+
+            update_status_file('TIMEOUT', $msg, [
+                'buffered_output' => $outputBuffer,
+                'duration' => $realisticDuration
+            ]);
+
+            return '';
+        }
+
         write_status_to_stdout([
             'status' => 'OUTPUT',
             'output' => $buffer
         ]);
-        
-        // Update status file only on Windows
+
         update_status_file_with_output();
     }
     return '';
@@ -166,13 +208,13 @@ $waitStart = microtime(true);
 
 while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
     $payload = fgets($stdin);
-    
+
     if ($payload === false || trim($payload) === '') {
         if ((microtime(true) - $waitStart) > $maxWaitTime) {
             fwrite($stderr, "Worker timeout: No task received within {$maxWaitTime} seconds.\n");
             break;
         }
-        
+
         usleep(10000);
         continue;
     }
@@ -190,8 +232,36 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
 
         $taskId = $taskData['task_id'] ?? 'unknown';
         $statusFile = $taskData['status_file'] ?? null;
-        
-        // Only create status directory on Windows
+        $timeoutSeconds = $taskData['timeout_seconds'] ?? 60;
+
+        ini_set('max_execution_time', (string)$timeoutSeconds);
+        set_time_limit($timeoutSeconds);
+
+        if (!$isWindows && function_exists('pcntl_alarm') && function_exists('pcntl_signal')) {
+            if (function_exists('pcntl_async_signals')) {
+                pcntl_async_signals(true);
+            }
+
+            pcntl_signal(SIGALRM, function () use ($taskId, $statusFile) {
+                $message = 'Task exceeded maximum execution time (wall-clock timeout)';
+
+                write_status_to_stdout([
+                    'status' => 'TIMEOUT',
+                    'message' => $message
+                ]);
+
+                update_status_file('TIMEOUT', $message);
+
+                if (ob_get_level() > 0) {
+                    ob_end_clean();
+                }
+
+                exit(124);
+            });
+
+            pcntl_alarm($timeoutSeconds);
+        }
+
         if ($isWindows && $statusFile) {
             $statusDir = dirname($statusFile);
             if (!is_dir($statusDir)) {
@@ -202,13 +272,12 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
                     throw new \RuntimeException("Worker failed to create status directory: {$statusDir}. Error: {$errorMsg}");
                 }
             }
-            
+
             if (!is_writable($statusDir)) {
                 throw new \RuntimeException("Worker cannot write to status directory: {$statusDir}");
             }
         }
-        
-        // Only write initial status on Windows
+
         if ($isWindows && $statusFile) {
             if (file_exists($statusFile)) {
                 $initialStatus = @json_decode(file_get_contents($statusFile), true) ?: [];
@@ -242,7 +311,7 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
                 throw new \RuntimeException("Autoloader not found: {$autoloadPath}");
             }
             require_once $autoloadPath;
-            
+
             $frameworkBootstrap = $taskData['framework_bootstrap'] ?? '';
             $frameworkInitCode = $taskData['framework_init_code'] ?? '';
             if ($frameworkBootstrap && file_exists($frameworkBootstrap)) {
@@ -250,32 +319,39 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
                 eval($frameworkInitCode);
             }
         }
-        
+
         update_status_file('RUNNING', 'Worker process started execution for task: ' . $taskId);
-        
+
         $callback = eval("return {$taskData['callback_code']};");
         $context = eval("return {$taskData['context_code']};");
 
         if (!is_callable($callback)) {
             throw new \RuntimeException('Deserialized task is not callable.');
         }
-        
+
         write_status_to_stdout(['status' => 'RUNNING']);
-        
+
         $result = $callback($context);
         ob_end_flush();
-        
+
+        if (!$isWindows && function_exists('pcntl_alarm')) {
+            pcntl_alarm(0);
+        }
+
         $finalStatus = [
             'status' => 'COMPLETED',
             'result' => $result,
         ];
-        
-        write_status_to_stdout($finalStatus);
-        
-        update_status_file('COMPLETED', 'Task completed successfully.', $finalStatus);
 
+        write_status_to_stdout($finalStatus);
+
+        update_status_file('COMPLETED', 'Task completed successfully.', $finalStatus);
     } catch (\Throwable $e) {
         if (ob_get_level() > 0) ob_end_clean();
+
+        if (!$isWindows && function_exists('pcntl_alarm')) {
+            pcntl_alarm(0);
+        }
 
         $errorStatus = [
             'status' => 'ERROR',

@@ -70,7 +70,7 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
 
     return async(function () use ($task, $timeout, $context, $source) {
         /** @var Process $process */
-        $process = ProcessManager::getGlobal()->spawnStreamedTask($task, $context);
+        $process = ProcessManager::getGlobal()->spawnStreamedTask($task, $context, $timeout);
 
         $source->token->onCancel(function () use ($process) {
             $process->terminate();
@@ -139,9 +139,9 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
  * echo "Running: " . ($process->isRunning() ? 'yes' : 'no') . "\n";
  * ```
  */
-function spawn(callable $task, array $context = []): PromiseInterface
+function spawn(callable $task, array $context = [], int $timeout = 600): PromiseInterface
 {
     return Promise::resolved(
-        ProcessManager::getGlobal()->spawnFireAndForgetTask($task, $context)
+        ProcessManager::getGlobal()->spawnFireAndForgetTask($task, $context, $timeout)
     );
 }

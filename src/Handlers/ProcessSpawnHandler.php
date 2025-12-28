@@ -47,7 +47,8 @@ class ProcessSpawnHandler
         array $context,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
-        bool $loggingEnabled
+        bool $loggingEnabled,
+        int $timeoutSeconds = 60
     ): Process {
         $phpBinary = $this->systemUtils->getPhpBinary();
         $workerScript = $this->getWorkerPath('worker.php');
@@ -87,7 +88,8 @@ class ProcessSpawnHandler
                 $context,
                 $frameworkInfo,
                 $serializationManager,
-                $loggingEnabled
+                $loggingEnabled,
+                $timeoutSeconds
             );
             $stdin->writeAsync($payload . PHP_EOL);
         } catch (\Throwable $e) {
@@ -121,6 +123,7 @@ class ProcessSpawnHandler
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param bool $loggingEnabled Whether logging is enabled for this task
+     * @param int $timeoutSeconds The maximum execution time in seconds. Use 0 for no limit.
      * @return BackgroundProcess The spawned background process instance
      * @throws \RuntimeException If process spawning fails
      */
@@ -130,8 +133,11 @@ class ProcessSpawnHandler
         array $context,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
-        bool $loggingEnabled
+        bool $loggingEnabled,
+        int $timeoutSeconds = 600,
     ): BackgroundProcess {
+        $this->validateTimeout($timeoutSeconds);
+
         $phpBinary = $this->systemUtils->getPhpBinary();
         $workerScript = $this->getWorkerPath(scriptName: 'worker_background.php');
 
@@ -163,7 +169,8 @@ class ProcessSpawnHandler
                 $context,
                 $frameworkInfo,
                 $serializationManager,
-                $loggingEnabled
+                $loggingEnabled,
+                $timeoutSeconds
             );
 
             fwrite($pipes[0], $payload . PHP_EOL);
@@ -178,9 +185,6 @@ class ProcessSpawnHandler
     /**
      * Creates a JSON-encoded task payload for the worker process.
      *
-     * Serializes the callback, context, and framework information into a JSON
-     * payload that can be passed to the worker process via stdin.
-     *
      * @param string $taskId Unique identifier for the task
      * @param string $statusFile Path to the status file for tracking
      * @param callable $callback The callback function to serialize
@@ -188,6 +192,7 @@ class ProcessSpawnHandler
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param bool $loggingEnabled Whether logging is enabled for this task
+     * @param int $timeoutSeconds Maximum execution time in seconds
      * @return string JSON-encoded payload string
      * @throws \RuntimeException If serialization fails
      */
@@ -198,7 +203,8 @@ class ProcessSpawnHandler
         array $context,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
-        bool $loggingEnabled
+        bool $loggingEnabled,
+        int $timeoutSeconds = 60
     ): string {
         $callbackCode = $serializationManager->serializeCallback($callback);
         $contextCode = $serializationManager->serializeContext($context);
@@ -213,6 +219,7 @@ class ProcessSpawnHandler
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
             'framework_init_code' => $frameworkInfo['init_code'] ?? '',
             'logging_enabled' => $loggingEnabled,
+            'timeout_seconds' => $timeoutSeconds,
         ];
 
         $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);
@@ -261,5 +268,31 @@ class ProcessSpawnHandler
         }
 
         throw new \RuntimeException("Worker script '$scriptName' not found.");
+    }
+
+    /**
+     * Validates the timeout value.
+     *
+     * Ensures that the timeout is within a reasonable range (1-86400 seconds)
+     * to prevent runaway processes.
+     *
+     * @param int $timeoutSeconds Timeout duration in seconds
+     * @throws \InvalidArgumentException If the timeout is out of range
+     */
+    private function validateTimeout(int $timeoutSeconds): void
+    {
+        if ($timeoutSeconds < 1) {
+            throw new \InvalidArgumentException(
+                "Timeout must be at least 1 second. Use a reasonable timeout to prevent runaway processes. " .
+                    "If you need a very long timeout, use a high value like 3600 (1 hour) or 86400 (24 hours)."
+            );
+        }
+
+        if ($timeoutSeconds > 86400) {
+            throw new \InvalidArgumentException(
+                "Timeout cannot exceed 86400 seconds (24 hours). " .
+                    "For tasks that need longer execution, consider breaking them into smaller chunks."
+            );
+        }
     }
 }

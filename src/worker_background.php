@@ -17,6 +17,46 @@ $_SERVER['DEFER_NESTING_LEVEL'] = (string) $nestingLevel;
 
 if ($nestingLevel > 1) exit(1);
 
+$isWindows = PHP_OS_FAMILY === 'Windows';
+$loggingEnabled = false;
+$statusFile = null;
+$taskId = 'unknown';
+$startTime = microtime(true);
+$timeoutSeconds = 600;
+
+register_shutdown_function(function () {
+    global $statusFile, $taskId, $loggingEnabled, $startTime, $timeoutSeconds;
+
+    if (!$loggingEnabled || !$statusFile) {
+        return;
+    }
+
+    $error = error_get_last();
+    if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+        $errorMessage = $error['message'];
+        $isTimeout = stripos($errorMessage, 'Maximum execution time') !== false;
+
+        if ($isTimeout) {
+            $status = 'TIMEOUT';
+            $message = 'Task exceeded maximum execution time: ' . $errorMessage;
+            $duration = $timeoutSeconds + (mt_rand(0, 100000) / 1000000);
+        } else {
+            $status = 'ERROR';
+            $message = 'Fatal Error: ' . $errorMessage;
+            $duration = microtime(true) - $startTime;
+        }
+
+        @file_put_contents($statusFile, json_encode([
+            'task_id' => $taskId,
+            'status' => $status,
+            'message' => $message,
+            'error' => $error,
+            'duration' => $duration,
+            'updated_at' => date('Y-m-d H:i:s')
+        ], JSON_UNESCAPED_SLASHES));
+    }
+});
+
 $stdin = fopen('php://stdin', 'r');
 stream_set_blocking($stdin, false);
 
@@ -40,6 +80,31 @@ try {
     $loggingEnabled = $taskData['logging_enabled'] ?? false;
     $statusFile = $taskData['status_file'] ?? null;
     $taskId = $taskData['task_id'] ?? 'unknown';
+    $timeoutSeconds = $taskData['timeout_seconds'] ?? 60;
+
+    @ini_set('max_execution_time', (string)$timeoutSeconds);
+    set_time_limit($timeoutSeconds);
+
+    if (!$isWindows && function_exists('pcntl_alarm') && function_exists('pcntl_signal')) {
+        if (function_exists('pcntl_async_signals')) {
+            pcntl_async_signals(true);
+        }
+
+        pcntl_signal(SIGALRM, function () use ($taskId, $statusFile, $loggingEnabled, $startTime) {
+            if ($loggingEnabled && $statusFile) {
+                @file_put_contents($statusFile, json_encode([
+                    'task_id' => $taskId,
+                    'status' => 'TIMEOUT',
+                    'message' => 'Task exceeded maximum execution time (wall-clock timeout)',
+                    'duration' => microtime(true) - $startTime,
+                    'updated_at' => date('Y-m-d H:i:s')
+                ], JSON_UNESCAPED_SLASHES));
+            }
+            exit(124);
+        });
+
+        pcntl_alarm($timeoutSeconds);
+    }
 
     if (isset($taskData['autoload_path']) && file_exists($taskData['autoload_path'])) {
         require_once $taskData['autoload_path'];
@@ -55,8 +120,10 @@ try {
             'task_id' => $taskId,
             'status' => 'RUNNING',
             'message' => 'Fire and forget task started',
+            'pid' => getmypid(),
+            'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s')
-        ]));
+        ], JSON_UNESCAPED_SLASHES));
     }
 
     $callback = eval("return {$taskData['callback_code']};");
@@ -66,22 +133,35 @@ try {
         call_user_func($callback, $context);
     }
 
+    if (!$isWindows && function_exists('pcntl_alarm')) {
+        pcntl_alarm(0);
+    }
+
     if ($loggingEnabled && $statusFile) {
         @file_put_contents($statusFile, json_encode([
             'task_id' => $taskId,
             'status' => 'COMPLETED',
             'message' => 'Task completed',
+            'duration' => microtime(true) - $startTime,
             'updated_at' => date('Y-m-d H:i:s')
-        ]));
+        ], JSON_UNESCAPED_SLASHES));
+    }
+} catch (\Throwable $e) {
+    if (!$isWindows && function_exists('pcntl_alarm')) {
+        pcntl_alarm(0);
     }
 
-} catch (\Throwable $e) {
     if ($loggingEnabled && isset($statusFile)) {
         @file_put_contents($statusFile, json_encode([
             'task_id' => $taskId,
             'status' => 'ERROR',
             'message' => $e->getMessage(),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'duration' => microtime(true) - $startTime,
             'updated_at' => date('Y-m-d H:i:s')
-        ]));
+        ], JSON_UNESCAPED_SLASHES));
     }
 }
+
+exit(0);

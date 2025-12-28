@@ -81,17 +81,12 @@ class ProcessManager
     /**
      * Spawns a streamed task with real-time output communication.
      *
-     * Creates a new process that maintains open pipes for stdin, stdout, and stderr,
-     * allowing real-time streaming of output and status updates. The task is
-     * registered, validated, and tracked throughout its lifecycle.
-     *
      * @param callable $callback The callback function to execute in the worker process
      * @param array<string, mixed> $context Contextual data to pass to the callback
+     * @param int $timeoutSeconds Maximum execution time in seconds
      * @return Process The spawned process instance with communication streams
-     * @throws \RuntimeException If task nesting is detected or validation fails
-     * @throws SerializationException If the callback cannot be serialized
      */
-    public function spawnStreamedTask(callable $callback, array $context = []): Process
+    public function spawnStreamedTask(callable $callback, array $context = [], int $timeoutSeconds = 60): Process
     {
         $this->validate($callback);
         $taskId = $this->systemUtils->generateTaskId();
@@ -107,7 +102,8 @@ class ProcessManager
             $context,
             $this->frameworkInfo,
             $this->serializer,
-            $logging
+            $logging,
+            $timeoutSeconds
         );
 
         $this->logger->logTaskEvent($taskId, 'SPAWNED', "Streamed task PID: " . $process->getPid());
@@ -128,14 +124,14 @@ class ProcessManager
      * @throws \RuntimeException If task nesting is detected or validation fails
      * @throws SerializationException If the callback cannot be serialized
      */
-    public function spawnFireAndForgetTask(callable $callback, array $context = []): BackgroundProcess
+    public function spawnFireAndForgetTask(callable $callback, array $context = [], int $timeoutSeconds = 600): BackgroundProcess
     {
         if (microtime(true) - $this->lastSpawnReset > 1.0) {
             $this->spawnCount = 0;
             $this->lastSpawnReset = microtime(true);
         }
 
-        if ($this->spawnCount > 49) { // 49 process + 1 current initial process 
+        if ($this->spawnCount > 49) {
             throw new \RuntimeException(message: "Safety Limit: Cannot spawn more than 50 background tasks per second.");
         }
 
@@ -156,7 +152,8 @@ class ProcessManager
             $context,
             $this->frameworkInfo,
             $this->serializer,
-            $logging
+            $logging,
+            $timeoutSeconds 
         );
 
         if ($logging) {
