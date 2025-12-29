@@ -9,9 +9,6 @@ use Hibla\Parallel\Process;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 
-use function Hibla\async;
-use function Hibla\await;
-
 /**
  * Run a task in parallel (separate process) and return a Promise.
  *
@@ -76,7 +73,7 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
     });
 
     return $process->getResult($timeout)
-        ->finally(function () use ($source) {
+        ->onCancel(function () use ($source) {
             $source->cancel();
         });
 }

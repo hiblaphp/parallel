@@ -28,7 +28,7 @@ class Parallel
      *
      * @template TResult
      * @param array<int|string, callable(): TResult> $tasks An associative array of callables to execute in parallel.
-     * @param int $maxConcurrency The maximum number of processes to run at the same time. Defaults to 8.
+     * @param int $maxProcess The maximum number of processes to run at the same time. Defaults to 8.
      * @param float $timeoutSeconds An overall timeout for the entire operation in seconds. If exceeded,
      *                              the returned promise will reject. Defaults to 60.0.
      * @return PromiseInterface<array<int|string, TResult>> A promise that resolves to an array of results with keys preserved.
@@ -41,16 +41,16 @@ class Parallel
      * $results = await(Parallel::all([
      *     'image1' => fn() => processImage('path1.jpg'),
      *     'image2' => fn() => processImage('path2.jpg'),
-     * ], maxConcurrency: 4, timeoutSeconds: 30.0));
+     * ], maxProcess: 4, timeoutSeconds: 30.0));
      * 
      * // With cancellation
-     * $promise = Parallel::all($tasks, maxConcurrency: 8);
+     * $promise = Parallel::all($tasks, maxProcess: 8);
      * // Later: $promise->cancel();
      * 
      * // With timeout using Promise::timeout
      * try {
      *     $results = await(Promise::timeout(
-     *         Parallel::all($tasks, maxConcurrency: 4),
+     *         Parallel::all($tasks, maxProcess: 4),
      *         30.0
      *     ));
      * } catch (TimeoutException $e) {
@@ -60,17 +60,17 @@ class Parallel
      */
     public static function all(
         array $tasks,
-        int $maxConcurrency = 8,
+        int $maxProcess = 8,
         float $timeoutSeconds = 60.0
     ): PromiseInterface {
         $source = new CancellationTokenSource();
 
-        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $source) {
+        return async(function () use ($tasks, $maxProcess, $timeoutSeconds, $source) {
             if (empty($tasks)) {
                 return [];
             }
 
-            $pool = new ProcessPool($maxConcurrency);
+            $pool = new ProcessPool($maxProcess);
             $poolPromise = $pool->run($tasks);
             $timeoutPromise = Promise::timeout($poolPromise, $timeoutSeconds);
 
@@ -104,7 +104,7 @@ class Parallel
      *
      * @template TResult
      * @param array<int|string, callable(): TResult> $tasks An associative array of callables to execute.
-     * @param int $maxConcurrency The maximum number of processes to run at the same time. Defaults to 8.
+     * @param int $maxProcess The maximum number of processes to run at the same time. Defaults to 8.
      * @param float $timeoutSeconds An overall timeout for the entire operation in seconds. Any tasks
      *                              not completed by this time will be marked as rejected.
      * @return PromiseInterface<array<int|string, TaskResult<TResult>>> A promise resolving to an array of TaskResult objects.
@@ -137,17 +137,17 @@ class Parallel
      */
     public static function allSettled(
         array $tasks,
-        int $maxConcurrency = 8,
+        int $maxProcess = 8,
         float $timeoutSeconds = 60.0
     ): PromiseInterface {
         $source = new CancellationTokenSource();
 
-        return async(function () use ($tasks, $maxConcurrency, $timeoutSeconds, $source) {
+        return async(function () use ($tasks, $maxProcess, $timeoutSeconds, $source) {
             if (empty($tasks)) {
                 return [];
             }
 
-            $pool = new ProcessPool($maxConcurrency);
+            $pool = new ProcessPool($maxProcess);
             $poolPromise = $pool->runSettled($tasks);
             $timeoutPromise = Promise::timeout($poolPromise, $timeoutSeconds);
 
@@ -180,7 +180,7 @@ class Parallel
      * @template TOutput
      * @param array<int|string, TInput> $items Items to transform
      * @param callable(TInput): TOutput $mapper Function to apply to each item
-     * @param int $maxConcurrency Maximum number of concurrent processes. Defaults to 8.
+     * @param int $maxProcess Maximum number of concurrent processes. Defaults to 8.
      * @param float $timeoutSeconds Overall timeout in seconds. Defaults to 60.0.
      * @return PromiseInterface<array<int|string, TOutput>> A promise resolving to transformed items
      * @throws \RuntimeException If the operation times out
@@ -193,14 +193,14 @@ class Parallel
      * $processed = await(Parallel::map(
      *     $images,
      *     fn($path) => processImage($path),
-     *     maxConcurrency: 4
+     *     maxProcess: 4
      * ));
      * ```
      */
     public static function map(
         array $items,
         callable $mapper,
-        int $maxConcurrency = 8,
+        int $maxProcess = 8,
         float $timeoutSeconds = 60.0
     ): PromiseInterface {
         $tasks = [];
@@ -208,6 +208,6 @@ class Parallel
             $tasks[$key] = fn() => $mapper($item);
         }
 
-        return self::all($tasks, $maxConcurrency, $timeoutSeconds);
+        return self::all($tasks, $maxProcess, $timeoutSeconds);
     }
 }

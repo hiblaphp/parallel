@@ -22,10 +22,11 @@ $loggingEnabled = false;
 $statusFile = null;
 $taskId = 'unknown';
 $startTime = microtime(true);
+$createdAt = date('Y-m-d H:i:s');
 $timeoutSeconds = 600;
 
 register_shutdown_function(function () {
-    global $statusFile, $taskId, $loggingEnabled, $startTime, $timeoutSeconds;
+    global $statusFile, $taskId, $loggingEnabled, $startTime, $createdAt, $timeoutSeconds;
 
     if (!$loggingEnabled || !$statusFile) {
         return;
@@ -52,8 +53,11 @@ register_shutdown_function(function () {
             'message' => $message,
             'error' => $error,
             'duration' => $duration,
+            'memory_usage' => memory_get_usage(true),
+            'peak_memory_usage' => memory_get_peak_usage(true),
+            'created_at' => $createdAt,
             'updated_at' => date('Y-m-d H:i:s')
-        ], JSON_UNESCAPED_SLASHES));
+        ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
     }
 });
 
@@ -92,15 +96,18 @@ try {
             pcntl_async_signals(true);
         }
 
-        pcntl_signal(SIGALRM, function () use ($taskId, $statusFile, $loggingEnabled, $startTime) {
+        pcntl_signal(SIGALRM, function () use ($taskId, $statusFile, $loggingEnabled, $startTime, $createdAt) {
             if ($loggingEnabled && $statusFile) {
                 @file_put_contents($statusFile, json_encode([
                     'task_id' => $taskId,
                     'status' => 'TIMEOUT',
                     'message' => 'Task exceeded maximum execution time (wall-clock timeout)',
                     'duration' => microtime(true) - $startTime,
+                    'memory_usage' => memory_get_usage(true),
+                    'peak_memory_usage' => memory_get_peak_usage(true),
+                    'created_at' => $createdAt,
                     'updated_at' => date('Y-m-d H:i:s')
-                ], JSON_UNESCAPED_SLASHES));
+                ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
             }
             exit(124);
         });
@@ -123,9 +130,10 @@ try {
             'status' => 'RUNNING',
             'message' => 'Fire and forget task started',
             'pid' => getmypid(),
-            'created_at' => date('Y-m-d H:i:s'),
+            'memory_usage' => memory_get_usage(true),
+            'created_at' => $createdAt,
             'updated_at' => date('Y-m-d H:i:s')
-        ], JSON_UNESCAPED_SLASHES));
+        ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
     }
 
     $callback = eval("return {$taskData['callback_code']};");
@@ -145,8 +153,11 @@ try {
             'status' => 'COMPLETED',
             'message' => 'Task completed',
             'duration' => microtime(true) - $startTime,
+            'memory_usage' => memory_get_usage(true),
+            'peak_memory_usage' => memory_get_peak_usage(true),
+            'created_at' => $createdAt,
             'updated_at' => date('Y-m-d H:i:s')
-        ], JSON_UNESCAPED_SLASHES));
+        ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
     }
 } catch (\Throwable $e) {
     if (!$isWindows && function_exists('pcntl_alarm')) {
@@ -161,8 +172,11 @@ try {
             'file' => $e->getFile(),
             'line' => $e->getLine(),
             'duration' => microtime(true) - $startTime,
+            'memory_usage' => memory_get_usage(true),
+            'peak_memory_usage' => memory_get_peak_usage(true),
+            'created_at' => $createdAt,
             'updated_at' => date('Y-m-d H:i:s')
-        ], JSON_UNESCAPED_SLASHES));
+        ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
     }
 }
 

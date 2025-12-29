@@ -254,7 +254,7 @@ final class Process
             $data['status'] = $status;
             $data['message'] = $message;
             $data['updated_at'] = date('Y-m-d H:i:s');
-            @file_put_contents($this->statusFilePath, json_encode($data, JSON_UNESCAPED_SLASHES));
+            @file_put_contents($this->statusFilePath, json_encode($data, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
         }
     }
 

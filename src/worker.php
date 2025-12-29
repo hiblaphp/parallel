@@ -118,7 +118,7 @@ function update_status_file_with_output(): void
         ]
     );
 
-    @file_put_contents($statusFile, json_encode($statusData, JSON_UNESCAPED_SLASHES));
+    @file_put_contents($statusFile, json_encode($statusData, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
 }
 
 function update_status_file(string $status, string $message, array $extra = []): void
@@ -149,7 +149,7 @@ function update_status_file(string $status, string $message, array $extra = []):
             'message' => $message,
             'pid' => getmypid(),
             'timestamp' => time(),
-            'duration' => $duration,  
+            'duration' => $duration,
             'memory_usage' => memory_get_usage(true),
             'memory_peak' => memory_get_peak_usage(true),
             'updated_at' => date('Y-m-d H:i:s'),
@@ -158,7 +158,7 @@ function update_status_file(string $status, string $message, array $extra = []):
         $extra
     );
 
-    @file_put_contents($statusFile, json_encode($statusData, JSON_UNESCAPED_SLASHES));
+    @file_put_contents($statusFile, json_encode($statusData, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
 }
 
 function stream_output_handler($buffer, $phase): string
@@ -234,7 +234,7 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         $statusFile = $taskData['status_file'] ?? null;
         $timeoutSeconds = $taskData['timeout_seconds'] ?? 60;
         $memoryLimit = $taskData['memory_limit'] ?? "512M";
-        
+
         ini_set('memory_limit', $memoryLimit);
         ini_set('max_execution_time', (string)$timeoutSeconds);
         set_time_limit($timeoutSeconds);
