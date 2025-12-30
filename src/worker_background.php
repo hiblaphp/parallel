@@ -57,7 +57,7 @@ register_shutdown_function(function () {
             'peak_memory_usage' => memory_get_peak_usage(true),
             'created_at' => $createdAt,
             'updated_at' => date('Y-m-d H:i:s')
-        ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
+        ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     }
 });
 
@@ -107,7 +107,7 @@ try {
                     'peak_memory_usage' => memory_get_peak_usage(true),
                     'created_at' => $createdAt,
                     'updated_at' => date('Y-m-d H:i:s')
-                ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
+                ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
             }
             exit(124);
         });
@@ -119,9 +119,18 @@ try {
         require_once $taskData['autoload_path'];
     }
 
+    $serializationManager = new Rcalicdan\Serializer\CallbackSerializationManager();
+
     if (isset($taskData['framework_bootstrap']) && file_exists($taskData['framework_bootstrap'])) {
         $bootstrapFile = $taskData['framework_bootstrap'];
-        eval($taskData['framework_init_code'] ?? '');
+        $serializedBootstrapCallback = $taskData['framework_bootstrap_callback'] ?? null;
+
+        if ($serializedBootstrapCallback !== null) {
+            $bootstrapCallback = $serializationManager->unserializeCallback($serializedBootstrapCallback);
+            $bootstrapCallback($bootstrapFile);
+        } else {
+            require $bootstrapFile;
+        }
     }
 
     if ($loggingEnabled && $statusFile) {
@@ -133,11 +142,11 @@ try {
             'memory_usage' => memory_get_usage(true),
             'created_at' => $createdAt,
             'updated_at' => date('Y-m-d H:i:s')
-        ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
+        ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     }
 
-    $callback = eval("return {$taskData['callback_code']};");
-    $context = eval("return {$taskData['context_code']};");
+    $callback = $serializationManager->unserializeCallback($taskData['serialized_callback']);
+    $context = $serializationManager->unserializeContext($taskData['serialized_context']);
 
     if (is_callable($callback)) {
         call_user_func($callback, $context);
@@ -157,7 +166,7 @@ try {
             'peak_memory_usage' => memory_get_peak_usage(true),
             'created_at' => $createdAt,
             'updated_at' => date('Y-m-d H:i:s')
-        ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
+        ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     }
 } catch (\Throwable $e) {
     if (!$isWindows && function_exists('pcntl_alarm')) {
@@ -176,7 +185,7 @@ try {
             'peak_memory_usage' => memory_get_peak_usage(true),
             'created_at' => $createdAt,
             'updated_at' => date('Y-m-d H:i:s')
-        ], JSON_UNESCAPED_SLASHES|JSON_PRETTY_PRINT));
+        ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     }
 }
 

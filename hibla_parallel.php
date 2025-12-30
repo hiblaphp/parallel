@@ -52,31 +52,27 @@ return [
     | Configure custom bootstrap for your application/framework.
     | If null, no framework bootstrap will be loaded (pure PHP mode).
     |
+    | 'file': Path to the bootstrap file to require
+    | 'callback': A callable that will be executed after the file is required.
+    |             The callback receives the bootstrap file path as parameter.
+    |
     | Laravel Example:
     | 'bootstrap' => [
     |     'file' => __DIR__ . '/bootstrap/app.php',
-    |     'init' => <<<'PHP'
+    |     'callback' => function(string $bootstrapFile) {
     |         $app = require $bootstrapFile;
     |         $kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
     |         $kernel->bootstrap();
-    |     PHP,
+    |         return $app;
+    |     }
     | ]
     |
     | Symfony Example:
     | 'bootstrap' => [
     |     'file' => __DIR__ . '/config/bootstrap.php',
-    |     'init' => <<<'PHP'
+    |     'callback' => function(string $bootstrapFile) {
     |         require $bootstrapFile;
-    |     PHP,
-    | ]
-    |
-    | Custom App Example:
-    | 'bootstrap' => [
-    |     'file' => __DIR__ . '/bootstrap/worker.php',
-    |     'init' => <<<'PHP'
-    |         $app = require $bootstrapFile;
-    |         $app->initialize();
-    |     PHP,
+    |     }
     | ]
     |
     */

@@ -93,18 +93,22 @@ class SystemUtilities
     /**
      * Get framework bootstrap information from config
      *
-     * @return array{name: string, bootstrap_file: string|null, init_code: string}
+     * @return array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}
      */
     public function getFrameworkBootstrap(): array
     {
         $bootstrap = configRoot('hibla_parallel', 'bootstrap', null);
 
         if (!\is_array($bootstrap) || empty($bootstrap)) {
-            return ['name' => 'none', 'bootstrap_file' => null, 'init_code' => ''];
+            return [
+                'name' => 'none',
+                'bootstrap_file' => null,
+                'bootstrap_callback' => null
+            ];
         }
 
         $bootstrapFile = $bootstrap['file'] ?? null;
-        $initCode = $bootstrap['init'] ?? '';
+        $bootstrapCallback = $bootstrap['callback'] ?? null;
 
         if (!empty($bootstrapFile) && !file_exists($bootstrapFile)) {
             throw new \RuntimeException(
@@ -112,10 +116,16 @@ class SystemUtilities
             );
         }
 
+        if ($bootstrapCallback !== null && !is_callable($bootstrapCallback)) {
+            throw new \RuntimeException(
+                "Bootstrap callback must be callable"
+            );
+        }
+
         return [
             'name' => 'custom',
             'bootstrap_file' => $bootstrapFile ? (realpath($bootstrapFile) ?: $bootstrapFile) : null,
-            'init_code' => $initCode,
+            'bootstrap_callback' => $bootstrapCallback,
         ];
     }
 }

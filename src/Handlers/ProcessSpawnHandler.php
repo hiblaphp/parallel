@@ -4,7 +4,7 @@ namespace Hibla\Parallel\Handlers;
 
 use Hibla\Parallel\Process;
 use Hibla\Parallel\BackgroundProcess;
-use Hibla\Parallel\Serialization\CallbackSerializationManager;
+use Rcalicdan\Serializer\CallbackSerializationManager;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Stream\PromiseReadableStream;
@@ -209,18 +209,23 @@ class ProcessSpawnHandler
         bool $loggingEnabled,
         int $timeoutSeconds = 60
     ): string {
-        $callbackCode = $serializationManager->serializeCallback($callback);
-        $contextCode = $serializationManager->serializeContext($context);
+        $serializedCallback = $serializationManager->serializeCallback($callback);
+        $serializedContext = $serializationManager->serializeContext($context);
+
+        $serializedBootstrapCallback = null;
+        if (isset($frameworkInfo['bootstrap_callback']) && $frameworkInfo['bootstrap_callback'] !== null) {
+            $serializedBootstrapCallback = $serializationManager->serializeCallback($frameworkInfo['bootstrap_callback']);
+        }
 
         /** @var array<string, mixed> $payloadData */
         $payloadData = [
             'task_id' => $taskId,
             'status_file' => $statusFile,
-            'callback_code' => $callbackCode,
-            'context_code' => $contextCode,
+            'serialized_callback' => $serializedCallback,
+            'serialized_context' => $serializedContext,
             'autoload_path' => $this->systemUtils->findAutoloadPath(),
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
-            'framework_init_code' => $frameworkInfo['init_code'] ?? '',
+            'framework_bootstrap_callback' => $serializedBootstrapCallback, 
             'logging_enabled' => $loggingEnabled,
             'timeout_seconds' => $timeoutSeconds,
             'memory_limit' => $this->defaultMemoryLimit,

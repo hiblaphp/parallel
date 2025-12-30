@@ -9,8 +9,8 @@ use Hibla\Parallel\Handlers\TaskStatusHandler;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Parallel\Utilities\TaskRegistry;
-use Hibla\Parallel\Serialization\CallbackSerializationManager;
-use Hibla\Parallel\Serialization\SerializationException;
+use Rcalicdan\Serializer\CallbackSerializationManager;
+use Rcalicdan\Serializer\Exceptions\SerializationException;
 
 /**
  * Manages the lifecycle of parallel processes and background tasks.

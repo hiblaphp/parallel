@@ -8,6 +8,7 @@ use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Process;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
+use Rcalicdan\Serializer\Exceptions\SerializationException;
 
 /**
  * Run a task in parallel (separate process) and return a Promise.
@@ -42,9 +43,6 @@ use Hibla\Promise\Promise;
  * @param array<string, mixed> $context Optional context/parameters to pass to the task
  * @param int $timeout Maximum seconds to wait for task completion (default: 60)
  * @return PromiseInterface<TResult> Promise resolving to the task's return value
- *
- * @throws \RuntimeException If the task fails or times out
- * @throws \Hibla\Parallel\Serialization\SerializationException If task cannot be serialized
  * 
  * @example
  * ```php
@@ -108,7 +106,7 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
  * @return PromiseInterface<BackgroundProcess> Promise resolving to the Process instance
  *
  * @throws \RuntimeException If process spawning fails
- * @throws Hibla\Parallel\Serialization\Exceptions\SerializationException If task cannot be serialized
+ * @throws SerializationException If task cannot be serialized
  * 
  * @example
  * ```php

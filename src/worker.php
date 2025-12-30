@@ -7,7 +7,6 @@
 declare(strict_types=1);
 
 // ===== CRITICAL: FORK BOMB PROTECTION =====
-// Set environment variables to prevent nested process spawning
 putenv('DEFER_BACKGROUND_PROCESS=1');
 $_ENV['DEFER_BACKGROUND_PROCESS'] = '1';
 $_SERVER['DEFER_BACKGROUND_PROCESS'] = '1';
@@ -67,6 +66,7 @@ $autoloadPath = null;
 $statusFile = null;
 $taskId = 'unknown';
 $startTime = microtime(true);
+$serializationManager = null;
 
 function write_status_to_stdout(array $data): void
 {
@@ -314,18 +314,29 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
             }
             require_once $autoloadPath;
 
+            $serializationManager = new Rcalicdan\Serializer\CallbackSerializationManager();
+
             $frameworkBootstrap = $taskData['framework_bootstrap'] ?? '';
-            $frameworkInitCode = $taskData['framework_init_code'] ?? '';
+            $serializedBootstrapCallback = $taskData['framework_bootstrap_callback'] ?? null;
+
             if ($frameworkBootstrap && file_exists($frameworkBootstrap)) {
-                $bootstrapFile = $frameworkBootstrap;
-                eval($frameworkInitCode);
+                if ($serializedBootstrapCallback !== null) {
+                    $bootstrapCallback = $serializationManager->unserializeCallback($serializedBootstrapCallback);
+                    $bootstrapCallback($frameworkBootstrap);
+                } else {
+                    require $frameworkBootstrap;
+                }
             }
         }
 
         update_status_file('RUNNING', 'Worker process started execution for task: ' . $taskId);
 
-        $callback = eval("return {$taskData['callback_code']};");
-        $context = eval("return {$taskData['context_code']};");
+        try {
+            $callback = $serializationManager->unserializeCallback($taskData['serialized_callback']);
+            $context = $serializationManager->unserializeContext($taskData['serialized_context']);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException('Failed to unserialize task data: ' . $e->getMessage(), 0, $e);
+        }
 
         if (!is_callable($callback)) {
             throw new \RuntimeException('Deserialized task is not callable.');
