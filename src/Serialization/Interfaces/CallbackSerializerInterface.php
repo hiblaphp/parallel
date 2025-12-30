@@ -1,7 +1,8 @@
 <?php
 
-namespace Hibla\Parallel\Serialization;
+namespace Hibla\Parallel\Serialization\Interfaces;
 
+use Hibla\Parallel\Serialization\Exceptions\SerializationException;
 /**
  * Interface for callback serialization strategies
  */
@@ -10,19 +11,19 @@ interface CallbackSerializerInterface
     /**
      * Check if this serializer can handle the given callback
      *
-     * @param callable $callback The callback to check
+     * @param mixed $callback The value to check
      * @return bool True if this serializer can handle the callback
      */
-    public function canSerialize(callable $callback): bool;
+    public function canSerialize(mixed $callback): bool;
 
     /**
      * Serialize a callback to PHP code string
      *
-     * @param callable $callback The callback to serialize
+     * @param mixed $callback The callback to serialize
      * @return string PHP code that recreates the callback
      * @throws SerializationException If serialization fails
      */
-    public function serialize(callable $callback): string;
+    public function serialize(mixed $callback): string;
 
     /**
      * Get the priority of this serializer (higher = preferred)

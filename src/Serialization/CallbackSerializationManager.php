@@ -2,6 +2,17 @@
 
 namespace Hibla\Parallel\Serialization;
 
+use Hibla\Parallel\Serialization\Exceptions\SerializationException;
+use Hibla\Parallel\Serialization\Interfaces\CallbackSerializerInterface;
+use Hibla\Parallel\Serialization\Serializers\AnonymousClassSerializer;
+use Hibla\Parallel\Serialization\Serializers\ClosureSerializer;
+use Hibla\Parallel\Serialization\Serializers\ContextSerializer;
+use Hibla\Parallel\Serialization\Serializers\FallbackClosureSerializer;
+use Hibla\Parallel\Serialization\Serializers\InstanceMethodSerializer;
+use Hibla\Parallel\Serialization\Serializers\InvokableObjectSerializer;
+use Hibla\Parallel\Serialization\Serializers\StaticMethodSerializer;
+use Hibla\Parallel\Serialization\Serializers\StringFunctionSerializer;
+
 /**
  * Main serialization manager that coordinates different serializers
  */
@@ -32,6 +43,7 @@ class CallbackSerializationManager
         $this->addSerializer(new StaticMethodSerializer());
         $this->addSerializer(new InstanceMethodSerializer());
         $this->addSerializer(new ClosureSerializer());
+        $this->addSerializer(new AnonymousClassSerializer());
         $this->addSerializer(new InvokableObjectSerializer());
         $this->addSerializer(new FallbackClosureSerializer());
     }
@@ -44,7 +56,7 @@ class CallbackSerializationManager
     public function addSerializer(CallbackSerializerInterface $serializer): void
     {
         $this->serializers[] = $serializer;
-        
+
         // Sort by priority (highest first)
         usort($this->serializers, function ($a, $b) {
             return $b->getPriority() <=> $a->getPriority();
@@ -62,11 +74,7 @@ class CallbackSerializationManager
     {
         foreach ($this->serializers as $serializer) {
             if ($serializer->canSerialize($callback)) {
-                try {
-                    return $serializer->serialize($callback);
-                } catch (SerializationException $e) {
-                    continue;
-                }
+                return $serializer->serialize($callback);
             }
         }
 
@@ -120,7 +128,7 @@ class CallbackSerializationManager
     public function getSerializerInfo(): array
     {
         $info = [];
-        
+
         foreach ($this->serializers as $serializer) {
             $className = get_class($serializer);
             $info[] = [
@@ -129,7 +137,7 @@ class CallbackSerializationManager
                 'priority' => $serializer->getPriority(),
             ];
         }
-        
+
         return $info;
     }
 
@@ -141,26 +149,30 @@ class CallbackSerializationManager
      */
     private function getCallableType(callable $callback): string
     {
-        if (is_string($callback)) {
+        if (\is_string($callback)) {
             return 'string function';
         }
-        
-        if (is_array($callback)) {
+
+        if (\is_array($callback)) {
             [$class, $method] = $callback;
-            if (is_string($class)) {
+            if (\is_string($class)) {
                 return 'static method';
             }
             return 'instance method';
         }
-        
+
         if ($callback instanceof \Closure) {
             return 'closure';
         }
-        
-        if (is_object($callback)) {
+
+        if (\is_object($callback)) {
+            $reflection = new \ReflectionClass($callback);
+            if ($reflection->isAnonymous()) {
+                return 'anonymous class';
+            }
             return 'invokable object';
         }
-        
+
         return 'unknown';
     }
 }

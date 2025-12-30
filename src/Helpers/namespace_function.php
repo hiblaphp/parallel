@@ -108,7 +108,7 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
  * @return PromiseInterface<BackgroundProcess> Promise resolving to the Process instance
  *
  * @throws \RuntimeException If process spawning fails
- * @throws \Hibla\Parallel\Serialization\SerializationException If task cannot be serialized
+ * @throws Hibla\Parallel\Serialization\Exceptions\SerializationException If task cannot be serialized
  * 
  * @example
  * ```php

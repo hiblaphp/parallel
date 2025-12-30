@@ -1,6 +1,6 @@
 <?php
 
-namespace Hibla\Parallel\Serialization;
+namespace Hibla\Parallel\Serialization\Exceptions;
 
 /**
  * Exception thrown when serialization fails

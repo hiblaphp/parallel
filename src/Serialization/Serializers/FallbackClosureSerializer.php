@@ -1,18 +1,21 @@
 <?php
 
-namespace Hibla\Parallel\Serialization;
+namespace Hibla\Parallel\Serialization\Serializers;
+
+use Hibla\Parallel\Serialization\Exceptions\SerializationException;
+use Hibla\Parallel\Serialization\Interfaces\CallbackSerializerInterface;
 
 /**
  * Fallback closure serializer using source code extraction
  */
 class FallbackClosureSerializer implements CallbackSerializerInterface
 {
-    public function canSerialize(callable $callback): bool
+    public function canSerialize(mixed $callback): bool
     {
         return $callback instanceof \Closure;
     }
 
-    public function serialize(callable $callback): string
+    public function serialize(mixed $callback): string
     {
         if (!$this->canSerialize($callback)) {
             throw new SerializationException('Not a closure');
