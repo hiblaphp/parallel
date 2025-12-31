@@ -1,11 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Hibla\Parallel\Handlers;
 
 /**
  * Handles task status persistence and file management.
- * 
- * This class is strictly responsible for reading and writing task metadata 
+ *
+ * This class is strictly responsible for reading and writing task metadata
  * to the storage (JSON files). It does not control process execution.
  */
 final readonly class TaskStatusHandler
@@ -17,7 +19,8 @@ final readonly class TaskStatusHandler
     public function __construct(
         private string $logDir,
         private bool $loggingEnabled = true
-    ) {}
+    ) {
+    }
 
     /**
      * Creates initial status file for a new task.
@@ -31,12 +34,12 @@ final readonly class TaskStatusHandler
      */
     public function createInitialStatus(string $taskId, callable $callback): void
     {
-        if (!$this->loggingEnabled) {
+        if (! $this->loggingEnabled) {
             return;
         }
 
-        if (!is_dir($this->logDir)) {
-            if (!@mkdir($this->logDir, 0777, true) && !is_dir($this->logDir)) {
+        if (! is_dir($this->logDir)) {
+            if (! @mkdir($this->logDir, 0777, true) && ! is_dir($this->logDir)) {
                 throw new \RuntimeException("Failed to create log directory: {$this->logDir}");
             }
         }
@@ -60,7 +63,6 @@ final readonly class TaskStatusHandler
 
         file_put_contents($statusFile, json_encode($initialStatus, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
-
 
     /**
      * Gets callable type string for logging metadata.

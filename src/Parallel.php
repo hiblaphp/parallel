@@ -1,15 +1,17 @@
 <?php
 
-namespace Hibla\Parallel;
+declare(strict_types=1);
 
-use Hibla\Cancellation\CancellationTokenSource;
-use Hibla\Parallel\ProcessPool;
-use Hibla\Promise\Exceptions\TimeoutException;
-use Hibla\Promise\Interfaces\PromiseInterface;
-use Hibla\Promise\Promise;
+namespace Hibla\Parallel;
 
 use function Hibla\async;
 use function Hibla\await;
+
+use Hibla\Cancellation\CancellationTokenSource;
+use Hibla\Promise\Exceptions\TimeoutException;
+
+use Hibla\Promise\Interfaces\PromiseInterface;
+use Hibla\Promise\Promise;
 
 /**
  * A high-level facade for running tasks in parallel with concurrency control and timeouts.
@@ -42,11 +44,11 @@ class Parallel
      *     'image1' => fn() => processImage('path1.jpg'),
      *     'image2' => fn() => processImage('path2.jpg'),
      * ], maxProcess: 4, timeoutSeconds: 30.0));
-     * 
+     *
      * // With cancellation
      * $promise = Parallel::all($tasks, maxProcess: 8);
      * // Later: $promise->cancel();
-     * 
+     *
      * // With timeout using Promise::timeout
      * try {
      *     $results = await(Promise::timeout(
@@ -67,9 +69,11 @@ class Parallel
 
         return async(function () use ($tasks, $maxProcess, $timeoutSeconds, $source) {
             if (\count($tasks) === 0) {
+                /** @var array<int|string, TResult> */
                 return [];
             }
 
+            /** @var ProcessPool<TResult> $pool */
             $pool = new ProcessPool($maxProcess);
             $poolPromise = $pool->run($tasks);
             $timeoutPromise = Promise::timeout($poolPromise, $timeoutSeconds);
@@ -117,7 +121,7 @@ class Parallel
      *     'task1' => fn() => riskyOperation1(),
      *     'task2' => fn() => riskyOperation2(),
      * ]));
-     * 
+     *
      * foreach ($results as $key => $result) {
      *     if ($result->isFulfilled()) {
      *         echo "Task {$key} succeeded: " . $result->getValue() . "\n";
@@ -125,11 +129,11 @@ class Parallel
      *         echo "Task {$key} failed: " . $result->getReason() . "\n";
      *     }
      * }
-     * 
+     *
      * // With cancellation
      * $promise = Parallel::allSettled($tasks);
      * // Later: $promise->cancel();
-     * 
+     *
      * // Convert to arrays if needed
      * $results = await(Parallel::allSettled($tasks));
      * $arrays = array_map(fn($r) => $r->toArray(), $results);
@@ -144,9 +148,11 @@ class Parallel
 
         return async(function () use ($tasks, $maxProcess, $timeoutSeconds, $source) {
             if (\count($tasks) === 0) {
+                /** @var array<int|string, TaskResult<TResult>> */
                 return [];
             }
 
+            /** @var ProcessPool<TResult> $pool */
             $pool = new ProcessPool($maxProcess);
             $poolPromise = $pool->runSettled($tasks);
             $timeoutPromise = Promise::timeout($poolPromise, $timeoutSeconds);
@@ -189,7 +195,7 @@ class Parallel
      * @example
      * ```php
      * $images = ['img1.jpg', 'img2.jpg', 'img3.jpg'];
-     * 
+     *
      * $processed = await(Parallel::map(
      *     $images,
      *     fn($path) => processImage($path),
@@ -205,7 +211,7 @@ class Parallel
     ): PromiseInterface {
         $tasks = [];
         foreach ($items as $key => $item) {
-            $tasks[$key] = fn() => $mapper($item);
+            $tasks[$key] = fn () => $mapper($item);
         }
 
         return self::all($tasks, $maxProcess, $timeoutSeconds);

@@ -15,7 +15,9 @@ putenv("DEFER_NESTING_LEVEL={$nestingLevel}");
 $_ENV['DEFER_NESTING_LEVEL'] = (string) $nestingLevel;
 $_SERVER['DEFER_NESTING_LEVEL'] = (string) $nestingLevel;
 
-if ($nestingLevel > 1) exit(1);
+if ($nestingLevel > 1) {
+    exit(1);
+}
 
 $isWindows = PHP_OS_FAMILY === 'Windows';
 $loggingEnabled = false;
@@ -28,7 +30,7 @@ $timeoutSeconds = 600;
 register_shutdown_function(function () {
     global $statusFile, $taskId, $loggingEnabled, $startTime, $createdAt, $timeoutSeconds;
 
-    if (!$loggingEnabled || !$statusFile) {
+    if (! $loggingEnabled || ! $statusFile) {
         return;
     }
 
@@ -56,7 +58,7 @@ register_shutdown_function(function () {
             'memory_usage' => memory_get_usage(true),
             'peak_memory_usage' => memory_get_peak_usage(true),
             'created_at' => $createdAt,
-            'updated_at' => date('Y-m-d H:i:s')
+            'updated_at' => date('Y-m-d H:i:s'),
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     }
 });
@@ -70,28 +72,33 @@ while (microtime(true) - $start < 2.0) {
     $line = fgets($stdin);
     if ($line !== false) {
         $payload = $line;
+
         break;
     }
     usleep(10000);
 }
 
-if (empty($payload)) exit(1);
+if (empty($payload)) {
+    exit(1);
+}
 
 try {
     $taskData = json_decode($payload, true);
-    if (!$taskData) exit(1);
+    if (! $taskData) {
+        exit(1);
+    }
 
     $loggingEnabled = $taskData['logging_enabled'] ?? false;
     $statusFile = $taskData['status_file'] ?? null;
     $taskId = $taskData['task_id'] ?? 'unknown';
     $timeoutSeconds = $taskData['timeout_seconds'] ?? 60;
-    $memoryLimit = $taskData['memory_limit'] ?? "512M";
+    $memoryLimit = $taskData['memory_limit'] ?? '512M';
 
     ini_set('memory_limit', $memoryLimit);
     ini_set('max_execution_time', (string)$timeoutSeconds);
     set_time_limit($timeoutSeconds);
 
-    if (!$isWindows && function_exists('pcntl_alarm') && function_exists('pcntl_signal')) {
+    if (! $isWindows && function_exists('pcntl_alarm') && function_exists('pcntl_signal')) {
         if (function_exists('pcntl_async_signals')) {
             pcntl_async_signals(true);
         }
@@ -106,7 +113,7 @@ try {
                     'memory_usage' => memory_get_usage(true),
                     'peak_memory_usage' => memory_get_peak_usage(true),
                     'created_at' => $createdAt,
-                    'updated_at' => date('Y-m-d H:i:s')
+                    'updated_at' => date('Y-m-d H:i:s'),
                 ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
             }
             exit(124);
@@ -141,7 +148,7 @@ try {
             'pid' => getmypid(),
             'memory_usage' => memory_get_usage(true),
             'created_at' => $createdAt,
-            'updated_at' => date('Y-m-d H:i:s')
+            'updated_at' => date('Y-m-d H:i:s'),
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     }
 
@@ -149,7 +156,7 @@ try {
 
     $callback();
 
-    if (!$isWindows && function_exists('pcntl_alarm')) {
+    if (! $isWindows && function_exists('pcntl_alarm')) {
         pcntl_alarm(0);
     }
 
@@ -162,11 +169,11 @@ try {
             'memory_usage' => memory_get_usage(true),
             'peak_memory_usage' => memory_get_peak_usage(true),
             'created_at' => $createdAt,
-            'updated_at' => date('Y-m-d H:i:s')
+            'updated_at' => date('Y-m-d H:i:s'),
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     }
-} catch (\Throwable $e) {
-    if (!$isWindows && function_exists('pcntl_alarm')) {
+} catch (Throwable $e) {
+    if (! $isWindows && function_exists('pcntl_alarm')) {
         pcntl_alarm(0);
     }
 
@@ -181,7 +188,7 @@ try {
             'memory_usage' => memory_get_usage(true),
             'peak_memory_usage' => memory_get_peak_usage(true),
             'created_at' => $createdAt,
-            'updated_at' => date('Y-m-d H:i:s')
+            'updated_at' => date('Y-m-d H:i:s'),
         ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
     }
 }

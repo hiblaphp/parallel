@@ -25,7 +25,11 @@
         "hiblaphp/stream": "dev-main"
     },
     "require-dev": {
-        "pestphp/pest": "^4.0"
+        "pestphp/pest": "^4.0",
+        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan-strict-rules": "^2.0",
+        "laravel/pint": "^1.25",
+        "mockery/mockery": "^1.6"
     },
     "config": {
         "allow-plugins": {
@@ -33,6 +37,8 @@
         }
     },
     "scripts": {
-        "test": "vendor/bin/pest"
+        "test": "vendor/bin/pest",
+        "analyze": "vendor/bin/phpstan analyse",
+        "format": "vendor/bin/pint"
     }
 }

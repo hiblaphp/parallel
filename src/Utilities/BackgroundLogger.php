@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Hibla\Parallel\Utilities;
 
 use Rcalicdan\ConfigLoader\Config;
@@ -27,12 +29,14 @@ final class BackgroundLogger
         ?bool $enableDetailedLogging = null,
         ?string $customLogDir = null
     ) {
-        $this->enableDetailedLogging = $enableDetailedLogging ?? Config::loadFromRoot('hibla_parallel', 'logging.enabled', false);
+        $configLoggingEnabled = Config::loadFromRoot('hibla_parallel', 'logging.enabled', false);
+        $this->enableDetailedLogging = $enableDetailedLogging ?? (\is_bool($configLoggingEnabled) ? $configLoggingEnabled : false);
 
         if ($this->enableDetailedLogging) {
             $temp_dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'hibla_parallel_logs';
-            $logDir = $customLogDir ?? Config::loadFromRoot('hibla_parallel', 'logging.directory', $temp_dir);
-            $this->logDir = $logDir ?: $temp_dir;
+            $configLogDir = Config::loadFromRoot('hibla_parallel', 'logging.directory', $temp_dir);
+            $logDir = $customLogDir ?? $configLogDir;
+            $this->logDir = (\is_string($logDir) && $logDir !== '') ? $logDir : $temp_dir;
             $this->logFile = $this->logDir . DIRECTORY_SEPARATOR . 'background_tasks.log';
         } else {
             $this->logDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'hibla_parallel_logs';
@@ -57,7 +61,7 @@ final class BackgroundLogger
      */
     public function logTaskEvent(string $taskId, string $level, string $message): void
     {
-        if (!$this->enableDetailedLogging || $this->logFile === null) {
+        if (! $this->enableDetailedLogging || $this->logFile === null) {
             return;
         }
 
@@ -107,7 +111,7 @@ final class BackgroundLogger
      */
     private function logEvent(string $level, string $message): void
     {
-        if (!$this->enableDetailedLogging || $this->logFile === null) {
+        if (! $this->enableDetailedLogging || $this->logFile === null) {
             return;
         }
 
@@ -119,13 +123,12 @@ final class BackgroundLogger
         }
     }
 
-
     private function ensureDirectories(): void
     {
-        if (!is_dir($this->logDir)) {
+        if (! is_dir($this->logDir)) {
             $created = @mkdir($this->logDir, 0755, true);
 
-            if (!$created && !is_dir($this->logDir)) {
+            if (! $created && ! is_dir($this->logDir)) {
                 error_log("Failed to create log directory: {$this->logDir}");
             }
         }

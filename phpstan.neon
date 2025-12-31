@@ -1,0 +1,10 @@
+includes:
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+    
+parameters:
+    level: max
+    paths:
+        - src
+    excludePaths:
+        - src/worker*.php 
+    treatPhpDocTypesAsCertain: false

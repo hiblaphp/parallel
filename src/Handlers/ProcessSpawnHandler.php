@@ -1,15 +1,17 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Hibla\Parallel\Handlers;
 
-use Hibla\Parallel\Process;
 use Hibla\Parallel\BackgroundProcess;
-use Rcalicdan\Serializer\CallbackSerializationManager;
+use Hibla\Parallel\Process;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Stream\PromiseReadableStream;
 use Hibla\Stream\PromiseWritableStream;
 use Rcalicdan\ConfigLoader\Config;
+use Rcalicdan\Serializer\CallbackSerializationManager;
 
 /**
  * Handles spawning and managing parallel worker processes.
@@ -26,32 +28,29 @@ class ProcessSpawnHandler
         private SystemUtilities $systemUtils,
         private BackgroundLogger $logger
     ) {
-        if(PHP_OS_FAMILY !== 'Windows') {
-            $requiredFunctions = ['proc_open', 'exec', 'shell_exec', 'posix_kill'];
-        } else {
-            $requiredFunctions = ['proc_open', 'exec', 'shell_exec'];
-        }
-        
-        $missingFunctions = [];
+        $requiredFunctions = PHP_OS_FAMILY !== 'Windows'
+            ? ['proc_open', 'exec', 'shell_exec', 'posix_kill']
+            : ['proc_open', 'exec', 'shell_exec'];
 
-        foreach ($requiredFunctions as $function) {
-            if (!function_exists($function)) {
-                $missingFunctions[] = $function;
-            }
-        }
+
+        $missingFunctions = array_filter($requiredFunctions, static function (string $function): bool {
+            // @phpstan-ignore-next-line the functions are check at runtime
+            return ! function_exists($function);
+        });
 
         if (\count($missingFunctions) > 0) {
             throw new \RuntimeException(
                 \sprintf(
                     'The following required functions are disabled on this server: "%s". ' .
-                    'Hibla Parallel requires these functions to spawn and manage processes. ' .
-                    'Please check the "disable_functions" directive in your php.ini file.',
+                        'Hibla Parallel requires these functions to spawn and manage processes. ' .
+                        'Please check the "disable_functions" directive in your php.ini file.',
                     implode('", "', $missingFunctions)
                 )
             );
         }
 
-        $this->defaultMemoryLimit = Config::loadFromRoot('hibla_parallel', 'background_process.memory_limit', '512M');
+        $configMemoryLimit = Config::loadFromRoot('hibla_parallel', 'background_process.memory_limit', '512M');
+        $this->defaultMemoryLimit = (\is_string($configMemoryLimit) || \is_int($configMemoryLimit)) ? $configMemoryLimit : '512M';
     }
 
     /**
@@ -60,13 +59,14 @@ class ProcessSpawnHandler
      * Creates a new process that maintains open pipes for stdin, stdout, and stderr,
      * allowing real-time streaming of output and status updates.
      *
+     * @template TResult
      * @param string $taskId Unique identifier for the task
-     * @param callable $callback The callback function to execute in the worker
+     * @param callable(): TResult $callback The callback function to execute in the worker
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param bool $loggingEnabled Whether logging is enabled for this task
      * @param int $timeoutSeconds Maximum execution time in seconds
-     * @return Process The spawned process instance with communication streams
+     * @return Process<TResult> The spawned process instance with communication streams
      * @throws \RuntimeException If process spawning fails
      */
     public function spawnStreamedTask(
@@ -91,10 +91,11 @@ class ProcessSpawnHandler
         $pipes = [];
         $processResource = @proc_open($command, $descriptorSpec, $pipes);
 
-        if (!\is_resource($processResource)) {
+        if (! \is_resource($processResource)) {
             $error = error_get_last();
             $errorMessage = $error['message'] ?? 'Unknown error';
-            throw new \RuntimeException("Failed to spawn process. OS Error: " . $errorMessage);
+
+            throw new \RuntimeException('Failed to spawn process. OS Error: ' . $errorMessage);
         }
 
         stream_set_blocking($pipes[0], false);
@@ -123,9 +124,11 @@ class ProcessSpawnHandler
         } catch (\Throwable $e) {
             proc_terminate($processResource);
             proc_close($processResource);
+
             throw $e;
         }
 
+        /** @var Process<TResult> */
         return new Process(
             $taskId,
             $pid,
@@ -178,10 +181,11 @@ class ProcessSpawnHandler
         $pipes = [];
         $processResource = @proc_open($command, $descriptorSpec, $pipes);
 
-        if (!\is_resource($processResource)) {
+        if (! \is_resource($processResource)) {
             $error = error_get_last();
             $errorMessage = $error['message'] ?? 'Unknown error';
-            throw new \RuntimeException("Failed to spawn fire-and-forget process. OS Error: " . $errorMessage);
+
+            throw new \RuntimeException('Failed to spawn fire-and-forget process. OS Error: ' . $errorMessage);
         }
 
         $status = proc_get_status($processResource);
@@ -234,8 +238,9 @@ class ProcessSpawnHandler
         $serializedCallback = $serializationManager->serializeCallback($callback);
 
         $serializedBootstrapCallback = null;
-        if (isset($frameworkInfo['bootstrap_callback']) && $frameworkInfo['bootstrap_callback'] !== null) {
-            $serializedBootstrapCallback = $serializationManager->serializeCallback($frameworkInfo['bootstrap_callback']);
+        $bootstrapCallback = $frameworkInfo['bootstrap_callback'] ?? null;
+        if ($bootstrapCallback !== null && is_callable($bootstrapCallback)) {
+            $serializedBootstrapCallback = $serializationManager->serializeCallback($bootstrapCallback);
         }
 
         /** @var array<string, mixed> $payloadData */
@@ -245,7 +250,7 @@ class ProcessSpawnHandler
             'serialized_callback' => $serializedCallback,
             'autoload_path' => $this->systemUtils->findAutoloadPath(),
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
-            'framework_bootstrap_callback' => $serializedBootstrapCallback, 
+            'framework_bootstrap_callback' => $serializedBootstrapCallback,
             'logging_enabled' => $loggingEnabled,
             'timeout_seconds' => $timeoutSeconds,
             'memory_limit' => $this->defaultMemoryLimit,
@@ -312,15 +317,15 @@ class ProcessSpawnHandler
     {
         if ($timeoutSeconds < 1) {
             throw new \InvalidArgumentException(
-                "Timeout must be at least 1 second. Use a reasonable timeout to prevent runaway processes. " .
-                    "If you need a very long timeout, use a high value like 3600 (1 hour) or 86400 (24 hours)."
+                'Timeout must be at least 1 second. Use a reasonable timeout to prevent runaway processes. ' .
+                    'If you need a very long timeout, use a high value like 3600 (1 hour) or 86400 (24 hours).'
             );
         }
 
         if ($timeoutSeconds > 86400) {
             throw new \InvalidArgumentException(
-                "Timeout cannot exceed 86400 seconds (24 hours). " .
-                    "For tasks that need longer execution, consider breaking them into smaller chunks."
+                'Timeout cannot exceed 86400 seconds (24 hours). ' .
+                    'For tasks that need longer execution, consider breaking them into smaller chunks.'
             );
         }
     }

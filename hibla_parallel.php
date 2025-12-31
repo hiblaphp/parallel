@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use function Rcalicdan\ConfigLoader\env;
 
 require __DIR__ . '/vendor/autoload.php';
@@ -26,7 +28,7 @@ return [
     |
     */
     'logging' => [
-        'enabled'   => env('HIBLA_PARALLEL_LOGGING_ENABLED', false),
+        'enabled' => env('HIBLA_PARALLEL_LOGGING_ENABLED', false),
         'directory' => null,
     ],
 

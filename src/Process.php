@@ -1,21 +1,24 @@
 <?php
 
-namespace Hibla\Parallel;
+declare(strict_types=1);
 
-use Hibla\Promise\Interfaces\PromiseInterface;
-use Hibla\Promise\Promise;
-use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
-use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
-use SebastianBergmann\Invoker\TimeoutException;
+namespace Hibla\Parallel;
 
 use function Hibla\async;
 use function Hibla\await;
 use function Hibla\delay;
 
+use Hibla\Promise\Exceptions\TimeoutException;
+use Hibla\Promise\Interfaces\PromiseInterface;
+use Hibla\Promise\Promise;
+
+use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
+use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
+
 /**
  * Concrete implementation of a background process that returns a value.
  * Used for parallel() calls.
- * 
+ *
  * @template TResult
  */
 final class Process
@@ -31,7 +34,6 @@ final class Process
      * @param PromiseReadableStreamInterface $stderr Standard error stream
      * @param string $statusFilePath Path to status file
      * @param bool $loggingEnabled Whether logging is enabled
-     * @param int $timeoutSeconds Maximum execution time for the worker
      */
     public function __construct(
         private readonly string $taskId,
@@ -42,7 +44,6 @@ final class Process
         private readonly PromiseReadableStreamInterface $stderr,
         private readonly string $statusFilePath,
         private readonly bool $loggingEnabled = true,
-        private readonly int $timeoutSeconds = 60
     ) {}
 
     /**
@@ -66,9 +67,11 @@ final class Process
                 return await(Promise::timeout($resultPromise, $timeoutSeconds));
             } catch (TimeoutException) {
                 $this->terminate();
+
                 throw new \RuntimeException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
             } catch (\Throwable $e) {
                 $this->terminate();
+
                 throw $e;
             } finally {
                 $this->close();
@@ -84,7 +87,7 @@ final class Process
      */
     public function terminate(): void
     {
-        if (!$this->isSystemRunning) {
+        if (! $this->isSystemRunning) {
             return;
         }
 
@@ -106,26 +109,28 @@ final class Process
      */
     public function isRunning(): bool
     {
-        if (!$this->isSystemRunning) {
+        if (! $this->isSystemRunning) {
             return false;
         }
 
         if (PHP_OS_FAMILY === 'Windows') {
             $cmd = "tasklist /FI \"PID eq {$this->pid}\" 2>nul";
             $output = shell_exec($cmd);
-            $this->isSystemRunning = $output !== null && strpos($output, (string)$this->pid) !== false;
+            $this->isSystemRunning = $output !== null && $output !== false && strpos($output, (string)$this->pid) !== false;
+
             return $this->isSystemRunning;
         }
 
-        if (!\is_resource($this->processResource)) {
+        if (! \is_resource($this->processResource)) {
             $this->isSystemRunning = false;
+
             return false;
         }
 
         $status = proc_get_status($this->processResource);
-        $running = $status['running'] ?? false;
+        $running = $status['running'];
 
-        if (!$running) {
+        if (! $running) {
             $this->isSystemRunning = false;
         }
 
@@ -162,19 +167,28 @@ final class Process
     {
         return async(function () {
             while (null !== ($line = await($this->stdout->readLineAsync()))) {
-                if (trim($line) === '') continue;
+                if (trim($line) === '') {
+                    continue;
+                }
 
                 $status = @json_decode($line, true);
-                if (!\is_array($status)) continue;
+                if (! \is_array($status)) {
+                    continue;
+                }
 
                 $statusType = $status['status'] ?? '';
 
                 if ($statusType === 'OUTPUT') {
-                    echo $status['output'] ?? '';
+                    $output = $status['output'] ?? '';
+                    if (is_scalar($output) || (is_object($output) && method_exists($output, '__toString'))) {
+                        echo $output;
+                    }
                 } elseif ($statusType === 'COMPLETED') {
+                    /** @var TResult */
                     return $status['result'] ?? null;
                 } elseif ($statusType === 'ERROR') {
-                    throw new \RuntimeException("Task {$this->taskId} failed: " . ($status['message'] ?? 'Unknown error'));
+                    $message = $status['message'] ?? 'Unknown error';
+                    throw new \RuntimeException("Task {$this->taskId} failed: " . (is_scalar($message) ? $message : 'Unknown error'));
                 }
             }
 
@@ -197,10 +211,13 @@ final class Process
             $lastOutputPosition = 0;
 
             while ((microtime(true) - $startTime) < $timeoutSeconds) {
-                if (!$this->isSystemRunning && !file_exists($this->statusFilePath)) return null;
+                if (! $this->isSystemRunning && ! file_exists($this->statusFilePath)) {
+                    throw new \RuntimeException("Task {$this->taskId} terminated without producing a status file.");
+                }
 
-                if (!file_exists($this->statusFilePath)) {
+                if (! file_exists($this->statusFilePath)) {
                     await(delay($pollInterval));
+
                     continue;
                 }
 
@@ -208,12 +225,14 @@ final class Process
                 $content = @file_get_contents($this->statusFilePath);
                 if ($content === false) {
                     await(delay($pollInterval));
+
                     continue;
                 }
 
                 $status = json_decode($content, true);
-                if (!\is_array($status)) {
+                if (! \is_array($status)) {
                     await(delay($pollInterval));
+
                     continue;
                 }
 
@@ -225,13 +244,22 @@ final class Process
                     }
                 }
 
-                if (($status['status'] ?? '') === 'COMPLETED') return $status['result'] ?? null;
-                if (($status['status'] ?? '') === 'CANCELLED') throw new \RuntimeException("Task cancelled.");
-                if (($status['status'] ?? '') === 'ERROR') throw new \RuntimeException("Task failed: " . ($status['message'] ?? 'Unknown'));
+                if (($status['status'] ?? '') === 'COMPLETED') {
+                    /** @var TResult */
+                    return $status['result'] ?? null;
+                }
+                if (($status['status'] ?? '') === 'CANCELLED') {
+                    throw new \RuntimeException('Task cancelled.');
+                }
+                if (($status['status'] ?? '') === 'ERROR') {
+                    $message = $status['message'] ?? 'Unknown';
+                    throw new \RuntimeException('Task failed: ' . (is_scalar($message) ? $message : 'Unknown'));
+                }
 
                 await(delay($pollInterval));
             }
-            throw new \RuntimeException("Timeout polling status file.");
+
+            throw new \RuntimeException('Timeout polling status file.');
         });
     }
 
@@ -247,7 +275,7 @@ final class Process
         if (file_exists($this->statusFilePath)) {
             $content = @file_get_contents($this->statusFilePath);
             $data = $content !== false ? json_decode($content, true) : [];
-            if (!\is_array($data)) {
+            if (! \is_array($data)) {
                 $data = [];
             }
             $data['status'] = $status;
@@ -264,13 +292,13 @@ final class Process
      */
     private function close(): void
     {
-        if (!$this->isSystemRunning) {
+        if (! $this->isSystemRunning) {
             return;
         }
 
-        if (isset($this->stdin)) $this->stdin->close();
-        if (isset($this->stdout)) $this->stdout->close();
-        if (isset($this->stderr)) $this->stderr->close();
+        $this->stdin->close();
+        $this->stdout->close();
+        $this->stderr->close();
 
         if (\is_resource($this->processResource)) {
             proc_close($this->processResource);
@@ -286,7 +314,7 @@ final class Process
      */
     private function cleanupIfNeeded(): void
     {
-        if (!$this->loggingEnabled && file_exists($this->statusFilePath)) {
+        if (! $this->loggingEnabled && file_exists($this->statusFilePath)) {
             @unlink($this->statusFilePath);
             $dir = dirname($this->statusFilePath);
             $scanResult = is_dir($dir) ? scandir($dir) : false;

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Hibla\Parallel;
 
 /**
@@ -19,7 +21,8 @@ final class BackgroundProcess
         private readonly int $pid,
         private readonly ?string $statusFilePath = null,
         private readonly bool $loggingEnabled = false
-    ) {}
+    ) {
+    }
 
     /**
      * Terminate the background process forcefully
@@ -49,7 +52,8 @@ final class BackgroundProcess
         if (PHP_OS_FAMILY === 'Windows') {
             $cmd = "tasklist /FI \"PID eq {$this->pid}\" 2>nul";
             $output = shell_exec($cmd);
-            return $output !== null && strpos($output, (string)$this->pid) !== false;
+
+            return \is_string($output) && strpos($output, (string)$this->pid) !== false;
         }
 
         return posix_kill($this->pid, 0);
@@ -82,14 +86,15 @@ final class BackgroundProcess
      */
     private function updateStatusOnTermination(): void
     {
-        if (!$this->loggingEnabled || !$this->statusFilePath || !file_exists($this->statusFilePath)) {
+        // Fix: Explicitly check if statusFilePath is not null and file exists
+        if (! $this->loggingEnabled || $this->statusFilePath === null || ! file_exists($this->statusFilePath)) {
             return;
         }
 
         $content = @file_get_contents($this->statusFilePath);
         $statusData = $content !== false ? json_decode($content, true) : [];
 
-        if (!\is_array($statusData)) {
+        if (! \is_array($statusData)) {
             $statusData = ['task_id' => $this->taskId];
         }
 
@@ -100,7 +105,7 @@ final class BackgroundProcess
         ]);
 
         @file_put_contents(
-            $this->statusFilePath, 
+            $this->statusFilePath,
             json_encode($statusData, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES)
         );
     }

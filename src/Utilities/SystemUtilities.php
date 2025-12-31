@@ -1,6 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Hibla\Parallel\Utilities;
+
+use Rcalicdan\ConfigLoader\ConfigLoader;
 
 use function Rcalicdan\ConfigLoader\configRoot;
 
@@ -49,7 +53,7 @@ class SystemUtilities
             $nullDevice = PHP_OS_FAMILY === 'Windows' ? 'nul' : '/dev/null';
             $result = shell_exec("{$which} {$path} 2>{$nullDevice}");
 
-            if ($result && trim($result)) {
+            if ($result !== null && \is_string($result) && trim($result) !== '') {
                 $foundPath = trim($result);
                 if (is_executable($foundPath)) {
                     return $foundPath;
@@ -61,33 +65,15 @@ class SystemUtilities
     }
 
     /**
-     * Find the autoload path with multiple fallback strategies
+     * Find the autoload path from the root path
      *
      * @return string Path to composer autoload.php file
      */
     public function findAutoloadPath(): string
     {
-        $possiblePaths = [
-            getcwd() . '/vendor/autoload.php',
-            getcwd() . '/../vendor/autoload.php',
-            __DIR__ . '/../../../../vendor/autoload.php',
-            __DIR__ . '/../../../vendor/autoload.php',
-            __DIR__ . '/../../vendor/autoload.php',
-            __DIR__ . '/../vendor/autoload.php',
-            dirname($_SERVER['SCRIPT_FILENAME'] ?? __FILE__) . '/vendor/autoload.php',
-            dirname($_SERVER['SCRIPT_FILENAME'] ?? __FILE__) . '/../vendor/autoload.php',
-            ($_SERVER['DOCUMENT_ROOT'] ?? '') . '/../vendor/autoload.php',
-        ];
+       $rootDir = ConfigLoader::getInstance()->getRootPath();
 
-        $possiblePaths = array_filter(array_unique($possiblePaths));
-
-        foreach ($possiblePaths as $path) {
-            if (file_exists($path) && is_readable($path)) {
-                return realpath($path) ?: $path;
-            }
-        }
-
-        return 'vendor/autoload.php';
+       return $rootDir . '/vendor/autoload.php';
     }
 
     /**
@@ -99,32 +85,44 @@ class SystemUtilities
     {
         $bootstrap = configRoot('hibla_parallel', 'bootstrap', null);
 
-        if (!\is_array($bootstrap) || empty($bootstrap)) {
+        if (! \is_array($bootstrap) || \count($bootstrap) === 0) {
             return [
                 'name' => 'none',
                 'bootstrap_file' => null,
-                'bootstrap_callback' => null
+                'bootstrap_callback' => null,
             ];
         }
 
         $bootstrapFile = $bootstrap['file'] ?? null;
         $bootstrapCallback = $bootstrap['callback'] ?? null;
 
-        if (!empty($bootstrapFile) && !file_exists($bootstrapFile)) {
+        if ($bootstrapFile !== null && ! \is_string($bootstrapFile)) {
+            throw new \RuntimeException(
+                'Bootstrap file must be a string'
+            );
+        }
+
+        if (\is_string($bootstrapFile) && $bootstrapFile !== '' && ! file_exists($bootstrapFile)) {
             throw new \RuntimeException(
                 "Bootstrap file not found: {$bootstrapFile}"
             );
         }
 
-        if ($bootstrapCallback !== null && !is_callable($bootstrapCallback)) {
+        if ($bootstrapCallback !== null && ! is_callable($bootstrapCallback)) {
             throw new \RuntimeException(
-                "Bootstrap callback must be callable"
+                'Bootstrap callback must be callable'
             );
+        }
+
+        $finalBootstrapFile = null;
+        if (\is_string($bootstrapFile) && $bootstrapFile !== '') {
+            $realPath = realpath($bootstrapFile);
+            $finalBootstrapFile = $realPath !== false ? $realPath : $bootstrapFile;
         }
 
         return [
             'name' => 'custom',
-            'bootstrap_file' => $bootstrapFile ? (realpath($bootstrapFile) ?: $bootstrapFile) : null,
+            'bootstrap_file' => $finalBootstrapFile,
             'bootstrap_callback' => $bootstrapCallback,
         ];
     }

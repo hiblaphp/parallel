@@ -1,14 +1,15 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Hibla\Parallel\Managers;
 
-use Hibla\Parallel\Process;
 use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Handlers\TaskStatusHandler;
+use Hibla\Parallel\Process;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
-use Hibla\Parallel\Utilities\TaskRegistry;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 use Rcalicdan\Serializer\Exceptions\SerializationException;
 
@@ -34,10 +35,11 @@ class ProcessManager
 
     private SystemUtilities $systemUtils;
 
-    private TaskRegistry $taskRegistry;
-
     private CallbackSerializationManager $serializer;
 
+    /**
+     * @var array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}
+     */
     private array $frameworkInfo;
 
     private int $spawnCount = 0;
@@ -57,6 +59,7 @@ class ProcessManager
         if (self::$instance === null) {
             self::$instance = new self();
         }
+
         return self::$instance;
     }
 
@@ -72,23 +75,23 @@ class ProcessManager
         );
 
         $this->spawnHandler = new ProcessSpawnHandler($this->systemUtils, $this->logger);
-        $this->taskRegistry = new TaskRegistry();
         $this->frameworkInfo = $this->systemUtils->getFrameworkBootstrap();
     }
 
     /**
      * Spawns a streamed task with real-time output communication.
      *
-     * @param callable $callback The callback function to execute in the worker process
+     * @template TResult
+     * 
+     * @param callable(): TResult $callback The callback function to execute in the worker process
      * @param int $timeoutSeconds Maximum execution time in seconds
-     * @return Process The spawned process instance with communication streams
+     * @return Process<TResult> The spawned process instance with communication streams
      */
     public function spawnStreamedTask(callable $callback, int $timeoutSeconds = 60): Process
     {
         $this->validate($callback);
         $taskId = $this->systemUtils->generateTaskId();
 
-        $this->taskRegistry->registerTask($taskId, $callback);
         $this->statusHandler->createInitialStatus($taskId, $callback);
 
         $logging = $this->logger->isDetailedLoggingEnabled();
@@ -102,7 +105,9 @@ class ProcessManager
             $timeoutSeconds
         );
 
-        $this->logger->logTaskEvent($taskId, 'SPAWNED', "Streamed task PID: " . $process->getPid());
+        $this->logger->logTaskEvent($taskId, 'SPAWNED', 'Streamed task PID: ' . $process->getPid());
+
+        /** @var Process<TResult> */
         return $process;
     }
 
@@ -127,7 +132,7 @@ class ProcessManager
         }
 
         if ($this->spawnCount > 49) {
-            throw new \RuntimeException(message: "Safety Limit: Cannot spawn more than 50 background tasks per second.");
+            throw new \RuntimeException(message: 'Safety Limit: Cannot spawn more than 50 background tasks per second.');
         }
 
         $this->spawnCount++;
@@ -137,7 +142,6 @@ class ProcessManager
         $logging = $this->logger->isDetailedLoggingEnabled();
 
         if ($logging) {
-            $this->taskRegistry->registerTask($taskId, $callback);
             $this->statusHandler->createInitialStatus($taskId, $callback);
         }
 
@@ -151,7 +155,7 @@ class ProcessManager
         );
 
         if ($logging) {
-            $this->logger->logTaskEvent($taskId, 'SPAWNED_FF', "Fire&Forget PID: " . $process->getPid());
+            $this->logger->logTaskEvent($taskId, 'SPAWNED_FF', 'Fire&Forget PID: ' . $process->getPid());
         }
 
         return $process;
@@ -159,7 +163,6 @@ class ProcessManager
 
     /**
      * @param callable $callback The callback to validate
-     * @param array<string, mixed> $context The context to validate
      * @return void
      * @throws \RuntimeException If task nesting is detected
      * @throws SerializationException If the callback cannot be serialized
@@ -167,10 +170,7 @@ class ProcessManager
     private function validate(callable $callback): void
     {
         if ($this->isRunningInBackground()) {
-            throw new \RuntimeException("Nesting parallel tasks is not allowed.");
-        }
-        if (!$this->serializer->canSerializeCallback($callback)) {
-            throw new SerializationException("Callback not serializable.");
+            throw new \RuntimeException('Nesting parallel tasks is not allowed.');
         }
     }
 
@@ -180,6 +180,7 @@ class ProcessManager
     private function isRunningInBackground(): bool
     {
         $nestingLevel = getenv('DEFER_NESTING_LEVEL');
+
         return (int)($nestingLevel !== false ? $nestingLevel : 0) > 0;
     }
 }

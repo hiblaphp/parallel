@@ -1,10 +1,12 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Hibla\Parallel;
 
 /**
  * Represents the result of a settled task
- * 
+ *
  * @template TValue
  */
 final readonly class TaskResult
@@ -21,11 +23,12 @@ final readonly class TaskResult
         public string $status,
         public mixed $value = null,
         public ?string $reason = null
-    ) {}
+    ) {
+    }
 
     /**
      * Create a fulfilled result
-     * 
+     *
      * @template TFulfilledValue
      * @param TFulfilledValue $value
      * @return self<TFulfilledValue>
@@ -38,7 +41,7 @@ final readonly class TaskResult
 
     /**
      * Create a rejected result
-     * 
+     *
      * @return self<never>
      */
     public static function rejected(string $reason): self
@@ -49,7 +52,7 @@ final readonly class TaskResult
 
     /**
      * Check if the result is fulfilled
-     * 
+     *
      * @return bool
      */
     public function isFulfilled(): bool
@@ -59,7 +62,7 @@ final readonly class TaskResult
 
     /**
      * Check if the result is rejected
-     * 
+     *
      * @return bool
      */
     public function isRejected(): bool
@@ -69,7 +72,7 @@ final readonly class TaskResult
 
     /**
      * Get the value if fulfilled, throw exception if rejected
-     * 
+     *
      * @return TValue
      * @throws \RuntimeException If result is rejected
      */
@@ -78,12 +81,14 @@ final readonly class TaskResult
         if ($this->isRejected()) {
             throw new \RuntimeException("Cannot get value from rejected result: {$this->reason}");
         }
+
+        /** @var TValue */
         return $this->value;
     }
 
     /**
      * Get the reason if rejected, null otherwise
-     * 
+     *
      * @return string|null
      */
     public function getReason(): ?string
@@ -93,15 +98,17 @@ final readonly class TaskResult
 
     /**
      * Convert to array representation
-     * 
+     *
      * @return array{status: 'fulfilled', value: TValue}|array{status: 'rejected', reason: string}
      */
     public function toArray(): array
     {
         if ($this->isFulfilled()) {
+            /** @var TValue $value */
+            $value = $this->value;
             return [
                 'status' => self::STATUS_FULFILLED,
-                'value' => $this->value,
+                'value' => $value,
             ];
         }
 

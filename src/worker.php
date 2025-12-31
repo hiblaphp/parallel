@@ -47,7 +47,7 @@ register_shutdown_function(function () {
         write_status_to_stdout([
             'status' => $status,
             'message' => $message,
-            'error' => $error
+            'error' => $error,
         ]);
 
         update_status_file($status, $message, ['error' => $error]);
@@ -71,7 +71,7 @@ $serializationManager = null;
 function write_status_to_stdout(array $data): void
 {
     global $stdout;
-    if (!is_resource($stdout)) {
+    if (! is_resource($stdout)) {
         return;
     }
 
@@ -86,7 +86,9 @@ function update_status_file_with_output(): void
 {
     global $statusFile, $startTime, $taskId, $outputBuffer, $isWindows;
 
-    if (!$isWindows || $statusFile === null) return;
+    if (! $isWindows || $statusFile === null) {
+        return;
+    }
 
     $existing = [];
     if (file_exists($statusFile)) {
@@ -177,12 +179,12 @@ function stream_output_handler($buffer, $phase): string
             write_status_to_stdout([
                 'status' => 'TIMEOUT',
                 'message' => $msg,
-                'output'  => $buffer
+                'output' => $buffer,
             ]);
 
             update_status_file('TIMEOUT', $msg, [
                 'buffered_output' => $outputBuffer,
-                'duration' => $realisticDuration
+                'duration' => $realisticDuration,
             ]);
 
             return '';
@@ -190,11 +192,12 @@ function stream_output_handler($buffer, $phase): string
 
         write_status_to_stdout([
             'status' => 'OUTPUT',
-            'output' => $buffer
+            'output' => $buffer,
         ]);
 
         update_status_file_with_output();
     }
+
     return '';
 }
 
@@ -204,16 +207,18 @@ $taskProcessed = false;
 $maxWaitTime = 5;
 $waitStart = microtime(true);
 
-while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
+while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
     $payload = fgets($stdin);
 
     if ($payload === false || trim($payload) === '') {
         if ((microtime(true) - $waitStart) > $maxWaitTime) {
             fwrite($stderr, "Worker timeout: No task received within {$maxWaitTime} seconds.\n");
+
             break;
         }
 
         usleep(10000);
+
         continue;
     }
 
@@ -225,19 +230,19 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
     try {
         $taskData = json_decode($payload, true);
         if (json_last_error() !== JSON_ERROR_NONE) {
-            throw new \RuntimeException("Invalid task payload: " . json_last_error_msg());
+            throw new RuntimeException('Invalid task payload: ' . json_last_error_msg());
         }
 
         $taskId = $taskData['task_id'] ?? 'unknown';
         $statusFile = $taskData['status_file'] ?? null;
         $timeoutSeconds = $taskData['timeout_seconds'] ?? 60;
-        $memoryLimit = $taskData['memory_limit'] ?? "512M";
+        $memoryLimit = $taskData['memory_limit'] ?? '512M';
 
         ini_set('memory_limit', $memoryLimit);
         ini_set('max_execution_time', (string)$timeoutSeconds);
         set_time_limit($timeoutSeconds);
 
-        if (!$isWindows && function_exists('pcntl_alarm') && function_exists('pcntl_signal')) {
+        if (! $isWindows && function_exists('pcntl_alarm') && function_exists('pcntl_signal')) {
             if (function_exists('pcntl_async_signals')) {
                 pcntl_async_signals(true);
             }
@@ -247,7 +252,7 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
 
                 write_status_to_stdout([
                     'status' => 'TIMEOUT',
-                    'message' => $message
+                    'message' => $message,
                 ]);
 
                 update_status_file('TIMEOUT', $message);
@@ -264,17 +269,18 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
 
         if ($isWindows && $statusFile) {
             $statusDir = dirname($statusFile);
-            if (!is_dir($statusDir)) {
+            if (! is_dir($statusDir)) {
                 $permissions = 0777;
-                if (!@mkdir($statusDir, $permissions, true) && !is_dir($statusDir)) {
+                if (! @mkdir($statusDir, $permissions, true) && ! is_dir($statusDir)) {
                     $error = error_get_last();
                     $errorMsg = $error ? $error['message'] : 'Unknown error';
-                    throw new \RuntimeException("Worker failed to create status directory: {$statusDir}. Error: {$errorMsg}");
+
+                    throw new RuntimeException("Worker failed to create status directory: {$statusDir}. Error: {$errorMsg}");
                 }
             }
 
-            if (!is_writable($statusDir)) {
-                throw new \RuntimeException("Worker cannot write to status directory: {$statusDir}");
+            if (! is_writable($statusDir)) {
+                throw new RuntimeException("Worker cannot write to status directory: {$statusDir}");
             }
         }
 
@@ -307,8 +313,8 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
 
         if ($autoloadPath === null) {
             $autoloadPath = $taskData['autoload_path'] ?? '';
-            if (!file_exists($autoloadPath)) {
-                throw new \RuntimeException("Autoloader not found: {$autoloadPath}");
+            if (! file_exists($autoloadPath)) {
+                throw new RuntimeException("Autoloader not found: {$autoloadPath}");
             }
             require_once $autoloadPath;
 
@@ -331,12 +337,12 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
 
         try {
             $callback = $serializationManager->unserializeCallback($taskData['serialized_callback']);
-        } catch (\Throwable $e) {
-            throw new \RuntimeException('Failed to unserialize task data: ' . $e->getMessage(), 0, $e);
+        } catch (Throwable $e) {
+            throw new RuntimeException('Failed to unserialize task data: ' . $e->getMessage(), 0, $e);
         }
 
-        if (!is_callable($callback)) {
-            throw new \RuntimeException('Deserialized task is not callable.');
+        if (! is_callable($callback)) {
+            throw new RuntimeException('Deserialized task is not callable.');
         }
 
         write_status_to_stdout(['status' => 'RUNNING']);
@@ -344,7 +350,7 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         $result = $callback();
         ob_end_flush();
 
-        if (!$isWindows && function_exists('pcntl_alarm')) {
+        if (! $isWindows && function_exists('pcntl_alarm')) {
             pcntl_alarm(0);
         }
 
@@ -356,10 +362,12 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
         write_status_to_stdout($finalStatus);
 
         update_status_file('COMPLETED', 'Task completed successfully.', $finalStatus);
-    } catch (\Throwable $e) {
-        if (ob_get_level() > 0) ob_end_clean();
+    } catch (Throwable $e) {
+        if (ob_get_level() > 0) {
+            ob_end_clean();
+        }
 
-        if (!$isWindows && function_exists('pcntl_alarm')) {
+        if (! $isWindows && function_exists('pcntl_alarm')) {
             pcntl_alarm(0);
         }
 
@@ -368,7 +376,7 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
             'message' => $e->getMessage(),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
-            'stack_trace' => $e->getTraceAsString()
+            'stack_trace' => $e->getTraceAsString(),
         ];
 
         write_status_to_stdout($errorStatus);
@@ -378,8 +386,14 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
     }
 }
 
-if (is_resource($stdin)) fclose($stdin);
-if (is_resource($stdout)) fclose($stdout);
-if (is_resource($stderr)) fclose($stderr);
+if (is_resource($stdin)) {
+    fclose($stdin);
+}
+if (is_resource($stdout)) {
+    fclose($stdout);
+}
+if (is_resource($stderr)) {
+    fclose($stderr);
+}
 
 exit(0);
