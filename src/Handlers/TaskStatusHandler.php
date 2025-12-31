@@ -12,8 +12,12 @@ final readonly class TaskStatusHandler
 {
     /**
      * @param string $logDir Directory path for storing task status files
+     * @param bool $loggingEnabled Whether logging is enabled
      */
-    public function __construct(private string $logDir) {}
+    public function __construct(
+        private string $logDir,
+        private bool $loggingEnabled = true
+    ) {}
 
     /**
      * Creates initial status file for a new task.
@@ -27,6 +31,16 @@ final readonly class TaskStatusHandler
      */
     public function createInitialStatus(string $taskId, callable $callback): void
     {
+        if (!$this->loggingEnabled) {
+            return;
+        }
+
+        if (!is_dir($this->logDir)) {
+            if (!@mkdir($this->logDir, 0777, true) && !is_dir($this->logDir)) {
+                throw new \RuntimeException("Failed to create log directory: {$this->logDir}");
+            }
+        }
+
         $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
         /** @var array<string, mixed> $initialStatus */

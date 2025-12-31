@@ -60,16 +60,18 @@ class ProcessManager
         return self::$instance;
     }
 
-    /**
-     * Constructs a new ProcessManager instance.
-     */
     public function __construct()
     {
         $this->serializer = new CallbackSerializationManager();
         $this->systemUtils = new SystemUtilities();
         $this->logger = new BackgroundLogger();
-        $this->statusHandler = new TaskStatusHandler($this->logger->getLogDirectory());
-        $this->spawnHandler = new ProcessSpawnHandler( $this->systemUtils, $this->logger);
+
+        $this->statusHandler = new TaskStatusHandler(
+            $this->logger->getLogDirectory(),
+            $this->logger->isDetailedLoggingEnabled()
+        );
+
+        $this->spawnHandler = new ProcessSpawnHandler($this->systemUtils, $this->logger);
         $this->taskRegistry = new TaskRegistry();
         $this->frameworkInfo = $this->systemUtils->getFrameworkBootstrap();
     }
@@ -145,7 +147,7 @@ class ProcessManager
             $this->frameworkInfo,
             $this->serializer,
             $logging,
-            $timeoutSeconds 
+            $timeoutSeconds
         );
 
         if ($logging) {
