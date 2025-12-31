@@ -19,12 +19,11 @@ class TaskRegistry
      * @param callable $callback The callback to execute
      * @param array<string, mixed> $context Context data for the task
      */
-    public function registerTask(string $taskId, callable $callback, array $context): void
+    public function registerTask(string $taskId, callable $callback): void
     {
         $this->taskRegistry[$taskId] = [
             'created_at' => time(),
             'callback_type' => $this->getCallableType($callback),
-            'context_size' => \count($context)
         ];
     }
 

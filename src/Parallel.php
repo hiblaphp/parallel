@@ -66,7 +66,7 @@ class Parallel
         $source = new CancellationTokenSource();
 
         return async(function () use ($tasks, $maxProcess, $timeoutSeconds, $source) {
-            if (empty($tasks)) {
+            if (\count($tasks) === 0) {
                 return [];
             }
 
@@ -143,7 +143,7 @@ class Parallel
         $source = new CancellationTokenSource();
 
         return async(function () use ($tasks, $maxProcess, $timeoutSeconds, $source) {
-            if (empty($tasks)) {
+            if (\count($tasks) === 0) {
                 return [];
             }
 

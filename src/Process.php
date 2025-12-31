@@ -63,7 +63,6 @@ final class Process
 
             try {
 
-
                 return await(Promise::timeout($resultPromise, $timeoutSeconds));
             } catch (TimeoutException) {
                 $this->terminate();

@@ -40,7 +40,6 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  * @template TResult
  *
  * @param callable(): TResult $task The task to execute in parallel
- * @param array<string, mixed> $context Optional context/parameters to pass to the task
  * @param int $timeout Maximum seconds to wait for task completion (default: 60)
  * @return PromiseInterface<TResult> Promise resolving to the task's return value
  * 
@@ -59,12 +58,12 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  * $result = await(parallel(fn() => slowTask(), [], 120));
  * ```
  */
-function parallel(callable $task, array $context = [], int $timeout = 60): PromiseInterface
+function parallel(callable $task, int $timeout = 60): PromiseInterface
 {
     $source = new CancellationTokenSource();
 
     /** @var Process $process */
-    $process = ProcessManager::getGlobal()->spawnStreamedTask($task, $context, $timeout);
+    $process = ProcessManager::getGlobal()->spawnStreamedTask($task, $timeout);
 
     $source->token->onCancel(function () use ($process) {
         $process->terminate();
@@ -133,9 +132,9 @@ function parallel(callable $task, array $context = [], int $timeout = 60): Promi
  * echo "Running: " . ($process->isRunning() ? 'yes' : 'no') . "\n";
  * ```
  */
-function spawn(callable $task, array $context = [], int $timeout = 600): PromiseInterface
+function spawn(callable $task, int $timeout = 600): PromiseInterface
 {
     return Promise::resolved(
-        ProcessManager::getGlobal()->spawnBackgroundTask($task, $context, $timeout)
+        ProcessManager::getGlobal()->spawnBackgroundTask($task, $timeout)
     );
 }

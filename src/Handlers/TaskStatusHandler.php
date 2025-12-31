@@ -23,10 +23,9 @@ final readonly class TaskStatusHandler
      *
      * @param string $taskId Unique identifier for the task
      * @param callable $callback The callback function to be executed
-     * @param array<string, mixed> $context Contextual data for the task
      * @return void
      */
-    public function createInitialStatus(string $taskId, callable $callback, array $context): void
+    public function createInitialStatus(string $taskId, callable $callback): void
     {
         $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
@@ -43,7 +42,6 @@ final readonly class TaskStatusHandler
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
             'callback_type' => $this->getCallableType($callback),
-            'context_size' => \count($context)
         ];
 
         file_put_contents($statusFile, json_encode($initialStatus, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));

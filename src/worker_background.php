@@ -146,11 +146,8 @@ try {
     }
 
     $callback = $serializationManager->unserializeCallback($taskData['serialized_callback']);
-    $context = $serializationManager->unserializeContext($taskData['serialized_context']);
 
-    if (is_callable($callback)) {
-        call_user_func($callback, $context);
-    }
+    $callback();
 
     if (!$isWindows && function_exists('pcntl_alarm')) {
         pcntl_alarm(0);

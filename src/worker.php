@@ -99,7 +99,6 @@ function update_status_file_with_output(): void
     $preservedFields = [
         'created_at' => $existing['created_at'] ?? date('Y-m-d H:i:s'),
         'callback_type' => $existing['callback_type'] ?? null,
-        'context_size' => $existing['context_size'] ?? null,
     ];
 
     $statusData = \array_merge(
@@ -136,7 +135,6 @@ function update_status_file(string $status, string $message, array $extra = []):
     $preservedFields = [
         'created_at' => $existing['created_at'] ?? date('Y-m-d H:i:s'),
         'callback_type' => $existing['callback_type'] ?? null,
-        'context_size' => $existing['context_size'] ?? null,
     ];
 
     $duration = $extra['duration'] ?? (microtime(true) - $startTime);
@@ -333,7 +331,6 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
 
         try {
             $callback = $serializationManager->unserializeCallback($taskData['serialized_callback']);
-            $context = $serializationManager->unserializeContext($taskData['serialized_context']);
         } catch (\Throwable $e) {
             throw new \RuntimeException('Failed to unserialize task data: ' . $e->getMessage(), 0, $e);
         }
@@ -344,7 +341,7 @@ while (is_resource($stdin) && !feof($stdin) && !$taskProcessed) {
 
         write_status_to_stdout(['status' => 'RUNNING']);
 
-        $result = $callback($context);
+        $result = $callback();
         ob_end_flush();
 
         if (!$isWindows && function_exists('pcntl_alarm')) {

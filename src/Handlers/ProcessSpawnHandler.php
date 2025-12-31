@@ -26,6 +26,31 @@ class ProcessSpawnHandler
         private SystemUtilities $systemUtils,
         private BackgroundLogger $logger
     ) {
+        if(PHP_OS_FAMILY !== 'Windows') {
+            $requiredFunctions = ['proc_open', 'exec', 'shell_exec', 'posix_kill'];
+        } else {
+            $requiredFunctions = ['proc_open', 'exec', 'shell_exec'];
+        }
+        
+        $missingFunctions = [];
+
+        foreach ($requiredFunctions as $function) {
+            if (!function_exists($function)) {
+                $missingFunctions[] = $function;
+            }
+        }
+
+        if (\count($missingFunctions) > 0) {
+            throw new \RuntimeException(
+                \sprintf(
+                    'The following required functions are disabled on this server: "%s". ' .
+                    'Hibla Parallel requires these functions to spawn and manage processes. ' .
+                    'Please check the "disable_functions" directive in your php.ini file.',
+                    implode('", "', $missingFunctions)
+                )
+            );
+        }
+
         $this->defaultMemoryLimit = Config::loadFromRoot('hibla_parallel', 'background_process.memory_limit', '512M');
     }
 
@@ -37,17 +62,16 @@ class ProcessSpawnHandler
      *
      * @param string $taskId Unique identifier for the task
      * @param callable $callback The callback function to execute in the worker
-     * @param array<string, mixed> $context Contextual data to pass to the callback
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param bool $loggingEnabled Whether logging is enabled for this task
+     * @param int $timeoutSeconds Maximum execution time in seconds
      * @return Process The spawned process instance with communication streams
      * @throws \RuntimeException If process spawning fails
      */
     public function spawnStreamedTask(
         string $taskId,
         callable $callback,
-        array $context,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
         bool $loggingEnabled,
@@ -68,7 +92,9 @@ class ProcessSpawnHandler
         $processResource = @proc_open($command, $descriptorSpec, $pipes);
 
         if (!\is_resource($processResource)) {
-            throw new \RuntimeException("Failed to spawn process.");
+            $error = error_get_last();
+            $errorMessage = $error['message'] ?? 'Unknown error';
+            throw new \RuntimeException("Failed to spawn process. OS Error: " . $errorMessage);
         }
 
         stream_set_blocking($pipes[0], false);
@@ -88,7 +114,6 @@ class ProcessSpawnHandler
                 $taskId,
                 $statusFile,
                 $callback,
-                $context,
                 $frameworkInfo,
                 $serializationManager,
                 $loggingEnabled,
@@ -122,7 +147,6 @@ class ProcessSpawnHandler
      *
      * @param string $taskId Unique identifier for the task
      * @param callable $callback The callback function to execute in the worker
-     * @param array<string, mixed> $context Contextual data to pass to the callback
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param bool $loggingEnabled Whether logging is enabled for this task
@@ -133,7 +157,6 @@ class ProcessSpawnHandler
     public function spawnBackgroundTask(
         string $taskId,
         callable $callback,
-        array $context,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
         bool $loggingEnabled,
@@ -156,7 +179,9 @@ class ProcessSpawnHandler
         $processResource = @proc_open($command, $descriptorSpec, $pipes);
 
         if (!\is_resource($processResource)) {
-            throw new \RuntimeException("Failed to spawn fire-and-forget process.");
+            $error = error_get_last();
+            $errorMessage = $error['message'] ?? 'Unknown error';
+            throw new \RuntimeException("Failed to spawn fire-and-forget process. OS Error: " . $errorMessage);
         }
 
         $status = proc_get_status($processResource);
@@ -169,7 +194,6 @@ class ProcessSpawnHandler
                 $taskId,
                 $statusFile,
                 $callback,
-                $context,
                 $frameworkInfo,
                 $serializationManager,
                 $loggingEnabled,
@@ -191,7 +215,6 @@ class ProcessSpawnHandler
      * @param string $taskId Unique identifier for the task
      * @param string $statusFile Path to the status file for tracking
      * @param callable $callback The callback function to serialize
-     * @param array<string, mixed> $context Contextual data to serialize
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param bool $loggingEnabled Whether logging is enabled for this task
@@ -203,14 +226,12 @@ class ProcessSpawnHandler
         string $taskId,
         string $statusFile,
         callable $callback,
-        array $context,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
         bool $loggingEnabled,
         int $timeoutSeconds = 60
     ): string {
         $serializedCallback = $serializationManager->serializeCallback($callback);
-        $serializedContext = $serializationManager->serializeContext($context);
 
         $serializedBootstrapCallback = null;
         if (isset($frameworkInfo['bootstrap_callback']) && $frameworkInfo['bootstrap_callback'] !== null) {
@@ -222,7 +243,6 @@ class ProcessSpawnHandler
             'task_id' => $taskId,
             'status_file' => $statusFile,
             'serialized_callback' => $serializedCallback,
-            'serialized_context' => $serializedContext,
             'autoload_path' => $this->systemUtils->findAutoloadPath(),
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
             'framework_bootstrap_callback' => $serializedBootstrapCallback, 

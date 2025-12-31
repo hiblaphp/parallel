@@ -78,24 +78,22 @@ class ProcessManager
      * Spawns a streamed task with real-time output communication.
      *
      * @param callable $callback The callback function to execute in the worker process
-     * @param array<string, mixed> $context Contextual data to pass to the callback
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @return Process The spawned process instance with communication streams
      */
-    public function spawnStreamedTask(callable $callback, array $context = [], int $timeoutSeconds = 60): Process
+    public function spawnStreamedTask(callable $callback, int $timeoutSeconds = 60): Process
     {
         $this->validate($callback);
         $taskId = $this->systemUtils->generateTaskId();
 
-        $this->taskRegistry->registerTask($taskId, $callback, $context);
-        $this->statusHandler->createInitialStatus($taskId, $callback, $context);
+        $this->taskRegistry->registerTask($taskId, $callback);
+        $this->statusHandler->createInitialStatus($taskId, $callback);
 
         $logging = $this->logger->isDetailedLoggingEnabled();
 
         $process = $this->spawnHandler->spawnStreamedTask(
             $taskId,
             $callback,
-            $context,
             $this->frameworkInfo,
             $this->serializer,
             $logging,
@@ -115,12 +113,11 @@ class ProcessManager
      * based on logging configuration.
      *
      * @param callable $callback The callback function to execute in the worker process
-     * @param array<string, mixed> $context Contextual data to pass to the callback
      * @return BackgroundProcess The spawned background process instance
      * @throws \RuntimeException If task nesting is detected or validation fails
      * @throws SerializationException If the callback cannot be serialized
      */
-    public function spawnBackgroundTask(callable $callback, array $context = [], int $timeoutSeconds = 600): BackgroundProcess
+    public function spawnBackgroundTask(callable $callback, int $timeoutSeconds = 600): BackgroundProcess
     {
         if (microtime(true) - $this->lastSpawnReset > 1.0) {
             $this->spawnCount = 0;
@@ -138,14 +135,13 @@ class ProcessManager
         $logging = $this->logger->isDetailedLoggingEnabled();
 
         if ($logging) {
-            $this->taskRegistry->registerTask($taskId, $callback, $context);
-            $this->statusHandler->createInitialStatus($taskId, $callback, $context);
+            $this->taskRegistry->registerTask($taskId, $callback);
+            $this->statusHandler->createInitialStatus($taskId, $callback);
         }
 
         $process = $this->spawnHandler->spawnBackgroundTask(
             $taskId,
             $callback,
-            $context,
             $this->frameworkInfo,
             $this->serializer,
             $logging,
