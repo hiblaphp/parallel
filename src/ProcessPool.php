@@ -11,13 +11,13 @@ use function Hibla\async;
 use function Hibla\await;
 
 /**
- * Process pool for running multiple tasks concurrently with controlled concurrency
+ * Process pool for running multiple tasks concurrently with controlled parallelism
  * 
  * @template TResult
  */
 class ProcessPool
 {
-    private int $maxConcurrency;
+    private int $maxProcess;
     
     /**
      * @var \Iterator<int, callable(): TResult>|null
@@ -37,11 +37,11 @@ class ProcessPool
     private ?\Throwable $firstError = null;
 
     /**
-     * @param int $maxConcurrency Maximum number of concurrent processes
+     * @param int $maxProcess Maximum number of parallel processes
      */
-    public function __construct(int $maxConcurrency = 8)
+    public function __construct(int $maxProcess = 8)
     {
-        $this->maxConcurrency = max(1, $maxConcurrency);
+        $this->maxProcess = max(1, $maxProcess);
     }
 
     /**
@@ -81,7 +81,7 @@ class ProcessPool
             $this->firstError = null;
             
             $workers = [];
-            $workerCount = min($this->maxConcurrency, count($tasks));
+            $workerCount = min($this->maxProcess, \count($tasks));
 
             for ($i = 0; $i < $workerCount; ++$i) {
                 $workers[] = $this->runWorker($source->token);
@@ -146,7 +146,7 @@ class ProcessPool
             $this->runningProcesses = [];
 
             $workers = [];
-            $workerCount = min($this->maxConcurrency, count($tasks));
+            $workerCount = min($this->maxProcess, count($tasks));
             
             for ($i = 0; $i < $workerCount; ++$i) {
                 $workers[] = $this->runWorkerSettled($source->token);
