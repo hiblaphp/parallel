@@ -180,7 +180,7 @@ final class Process
 
                 if ($statusType === 'OUTPUT') {
                     $output = $status['output'] ?? '';
-                    if (is_scalar($output) || (is_object($output) && method_exists($output, '__toString'))) {
+                    if (\is_scalar($output) || (\is_object($output) && method_exists($output, '__toString'))) {
                         echo $output;
                     }
                 } elseif ($statusType === 'COMPLETED') {

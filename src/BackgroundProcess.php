@@ -86,7 +86,6 @@ final class BackgroundProcess
      */
     private function updateStatusOnTermination(): void
     {
-        // Fix: Explicitly check if statusFilePath is not null and file exists
         if (! $this->loggingEnabled || $this->statusFilePath === null || ! file_exists($this->statusFilePath)) {
             return;
         }

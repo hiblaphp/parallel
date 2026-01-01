@@ -80,6 +80,44 @@ function parallel(callable $task, int $timeout = 60): PromiseInterface
 }
 
 /**
+ * Wrap a callable to return a new callable that executes in parallel when invoked.
+ *
+ * This acts as a factory for parallel tasks. It is particularly useful when working
+ * with higher-order functions like `Promise::map()`, `array_map()`, or event listeners
+ * where you need to pass a callable that triggers a parallel process.
+ *
+ * The arguments passed to the returned function will be serialized and passed
+ * to the background process.
+ *
+ * @template TResult
+ *
+ * @param callable(): TResult $task The task to execute in parallel
+ * @param int $timeout Maximum seconds to wait (default: 60)
+ * 
+ * @return callable(): PromiseInterface<TResult> A callable that returns a Promise
+ *
+ * @example
+ * ```php
+ * // Create a reusable parallel function
+ * $resizeImage = parallelFn(function(string $path) {
+ *     // This runs in a separate process
+ *     return Image::load($path)->resize(100, 100)->save();
+ * });
+ *
+ * $images = ['img1.jpg', 'img2.jpg', 'img3.jpg'];
+ *
+ * // Use with Promise::map to process concurrently
+ * $results = await(Promise::map($images, $resizeImage, concurrency: 2));
+ * ```
+ */
+function parallelFn(callable $task, int $timeout = 60): callable
+{
+    return static function (mixed ...$args) use ($task, $timeout): PromiseInterface {
+        return parallel(static fn() => $task(...$args), $timeout);
+    };
+}
+
+/**
  * Spawn a background process and return the Process instance for manual control.
  *
  * Unlike `parallel()`, this gives you full control over the process lifecycle.
