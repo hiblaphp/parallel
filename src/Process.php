@@ -187,8 +187,7 @@ final class Process
                     /** @var TResult */
                     return $status['result'] ?? null;
                 } elseif ($statusType === 'ERROR') {
-                    $message = $status['message'] ?? 'Unknown error';
-                    throw new \RuntimeException("Task {$this->taskId} failed: " . (is_scalar($message) ? $message : 'Unknown error'));
+                    throw $this->createExceptionFromError($status);
                 }
             }
 
@@ -251,9 +250,9 @@ final class Process
                 if (($status['status'] ?? '') === 'CANCELLED') {
                     throw new \RuntimeException('Task cancelled.');
                 }
+                
                 if (($status['status'] ?? '') === 'ERROR') {
-                    $message = $status['message'] ?? 'Unknown';
-                    throw new \RuntimeException('Task failed: ' . (is_scalar($message) ? $message : 'Unknown'));
+                    throw $this->createExceptionFromError($status);
                 }
 
                 await(delay($pollInterval));
@@ -261,6 +260,35 @@ final class Process
 
             throw new \RuntimeException('Timeout polling status file.');
         });
+    }
+
+    /**
+     * Reconstructs an exception from the worker error data.
+     *
+     * @param array<string, mixed> $errorData
+     * @return \Throwable
+     */
+    private function createExceptionFromError(array $errorData): \Throwable
+    {
+        $className = $errorData['class'] ?? \RuntimeException::class;
+        $message = $errorData['message'] ?? 'Unknown error';
+        $code = (int)($errorData['code'] ?? 0);
+
+        if (!class_exists($className)) {
+            return new \RuntimeException($message, $code);
+        }
+
+        try {
+            $exception = new $className($message, $code);
+
+            if (!$exception instanceof \Throwable) {
+                return new \RuntimeException($message, $code);
+            }
+
+            return $exception;
+        } catch (\Throwable) {
+            return new \RuntimeException($message, $code);
+        }
     }
 
     /**

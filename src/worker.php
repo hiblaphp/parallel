@@ -373,7 +373,9 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
 
         $errorStatus = [
             'status' => 'ERROR',
+            'class' => \get_class($e),
             'message' => $e->getMessage(),
+            'code' => $e->getCode(),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
             'stack_trace' => $e->getTraceAsString(),
