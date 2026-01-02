@@ -44,6 +44,7 @@ final class Process
         private readonly PromiseReadableStreamInterface $stderr,
         private readonly string $statusFilePath,
         private readonly bool $loggingEnabled = true,
+        private readonly string $sourceLocation = 'unknown'
     ) {}
 
     /**
@@ -250,7 +251,7 @@ final class Process
                 if (($status['status'] ?? '') === 'CANCELLED') {
                     throw new \RuntimeException('Task cancelled.');
                 }
-                
+
                 if (($status['status'] ?? '') === 'ERROR') {
                     throw $this->createExceptionFromError($status);
                 }
@@ -275,20 +276,40 @@ final class Process
         $code = (int)($errorData['code'] ?? 0);
 
         if (!class_exists($className)) {
-            return new \RuntimeException($message, $code);
-        }
-
-        try {
-            $exception = new $className($message, $code);
-
-            if (!$exception instanceof \Throwable) {
-                return new \RuntimeException($message, $code);
+            $exception = new \RuntimeException($message, $code);
+        } else {
+            try {
+                $exception = new $className($message, $code);
+            } catch (\Throwable) {
+                $exception = new \RuntimeException($message, $code);
             }
-
-            return $exception;
-        } catch (\Throwable) {
-            return new \RuntimeException($message, $code);
         }
+
+        if ($this->sourceLocation !== 'unknown' && str_contains($this->sourceLocation, ':')) {
+            try {
+                [$file, $line] = explode(':', $this->sourceLocation);
+
+                $reflection = new \ReflectionObject($exception);
+
+                while ($reflection && !$reflection->hasProperty('file')) {
+                    $reflection = $reflection->getParentClass();
+                }
+
+                if ($reflection) {
+                    $fileProp = $reflection->getProperty('file');
+                    $fileProp->setAccessible(true);
+                    $fileProp->setValue($exception, $file);
+
+                    $lineProp = $reflection->getProperty('line');
+                    $lineProp->setAccessible(true);
+                    $lineProp->setValue($exception, (int)$line);
+                }
+            } catch (\Throwable) {
+                // If reflection fails, we still return the exception anyway
+            }
+        }
+
+        return $exception;
     }
 
     /**

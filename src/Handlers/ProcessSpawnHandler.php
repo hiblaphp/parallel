@@ -75,7 +75,8 @@ class ProcessSpawnHandler
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
         bool $loggingEnabled,
-        int $timeoutSeconds = 60
+        int $timeoutSeconds = 60,
+        string $sourceLocation = 'unknown'
     ): Process {
         $phpBinary = $this->systemUtils->getPhpBinary();
         $workerScript = $this->getWorkerPath('worker.php');
@@ -137,7 +138,8 @@ class ProcessSpawnHandler
             $stdout,
             $stderr,
             $statusFile,
-            $loggingEnabled
+            $loggingEnabled,
+            $sourceLocation
         );
     }
 

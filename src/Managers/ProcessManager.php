@@ -92,6 +92,17 @@ class ProcessManager
         $this->validate($callback);
         $taskId = $this->systemUtils->generateTaskId();
 
+        $sourceLocation = 'unknown';
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
+
+        foreach ($trace as $frame) {
+            $file = $frame['file'] ?? '';
+            if ($file && !str_contains($file, 'ProcessManager.php') && !str_contains($file, 'namespace_function.php')) {
+                $sourceLocation = $file . ':' . ($frame['line'] ?? '?');
+                break;
+            }
+        }
+
         $this->statusHandler->createInitialStatus($taskId, $callback);
 
         $logging = $this->logger->isDetailedLoggingEnabled();
@@ -102,7 +113,8 @@ class ProcessManager
             $this->frameworkInfo,
             $this->serializer,
             $logging,
-            $timeoutSeconds
+            $timeoutSeconds,
+            $sourceLocation
         );
 
         $this->logger->logTaskEvent($taskId, 'SPAWNED', 'Streamed task PID: ' . $process->getPid());

@@ -378,7 +378,7 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
             'code' => $e->getCode(),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
-            'stack_trace' => $e->getTraceAsString(),
+            'stack_trace' => $e->getTraceAsString()
         ];
 
         write_status_to_stdout($errorStatus);
