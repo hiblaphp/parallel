@@ -23,7 +23,7 @@ class TestValueObject
     {
         return $this->child;
     }
-    
+
     public function setChild(self $child): void
     {
         $this->child = $child;

@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Hibla\Parallel\Handlers\TaskStatusHandler;
 
 describe('TaskStatusHandler', function () {
@@ -21,19 +23,19 @@ describe('TaskStatusHandler', function () {
 
     it('does nothing when logging is disabled', function () use ($getTempPath) {
         $tempPath = $getTempPath();
-        
+
         $handler = new TaskStatusHandler($tempPath, loggingEnabled: false);
-        
-        $handler->createInitialStatus('task_disabled', fn() => true);
+
+        $handler->createInitialStatus('task_disabled', fn () => true);
 
         expect(is_dir($tempPath))->toBeFalse();
     });
 
     it('automatically creates the log directory if missing', function () use ($getTempPath, $cleanupDir) {
         $tempPath = $getTempPath();
-        
+
         $handler = new TaskStatusHandler($tempPath, loggingEnabled: true);
-        $handler->createInitialStatus('task_dir_check', fn() => true);
+        $handler->createInitialStatus('task_dir_check', fn () => true);
 
         expect(is_dir($tempPath))->toBeTrue();
 
@@ -43,12 +45,12 @@ describe('TaskStatusHandler', function () {
     it('writes the correct initial JSON structure', function () use ($getTempPath, $cleanupDir) {
         $tempPath = $getTempPath();
         $taskId = 'task_structure_test';
-        
+
         $handler = new TaskStatusHandler($tempPath, loggingEnabled: true);
-        $handler->createInitialStatus($taskId, fn() => 'test');
+        $handler->createInitialStatus($taskId, fn () => 'test');
 
         $filePath = $tempPath . DIRECTORY_SEPARATOR . $taskId . '.json';
-        
+
         expect(file_exists($filePath))->toBeTrue();
 
         $content = json_decode(file_get_contents($filePath), true);
@@ -59,17 +61,18 @@ describe('TaskStatusHandler', function () {
             ->and($content['task_id'])->toBe($taskId)
             ->and($content['status'])->toBe('PENDING')
             ->and($content['message'])->toBe('Task created and queued for execution')
-            ->and($content['pid'])->toBeNull();
+            ->and($content['pid'])->toBeNull()
+        ;
 
         $cleanupDir($tempPath);
     });
 
     describe('Callback Type Detection', function () use ($getTempPath, $cleanupDir) {
-        
+
         it('identifies Closures', function () use ($getTempPath, $cleanupDir) {
             $tempPath = $getTempPath();
             $taskId = 'type_closure';
-            
+
             $handler = new TaskStatusHandler($tempPath, true);
             $handler->createInitialStatus($taskId, function () {});
 
@@ -82,7 +85,7 @@ describe('TaskStatusHandler', function () {
         it('identifies Function Strings', function () use ($getTempPath, $cleanupDir) {
             $tempPath = $getTempPath();
             $taskId = 'type_function';
-            
+
             $handler = new TaskStatusHandler($tempPath, true);
             $handler->createInitialStatus($taskId, 'strtoupper');
 
@@ -95,24 +98,27 @@ describe('TaskStatusHandler', function () {
         it('identifies Class Methods (Arrays)', function () use ($getTempPath, $cleanupDir) {
             $tempPath = $getTempPath();
             $taskId = 'type_method';
-            
+
             $handler = new TaskStatusHandler($tempPath, true);
-            $handler->createInitialStatus($taskId, [new DateTime(), 'format']); 
+            $handler->createInitialStatus($taskId, [new DateTime(), 'format']);
 
             $content = json_decode(file_get_contents($tempPath . DIRECTORY_SEPARATOR . $taskId . '.json'), true);
             expect($content['callback_type'])->toBe('method');
 
             $cleanupDir($tempPath);
         });
-        
+
         it('identifies Invokable Objects', function () use ($getTempPath, $cleanupDir) {
             $tempPath = $getTempPath();
             $taskId = 'type_object';
-            
-            $invokable = new class {
-                public function __invoke() { return true; }
+
+            $invokable = new class () {
+                public function __invoke()
+                {
+                    return true;
+                }
             };
-            
+
             $handler = new TaskStatusHandler($tempPath, true);
             $handler->createInitialStatus($taskId, $invokable);
 

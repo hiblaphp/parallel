@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Rcalicdan\ConfigLoader\Config;
 
@@ -11,7 +13,8 @@ describe('SystemUtilities', function () {
 
             expect($taskId)
                 ->toBeString()
-                ->toMatch('/^defer_\d{8}_\d{6}_[0-9a-f.]+$/');
+                ->toMatch('/^defer_\d{8}_\d{6}_[0-9a-f.]+$/')
+            ;
         });
 
         it('generates unique ids on subsequent calls', function () {
@@ -37,7 +40,7 @@ describe('SystemUtilities', function () {
         });
 
         it('matches PHP_BINARY constant if available', function () {
-            if (!defined('PHP_BINARY') || !is_executable(PHP_BINARY)) {
+            if (! defined('PHP_BINARY') || ! is_executable(PHP_BINARY)) {
                 $this->markTestSkipped('PHP_BINARY constant is not available');
             }
 
@@ -82,8 +85,9 @@ describe('SystemUtilities', function () {
 
             $utils = new SystemUtilities();
 
-            expect(fn() => $utils->getFrameworkBootstrap())
-                ->toThrow(RuntimeException::class, 'Bootstrap file not found');
+            expect(fn () => $utils->getFrameworkBootstrap())
+                ->toThrow(RuntimeException::class, 'Bootstrap file not found')
+            ;
         });
 
         it('throws exception if configured callback is not callable', function () {
@@ -95,8 +99,9 @@ describe('SystemUtilities', function () {
 
             $utils = new SystemUtilities();
 
-            expect(fn() => $utils->getFrameworkBootstrap())
-                ->toThrow(RuntimeException::class, 'Bootstrap callback must be callable');
+            expect(fn () => $utils->getFrameworkBootstrap())
+                ->toThrow(RuntimeException::class, 'Bootstrap callback must be callable')
+            ;
         });
     });
 });

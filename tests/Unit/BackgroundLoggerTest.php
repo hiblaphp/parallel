@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Rcalicdan\ConfigLoader\Config;
 
@@ -28,14 +30,14 @@ describe('BackgroundLogger', function () {
         $logger = new BackgroundLogger();
 
         expect($logger->isDetailedLoggingEnabled())->toBeFalse();
-        
+
         $defaultDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'hibla_parallel_logs';
         expect($logger->getLogDirectory())->toBe($defaultDir);
     });
 
     it('can enable logging via constructor arguments', function () use ($getTempDir, $cleanupDir) {
         $tempDir = $getTempDir();
-        
+
         $logger = new BackgroundLogger(enableDetailedLogging: true, customLogDir: $tempDir);
 
         expect($logger->isDetailedLoggingEnabled())->toBeTrue();
@@ -71,7 +73,7 @@ describe('BackgroundLogger', function () {
         $logger = new BackgroundLogger(enableDetailedLogging: false, customLogDir: $argDir);
 
         expect($logger->isDetailedLoggingEnabled())->toBeFalse();
-     
+
         expect($logger->getLogDirectory())->toBe($argDir);
 
         $cleanupDir($configDir);
@@ -80,7 +82,7 @@ describe('BackgroundLogger', function () {
 
     it('creates the log directory if it does not exist', function () use ($getTempDir, $cleanupDir) {
         $tempDir = $getTempDir();
-        
+
         expect(is_dir($tempDir))->toBeFalse();
 
         new BackgroundLogger(enableDetailedLogging: true, customLogDir: $tempDir);
@@ -106,7 +108,7 @@ describe('BackgroundLogger', function () {
     it('writes formatted task event to file', function () use ($getTempDir, $cleanupDir) {
         $tempDir = $getTempDir();
         $logger = new BackgroundLogger(enableDetailedLogging: true, customLogDir: $tempDir);
-        
+
         $taskId = 'task_123';
         $message = 'Process started';
         $level = 'SPAWNED';
@@ -118,7 +120,7 @@ describe('BackgroundLogger', function () {
 
         // Regex to match: [YYYY-MM-DD HH:MM:SS] [SPAWNED] [task_123] Process started
         $pattern = '/\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] \[' . $level . '\] \[' . $taskId . '\] ' . $message . '/';
-        
+
         expect($content)->toMatch($pattern);
 
         $cleanupDir($tempDir);
@@ -126,13 +128,13 @@ describe('BackgroundLogger', function () {
 
     it('does nothing when logging is disabled', function () use ($getTempDir, $cleanupDir) {
         $tempDir = $getTempDir();
-        
+
         $logger = new BackgroundLogger(enableDetailedLogging: false, customLogDir: $tempDir);
-        
+
         $logger->logTaskEvent('task_1', 'INFO', 'This should not be written');
 
         $logFile = $tempDir . DIRECTORY_SEPARATOR . 'background_tasks.log';
-        
+
         expect(file_exists($logFile))->toBeFalse();
 
         $cleanupDir($tempDir);

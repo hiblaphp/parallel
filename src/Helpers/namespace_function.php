@@ -93,7 +93,7 @@ function parallel(callable $task, int $timeout = 60): PromiseInterface
  *
  * @param callable(): TResult $task The task to execute in parallel
  * @param int $timeout Maximum seconds to wait (default: 60)
- * 
+ *
  * @return callable(): PromiseInterface<TResult> A callable that returns a Promise
  *
  * @example
@@ -113,7 +113,7 @@ function parallel(callable $task, int $timeout = 60): PromiseInterface
 function parallelFn(callable $task, int $timeout = 60): callable
 {
     return static function (mixed ...$args) use ($task, $timeout): PromiseInterface {
-        return parallel(static fn() => $task(...$args), $timeout);
+        return parallel(static fn () => $task(...$args), $timeout);
     };
 }
 
@@ -189,7 +189,7 @@ function spawn(callable $task, int $timeout = 600): PromiseInterface
  *
  * @param callable(): TResult $task The task to execute in background
  * @param int $timeout Maximum seconds for the background process (default: 600)
- * 
+ *
  * @return callable(): PromiseInterface<BackgroundProcess> A callable that returns a Promise resolving to the Process
  *
  * @example
@@ -205,6 +205,6 @@ function spawn(callable $task, int $timeout = 600): PromiseInterface
 function spawnFn(callable $task, int $timeout = 600): callable
 {
     return static function (mixed ...$args) use ($task, $timeout): PromiseInterface {
-        return spawn(static fn() => $task(...$args), $timeout);
+        return spawn(static fn () => $task(...$args), $timeout);
     };
 }

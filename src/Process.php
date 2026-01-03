@@ -45,7 +45,8 @@ final class Process
         private readonly string $statusFilePath,
         private readonly bool $loggingEnabled = true,
         private readonly string $sourceLocation = 'unknown'
-    ) {}
+    ) {
+    }
 
     /**
      * Get the result of the background process
@@ -227,6 +228,7 @@ final class Process
 
                 if (! file_exists($this->statusFilePath)) {
                     await(delay($pollInterval));
+
                     continue;
                 }
 
@@ -234,12 +236,14 @@ final class Process
                 $content = @file_get_contents($this->statusFilePath);
                 if ($content === false) {
                     await(delay($pollInterval));
+
                     continue;
                 }
 
                 $status = json_decode($content, true);
                 if (! \is_array($status)) {
                     await(delay($pollInterval));
+
                     continue;
                 }
 
@@ -292,7 +296,7 @@ final class Process
         $codeValue = $errorData['code'] ?? 0;
         $code = \is_int($codeValue) ? $codeValue : (is_numeric($codeValue) ? (int)$codeValue : 0);
 
-        if (!\is_string($className) || !class_exists($className)) {
+        if (! \is_string($className) || ! class_exists($className)) {
             $exception = new \RuntimeException(is_string($message) ? $message : 'Unknown error', $code);
         } else {
             try {
@@ -309,7 +313,7 @@ final class Process
 
                 $reflection = new \ReflectionObject($exception);
 
-                while ($reflection instanceof \ReflectionClass && !$reflection->hasProperty('file')) {
+                while ($reflection instanceof \ReflectionClass && ! $reflection->hasProperty('file')) {
                     $parentReflection = $reflection->getParentClass();
                     $reflection = $parentReflection !== false ? $parentReflection : null;
                 }

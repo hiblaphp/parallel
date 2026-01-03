@@ -1,9 +1,13 @@
 <?php
 
+declare(strict_types=1);
+
 use Hibla\EventLoop\Loop;
+
+use function Hibla\parallel;
+
 use Hibla\Parallel\Managers\ProcessManager;
 use Rcalicdan\ConfigLoader\Config;
-use function Hibla\parallel;
 
 describe('Process Cancellation Integration', function () {
 
@@ -16,7 +20,7 @@ describe('Process Cancellation Integration', function () {
     it('cancels a running task via Loop::addTimer() and finishes early', function () {
         $start = microtime(true);
 
-        $promise = parallel(fn() => usleep(5000000));
+        $promise = parallel(fn () => usleep(5000000));
 
         Loop::addTimer(1.0, function () use ($promise) {
             $promise->cancel();

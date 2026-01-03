@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Hibla\Parallel\Handlers;
 
 /**
- * @internal 
- * 
+ * @internal
+ *
  * Handles task status persistence and file management.
  *
  * This class is strictly responsible for reading and writing task metadata

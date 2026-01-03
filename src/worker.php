@@ -205,21 +205,22 @@ function stream_output_handler($buffer, $phase): string
     return '';
 }
 
-function containsObjects($value): bool {
+function containsObjects($value): bool
+{
     if (is_object($value)) {
         return true;
     }
-    
-    if (!is_array($value)) {
+
+    if (! is_array($value)) {
         return false;
     }
-    
+
     foreach ($value as $item) {
         if (is_object($item) || (is_array($item) && containsObjects($item))) {
             return true;
         }
     }
-    
+
     return false;
 }
 
@@ -410,7 +411,7 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
             'code' => $e->getCode(),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
-            'stack_trace' => $e->getTraceAsString()
+            'stack_trace' => $e->getTraceAsString(),
         ];
 
         write_status_to_stdout($errorStatus);

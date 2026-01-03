@@ -15,7 +15,7 @@ use Rcalicdan\Serializer\CallbackSerializationManager;
 
 /**
  * @internal
- * 
+ *
  * Handles spawning and managing parallel worker processes.
  *
  * This class is responsible for creating both streamed and fire-and-forget
@@ -297,6 +297,7 @@ class ProcessSpawnHandler
                 $resolvedPath = realpath($path);
                 if ($resolvedPath !== false) {
                     $this->workerPathCache[$scriptName] = $resolvedPath;
+
                     return $resolvedPath;
                 }
             }
@@ -313,6 +314,7 @@ class ProcessSpawnHandler
                         $resolvedPath = realpath($vendorPath);
                         if ($resolvedPath !== false) {
                             $this->workerPathCache[$scriptName] = $resolvedPath;
+
                             return $resolvedPath;
                         }
                     }

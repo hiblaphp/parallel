@@ -71,9 +71,9 @@ class SystemUtilities
      */
     public function findAutoloadPath(): string
     {
-       $rootDir = Config::getRootPath();
+        $rootDir = Config::getRootPath();
 
-       return $rootDir . '/vendor/autoload.php';
+        return $rootDir . '/vendor/autoload.php';
     }
 
     /**

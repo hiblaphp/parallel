@@ -1,8 +1,11 @@
 <?php
 
-use Tests\Fixtures\TestValueObject;
-use function Hibla\parallel;
+declare(strict_types=1);
+
 use function Hibla\await;
+use function Hibla\parallel;
+
+use Tests\Fixtures\TestValueObject;
 
 describe('Complex Serialization Integration', function () {
     it('can return a simple Value Object from a parallel task', function () {
@@ -12,7 +15,7 @@ describe('Complex Serialization Integration', function () {
             metadata: ['role' => 'admin']
         );
 
-        $result = await(parallel(fn() => $input));
+        $result = await(parallel(fn () => $input));
 
         expect($result)->toBeInstanceOf(TestValueObject::class);
         expect($result->id)->toBe('user-123');
@@ -25,11 +28,11 @@ describe('Complex Serialization Integration', function () {
         $child = new TestValueObject('child', 's2');
         $parent->setChild($child);
 
-        $result = await(parallel(fn() => $parent));
+        $result = await(parallel(fn () => $parent));
 
         expect($result)->toBeInstanceOf(TestValueObject::class);
         expect($result->id)->toBe('parent');
-        
+
         expect($result->getChild())->toBeInstanceOf(TestValueObject::class);
         expect($result->getChild()->id)->toBe('child');
         expect($result->getChild()->getSecret())->toBe('s2');
@@ -42,14 +45,14 @@ describe('Complex Serialization Integration', function () {
             new TestValueObject('C', 'sC'),
         ];
 
-        $result = await(parallel(fn() => $collection));
+        $result = await(parallel(fn () => $collection));
 
         expect($result)->toBeArray();
         expect($result)->toHaveCount(3);
-        
+
         expect($result[0])->toBeInstanceOf(TestValueObject::class);
         expect($result[0]->id)->toBe('A');
-        
+
         expect($result[2]->id)->toBe('C');
     });
 
@@ -57,7 +60,7 @@ describe('Complex Serialization Integration', function () {
         $shared = new TestValueObject('shared', 'secret');
         $wrapper = ['a' => $shared, 'b' => $shared];
 
-        $result = await(parallel(fn() => $wrapper));
+        $result = await(parallel(fn () => $wrapper));
 
         expect($result['a'])->toBeInstanceOf(TestValueObject::class);
         expect($result['a'])->toBe($result['b']);

@@ -103,6 +103,7 @@ class ProcessManager
         if ($maxSpawnsPerSecond !== null) {
             $this->maxSpawnsPerSecond = $maxSpawnsPerSecond;
         } else {
+            /** @var int $configLimit */
             $configLimit = Config::loadFromRoot(
                 'hibla_parallel',
                 'background_process.spawn_limit_per_second',
@@ -139,8 +140,9 @@ class ProcessManager
 
         foreach ($trace as $frame) {
             $file = $frame['file'] ?? '';
-            if ($file !== '' && !str_contains($file, 'ProcessManager.php') && !str_contains($file, 'namespace_function.php')) {
+            if ($file !== '' && ! str_contains($file, 'ProcessManager.php') && ! str_contains($file, 'namespace_function.php')) {
                 $sourceLocation = $file . ':' . ($frame['line'] ?? '?');
+
                 break;
             }
         }
