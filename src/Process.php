@@ -45,8 +45,7 @@ final class Process
         private readonly string $statusFilePath,
         private readonly bool $loggingEnabled = true,
         private readonly string $sourceLocation = 'unknown'
-    ) {
-    }
+    ) {}
 
     /**
      * Get the result of the background process
@@ -309,7 +308,14 @@ final class Process
 
         if ($this->sourceLocation !== 'unknown' && str_contains($this->sourceLocation, ':')) {
             try {
-                [$file, $line] = explode(':', $this->sourceLocation);
+                $lastColonPos = strrpos($this->sourceLocation, ':');
+                if ($lastColonPos !== false) {
+                    $file = substr($this->sourceLocation, 0, $lastColonPos);
+                    $line = substr($this->sourceLocation, $lastColonPos + 1);
+                } else {
+                    $file = $this->sourceLocation;
+                    $line = '0';
+                }
 
                 $reflection = new \ReflectionObject($exception);
 
