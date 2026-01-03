@@ -43,7 +43,7 @@ class ProcessSpawnHandler
         if (\count($missingFunctions) > 0) {
             throw new \RuntimeException(
                 \sprintf(
-                    'The following required functions are disabled on this server: "%s". ' .
+                    'The following required functions are disabled on this environment: "%s". ' .
                         'Hibla Parallel requires these functions to spawn and manage processes. ' .
                         'Please check the "disable_functions" directive in your php.ini file.',
                     implode('", "', $missingFunctions)
