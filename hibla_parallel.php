@@ -46,7 +46,7 @@ return [
     */
     'background_process' => [
         'memory_limit' => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT', '512M'),
-        'spawn_limit_per_second' => (int) env('HIBLA_PARALLEL_BACKGROUND_SPAWN_LIMIT', 50),
+        'spawn_limit_per_second' => env('HIBLA_PARALLEL_BACKGROUND_SPAWN_LIMIT', 50, true),
     ],
 
     /*
