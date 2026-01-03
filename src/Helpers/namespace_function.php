@@ -179,3 +179,32 @@ function spawn(callable $task, int $timeout = 600): PromiseInterface
         ProcessManager::getGlobal()->spawnBackgroundTask($task, $timeout)
     );
 }
+
+/**
+ * Wrap a callable to return a new callable that spawns a background process when invoked.
+ *
+ * This acts as a factory for fire-and-forget background tasks.
+ *
+ * @template TResult
+ *
+ * @param callable(): TResult $task The task to execute in background
+ * @param int $timeout Maximum seconds for the background process (default: 600)
+ * 
+ * @return callable(): PromiseInterface<BackgroundProcess> A callable that returns a Promise resolving to the Process
+ *
+ * @example
+ * ```php
+ * $logToDb = spawnFn(function(string $msg) {
+ *     Logger::toDb($msg);
+ * });
+ *
+ * // Spawns 3 background processes
+ * $processes = await(Promise::map(['msg1', 'msg2', 'msg3'], $logToDb));
+ * ```
+ */
+function spawnFn(callable $task, int $timeout = 600): callable
+{
+    return static function (mixed ...$args) use ($task, $timeout): PromiseInterface {
+        return spawn(static fn() => $task(...$args), $timeout);
+    };
+}

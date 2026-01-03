@@ -10,16 +10,27 @@ use Hibla\Parallel\Handlers\TaskStatusHandler;
 use Hibla\Parallel\Process;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
+use Rcalicdan\ConfigLoader\Config;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 use Rcalicdan\Serializer\Exceptions\SerializationException;
 
 /**
  * Manages the lifecycle of parallel processes and background tasks.
+ *
+ * This class serves as the central coordinator for spawning, tracking, and managing
+ * parallel tasks. It handles both streamed tasks (with real-time output) and
+ * fire-and-forget background tasks. Implements a singleton pattern for global access,
+ * but allows direct instantiation for testing and dependency injection.
  */
 class ProcessManager
 {
     /**
-     * @var self|null Global instance of the ProcessManager
+     * Default maximum number of background tasks allowed to spawn per second.
+     */
+    public const int DEFAULT_SPAWN_LIMIT = 50;
+
+    /**
+     * @var self|null Singleton instance of the ProcessManager
      */
     private static ?self $instance = null;
 
@@ -42,12 +53,15 @@ class ProcessManager
 
     private float $lastSpawnReset = 0.0;
 
+    private int $maxSpawnsPerSecond;
+
     /**
-     * Gets or creates the global shared instance.
-     * 
-     * Useful for simple scripts or legacy code integration.
+     * Gets or creates the global singleton instance.
      *
-     * @return self
+     * Provides a single global instance of ProcessManager for consistent
+     * task management across the application.
+     *
+     * @return self The singleton ProcessManager instance
      */
     public static function getGlobal(): self
     {
@@ -59,7 +73,9 @@ class ProcessManager
     }
 
     /**
-     * Reset the global instance (Useful for testing)
+     * Reset the global instance (Useful for testing).
+     *
+     * @param self|null $instance
      */
     public static function setGlobal(?self $instance): void
     {
@@ -68,17 +84,32 @@ class ProcessManager
 
     /**
      * Allow public instantiation for Dependency Injection or Testing.
-     * 
-     * You can optionally inject dependencies here in the future if needed.
+     *
+     * @param SystemUtilities|null $systemUtils Optional dependency injection for system utilities
+     * @param BackgroundLogger|null $logger Optional dependency injection for logging
+     * @param CallbackSerializationManager|null $serializer Optional dependency injection for serialization
+     * @param int|null $maxSpawnsPerSecond Optional safety limit for background spawns/sec. If null, loads from config or uses default.
      */
     public function __construct(
         ?SystemUtilities $systemUtils = null,
         ?BackgroundLogger $logger = null,
-        ?CallbackSerializationManager $serializer = null
+        ?CallbackSerializationManager $serializer = null,
+        ?int $maxSpawnsPerSecond = null
     ) {
         $this->systemUtils = $systemUtils ?? new SystemUtilities();
         $this->logger = $logger ?? new BackgroundLogger();
         $this->serializer = $serializer ?? new CallbackSerializationManager();
+
+        if ($maxSpawnsPerSecond !== null) {
+            $this->maxSpawnsPerSecond = $maxSpawnsPerSecond;
+        } else {
+            $configLimit = Config::loadFromRoot(
+                'hibla_parallel',
+                'background_process.spawn_limit_per_second',
+                self::DEFAULT_SPAWN_LIMIT
+            );
+            $this->maxSpawnsPerSecond = (int) $configLimit;
+        }
 
         $this->statusHandler = new TaskStatusHandler(
             $this->logger->getLogDirectory(),
@@ -88,12 +119,12 @@ class ProcessManager
         $this->spawnHandler = new ProcessSpawnHandler($this->systemUtils, $this->logger);
         $this->frameworkInfo = $this->systemUtils->getFrameworkBootstrap();
     }
-    
+
     /**
      * Spawns a streamed task with real-time output communication.
      *
      * @template TResult
-     * 
+     *
      * @param callable(): TResult $callback The callback function to execute in the worker process
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @return Process<TResult> The spawned process instance with communication streams
@@ -137,9 +168,15 @@ class ProcessManager
     /**
      * Spawns a fire-and-forget background task.
      *
+     * Creates a detached background process that runs independently without
+     * maintaining communication channels. Suitable for tasks that don't require
+     * real-time output monitoring. Task registration and logging are conditional
+     * based on logging configuration.
+     *
      * @param callable $callback The callback function to execute in the worker process
+     * @param int $timeoutSeconds Maximum execution time in seconds
      * @return BackgroundProcess The spawned background process instance
-     * @throws \RuntimeException If task nesting is detected or validation fails
+     * @throws \RuntimeException If task nesting is detected, validation fails, or rate limit is exceeded
      * @throws SerializationException If the callback cannot be serialized
      */
     public function spawnBackgroundTask(callable $callback, int $timeoutSeconds = 600): BackgroundProcess
@@ -149,8 +186,10 @@ class ProcessManager
             $this->lastSpawnReset = microtime(true);
         }
 
-        if ($this->spawnCount > 49) {
-            throw new \RuntimeException(message: 'Safety Limit: Cannot spawn more than 50 background tasks per second.');
+        if ($this->spawnCount >= $this->maxSpawnsPerSecond) {
+            throw new \RuntimeException(
+                message: "Safety Limit: Cannot spawn more than {$this->maxSpawnsPerSecond} background tasks per second."
+            );
         }
 
         $this->spawnCount++;

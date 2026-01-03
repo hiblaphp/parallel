@@ -6,6 +6,7 @@
 
 declare(strict_types=1);
 
+// ===== CRITICAL: FORK BOMB PROTECTION =====
 putenv('DEFER_BACKGROUND_PROCESS=1');
 $_ENV['DEFER_BACKGROUND_PROCESS'] = '1';
 $_SERVER['DEFER_BACKGROUND_PROCESS'] = '1';
@@ -18,6 +19,7 @@ $_SERVER['DEFER_NESTING_LEVEL'] = (string) $nestingLevel;
 if ($nestingLevel > 1) {
     exit(1);
 }
+// ==========================================
 
 $isWindows = PHP_OS_FAMILY === 'Windows';
 $loggingEnabled = false;

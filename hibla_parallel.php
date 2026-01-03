@@ -37,13 +37,16 @@ return [
     | Background Process Settings
     |--------------------------------------------------------------------------
     |
-    | 'memory_limit': The memory limit for each background process (e.g., '512M').
+    | 'memory_limit': The memory limit for each background process.
     |
-    | .env variable: HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT
+    | 'spawn_limit_per_second': Safety valve to prevent fork bombs.
+    |                           Limits the number of background tasks spawned
+    |                           per second. Default is 50.
     |
     */
     'background_process' => [
         'memory_limit' => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT', '512M'),
+        'spawn_limit_per_second' => (int) env('HIBLA_PARALLEL_BACKGROUND_SPAWN_LIMIT', 50),
     ],
 
     /*

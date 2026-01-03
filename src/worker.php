@@ -86,7 +86,7 @@ function update_status_file_with_output(): void
 {
     global $statusFile, $startTime, $taskId, $outputBuffer, $isWindows;
 
-    if (! $isWindows || $statusFile === null) {
+    if ($statusFile === null) {
         return;
     }
 
@@ -125,6 +125,10 @@ function update_status_file_with_output(): void
 function update_status_file(string $status, string $message, array $extra = []): void
 {
     global $statusFile, $startTime, $taskId, $outputBuffer;
+
+    if ($statusFile === null) {
+        return;
+    }
 
     $existing = [];
     if (file_exists($statusFile)) {

@@ -49,16 +49,12 @@ describe('ProcessSpawnHandler Feature Test', function () {
             timeoutSeconds: 5
         );
 
-        // Register for cleanup
         $activeProcesses[] = $process;
 
-        // Assertions
         expect($process)->toBeInstanceOf(Process::class);
         expect($process->getPid())->toBeInt()->toBeGreaterThan(0);
         expect($process->getTaskId())->toBe($taskId);
         
-        // Critical: Check if OS actually sees the process
-        // isRunning checks the OS process table
         expect($process->isRunning())->toBeTrue();
     });
 
@@ -83,9 +79,6 @@ describe('ProcessSpawnHandler Feature Test', function () {
         expect($process)->toBeInstanceOf(BackgroundProcess::class);
         expect($process->getPid())->toBeInt()->toBeGreaterThan(0);
         
-        // Note: Background tasks might finish extremely quickly, so isRunning() 
-        // *might* be false by the time we check it if the machine is fast and task is empty.
-        // However, with the overhead of PHP boot, it should usually be true immediately.
         expect($process->isRunning())->toBeTrue();
     });
 
@@ -93,26 +86,19 @@ describe('ProcessSpawnHandler Feature Test', function () {
         [$handler, $utils, $serializer] = $setupHandler();
         $frameworkInfo = $utils->getFrameworkBootstrap();
 
-        // Too small
         expect(fn() => $handler->spawnBackgroundTask(
             'id', fn() => true, $frameworkInfo, $serializer, false, 0
         ))->toThrow(InvalidArgumentException::class, 'Timeout must be at least 1 second');
 
-        // Too large
         expect(fn() => $handler->spawnBackgroundTask(
             'id', fn() => true, $frameworkInfo, $serializer, false, 90000
         ))->toThrow(InvalidArgumentException::class, 'Timeout cannot exceed 86400 seconds');
     });
 
     test('it correctly resolves the worker script paths', function () use ($setupHandler) {
-        // This tests the getWorkerPath private logic indirectly via execution success
-        // If the path was wrong, proc_open would likely succeed but the process would exit immediately 
-        // with code 1 or print "Could not open input file".
         
         [$handler, $utils, $serializer] = $setupHandler();
         
-        // We inject a closure that sleeps for 1 second to ensure the process stays alive
-        // long enough for us to verify it launched the correct script.
         $process = $handler->spawnStreamedTask(
             'test_path', 
             function() { usleep(100000); }, 
@@ -122,8 +108,6 @@ describe('ProcessSpawnHandler Feature Test', function () {
             5
         );
         
-        // If the script path was invalid, PHP usually exits almost instantly.
-        // We check that it is initially running.
         expect($process->isRunning())->toBeTrue();
         
         $process->terminate();
