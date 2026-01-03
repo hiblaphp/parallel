@@ -5,17 +5,40 @@
     "autoload": {
         "psr-4": {
             "Hibla\\Parallel\\": "src/"
+        },
+        "files": [
+            "src/Helpers/namespace_function.php"
+        ]
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
         }
     },
+    "prefer-stable": true,
     "minimum-stability": "dev",
     "require": {
         "rcalicdan/config-loader": "^1.0",
-        "opis/closure": "^4.3",
-        "pestphp/pest": "^3.0"
+        "rcalicdan/serializer": "^1.0",
+        "hiblaphp/promise": "dev-main",
+        "hiblaphp/async": "dev-main",
+        "hiblaphp/stream": "dev-main"
+    },
+    "require-dev": {
+        "pestphp/pest": "^4.0",
+        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan-strict-rules": "^2.0",
+        "laravel/pint": "^1.25",
+        "mockery/mockery": "^1.6"
     },
     "config": {
         "allow-plugins": {
             "pestphp/pest-plugin": true
         }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest",
+        "analyze": "vendor/bin/phpstan analyse",
+        "format": "vendor/bin/pint"
     }
 }

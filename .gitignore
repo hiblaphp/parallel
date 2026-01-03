@@ -1,3 +1,5 @@
 /vendor
 /composer.lock
 /test.php
+/.env
+/logs

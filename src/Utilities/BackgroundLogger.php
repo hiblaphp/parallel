@@ -1,33 +1,47 @@
 <?php
 
+declare(strict_types=1);
+
 namespace Hibla\Parallel\Utilities;
 
-use Hibla\Parallel\Config\ConfigLoader;
+use Rcalicdan\ConfigLoader\Config;
 
 /**
- * Handles logging for background processes
+ * Handles logging for background processes and task tracking.
+ *
+ * This class manages both detailed logging to files and status-only tracking
+ * for background tasks. It provides methods for logging task events, system
+ * events, and retrieving recent log entries for monitoring purposes.
  */
-class BackgroundLogger
+final class BackgroundLogger
 {
-    private ConfigLoader $config;
     private string $logDir;
+
     private ?string $logFile;
+
     private bool $enableDetailedLogging;
 
+    /**
+     * @param bool|null $enableDetailedLogging Optional override for detailed logging setting (null uses config)
+     * @param string|null $customLogDir Optional custom log directory path (null uses config or default)
+     */
     public function __construct(
-        ConfigLoader $config,
         ?bool $enableDetailedLogging = null,
         ?string $customLogDir = null
     ) {
-        $this->config = $config;
-        $this->enableDetailedLogging = $enableDetailedLogging ?? $this->config->get('logging.enabled', true);
-        
+        $configLoggingEnabled = Config::loadFromRoot('hibla_parallel', 'logging.enabled', false);
+        $this->enableDetailedLogging = $enableDetailedLogging ?? (\is_bool($configLoggingEnabled) ? $configLoggingEnabled : false);
+
+        $defaultDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'hibla_parallel_logs';
+
         if ($this->enableDetailedLogging) {
-            $logDir = $customLogDir ?? $this->config->get('logging.directory');
-            $this->logDir = $logDir ?: (sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'defer_logs');
+            $configLogDir = Config::loadFromRoot('hibla_parallel', 'logging.directory', $defaultDir);
+            $calculatedDir = (\is_string($configLogDir) && $configLogDir !== '') ? $configLogDir : $defaultDir;
+
+            $this->logDir = $customLogDir ?? $calculatedDir;
             $this->logFile = $this->logDir . DIRECTORY_SEPARATOR . 'background_tasks.log';
         } else {
-            $this->logDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'defer_status';
+            $this->logDir = $customLogDir ?? $defaultDir;
             $this->logFile = null;
         }
 
@@ -36,11 +50,20 @@ class BackgroundLogger
     }
 
     /**
-     * Log task-specific events
+     * Logs a task-specific event with task ID context.
+     *
+     * Writes a timestamped log entry associated with a specific task. The entry
+     * includes the task ID for correlation and tracking. Only writes when detailed
+     * logging is enabled.
+     *
+     * @param string $taskId Unique identifier for the task
+     * @param string $level Log level (e.g., 'INFO', 'ERROR', 'WARNING', 'SPAWNED')
+     * @param string $message Log message describing the event
+     * @return void
      */
     public function logTaskEvent(string $taskId, string $level, string $message): void
     {
-        if (!$this->enableDetailedLogging || $this->logFile === null) {
+        if (! $this->enableDetailedLogging || $this->logFile === null) {
             return;
         }
 
@@ -53,11 +76,44 @@ class BackgroundLogger
     }
 
     /**
-     * Log system events
+     * Gets the log directory path.
+     *
+     * Returns the directory path where log files and status files are stored.
+     * This directory is used for both detailed logs and status-only tracking.
+     *
+     * @return string Path to the log/status directory
      */
-    public function logEvent(string $level, string $message): void
+    public function getLogDirectory(): string
     {
-        if (!$this->enableDetailedLogging || $this->logFile === null) {
+        return $this->logDir;
+    }
+
+    /**
+     * Checks if detailed logging is currently enabled.
+     *
+     * When detailed logging is enabled, events are written to log files.
+     * When disabled, only status tracking is performed without file I/O overhead.
+     *
+     * @return bool True if detailed logging is enabled, false otherwise
+     */
+    public function isDetailedLoggingEnabled(): bool
+    {
+        return $this->enableDetailedLogging;
+    }
+
+    /**
+     * Logs a system-level event without task context.
+     *
+     * Writes a timestamped log entry for system-wide events that aren't specific
+     * to any particular task. Uses 'SYSTEM' as the task ID placeholder.
+     *
+     * @param string $level Log level (e.g., 'INFO', 'ERROR', 'WARNING')
+     * @param string $message Log message describing the event
+     * @return void
+     */
+    private function logEvent(string $level, string $message): void
+    {
+        if (! $this->enableDetailedLogging || $this->logFile === null) {
             return;
         }
 
@@ -69,87 +125,17 @@ class BackgroundLogger
         }
     }
 
-    /**
-     * Get recent log entries for monitoring
-     */
-    public function getRecentLogs(int $limit = 100): array
-    {
-        if (!file_exists($this->logFile)) {
-            return [];
-        }
-
-        $lines = file($this->logFile, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if ($lines === false) {
-            return [];
-        }
-
-        $logs = [];
-        $recentLines = array_slice($lines, -$limit);
-
-        foreach ($recentLines as $line) {
-            if (preg_match('/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] \[([^\]]+)\] \[([^\]]+)\] (.+)$/', $line, $matches)) {
-                $logs[] = [
-                    'timestamp' => $matches[1],
-                    'level' => $matches[2],
-                    'task_id' => $matches[3] !== 'SYSTEM' ? $matches[3] : null,
-                    'message' => $matches[4],
-                    'raw_line' => $line
-                ];
-            }
-        }
-
-        return $logs;
-    }
-
-    /**
-     * Get log file path
-     */
-    public function getLogFile(): string
-    {
-        return $this->logFile;
-    }
-
-    /**
-     * Get log directory path
-     */
-    public function getLogDirectory(): string
-    {
-        return $this->logDir;
-    }
-
-    /**
-     * Check if detailed logging is enabled
-     */
-    public function isDetailedLoggingEnabled(): bool
-    {
-        return $this->enableDetailedLogging;
-    }
-
-    /**
-     * Enable or disable detailed logging
-     */
-    public function setDetailedLogging(bool $enabled): void
-    {
-        $this->enableDetailedLogging = $enabled;
-
-        if ($enabled) {
-            $this->logEvent('INFO', 'Detailed logging enabled');
-        }
-    }
-
-    /**
-     * Ensure all necessary directories exist
-     */
     private function ensureDirectories(): void
     {
-        if (!is_dir($this->logDir)) {
-            mkdir($this->logDir, 0755, true);
+        if (! is_dir($this->logDir)) {
+            $created = @mkdir($this->logDir, 0755, true);
+
+            if (! $created && ! is_dir($this->logDir)) {
+                error_log("Failed to create log directory: {$this->logDir}");
+            }
         }
     }
 
-    /**
-     * Initialize logging system
-     */
     private function initializeLogging(): void
     {
         if ($this->enableDetailedLogging) {
