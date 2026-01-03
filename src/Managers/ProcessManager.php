@@ -97,7 +97,7 @@ class ProcessManager
 
         foreach ($trace as $frame) {
             $file = $frame['file'] ?? '';
-            if ($file && !str_contains($file, 'ProcessManager.php') && !str_contains($file, 'namespace_function.php')) {
+            if ($file !== '' && !str_contains($file, 'ProcessManager.php') && !str_contains($file, 'namespace_function.php')) {
                 $sourceLocation = $file . ':' . ($frame['line'] ?? '?');
                 break;
             }

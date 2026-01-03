@@ -185,9 +185,19 @@ final class Process
                         echo $output;
                     }
                 } elseif ($statusType === 'COMPLETED') {
+                    $result = $status['result'] ?? null;
+
+                    if (($status['result_serialized'] ?? false) === true && is_string($result)) {
+                        $decoded = base64_decode($result, true);
+                        if ($decoded !== false) {
+                            $result = unserialize($decoded);
+                        }
+                    }
+
                     /** @var TResult */
-                    return $status['result'] ?? null;
+                    return $result;
                 } elseif ($statusType === 'ERROR') {
+                    /** @var array<string, mixed> $status */
                     throw $this->createExceptionFromError($status);
                 }
             }
@@ -217,7 +227,6 @@ final class Process
 
                 if (! file_exists($this->statusFilePath)) {
                     await(delay($pollInterval));
-
                     continue;
                 }
 
@@ -225,14 +234,12 @@ final class Process
                 $content = @file_get_contents($this->statusFilePath);
                 if ($content === false) {
                     await(delay($pollInterval));
-
                     continue;
                 }
 
                 $status = json_decode($content, true);
                 if (! \is_array($status)) {
                     await(delay($pollInterval));
-
                     continue;
                 }
 
@@ -244,15 +251,24 @@ final class Process
                     }
                 }
 
-                if (($status['status'] ?? '') === 'COMPLETED') {
-                    /** @var TResult */
-                    return $status['result'] ?? null;
-                }
-                if (($status['status'] ?? '') === 'CANCELLED') {
-                    throw new \RuntimeException('Task cancelled.');
-                }
+                $currentStatus = $status['status'] ?? '';
 
-                if (($status['status'] ?? '') === 'ERROR') {
+                if ($currentStatus === 'COMPLETED') {
+                    $result = $status['result'] ?? null;
+
+                    if (($status['result_serialized'] ?? false) === true && \is_string($result)) {
+                        $decoded = base64_decode($result, true);
+                        if ($decoded !== false) {
+                            $result = unserialize($decoded);
+                        }
+                    }
+
+                    /** @var TResult */
+                    return $result;
+                } elseif ($currentStatus === 'CANCELLED') {
+                    throw new \RuntimeException('Task cancelled.');
+                } elseif ($currentStatus === 'ERROR') {
+                    /** @var array<string, mixed> $status */
                     throw $this->createExceptionFromError($status);
                 }
 
@@ -273,15 +289,17 @@ final class Process
     {
         $className = $errorData['class'] ?? \RuntimeException::class;
         $message = $errorData['message'] ?? 'Unknown error';
-        $code = (int)($errorData['code'] ?? 0);
+        $codeValue = $errorData['code'] ?? 0;
+        $code = \is_int($codeValue) ? $codeValue : (is_numeric($codeValue) ? (int)$codeValue : 0);
 
-        if (!class_exists($className)) {
-            $exception = new \RuntimeException($message, $code);
+        if (!\is_string($className) || !class_exists($className)) {
+            $exception = new \RuntimeException(is_string($message) ? $message : 'Unknown error', $code);
         } else {
             try {
-                $exception = new $className($message, $code);
+                /** @var \Throwable $exception */
+                $exception = new $className(is_string($message) ? $message : 'Unknown error', $code);
             } catch (\Throwable) {
-                $exception = new \RuntimeException($message, $code);
+                $exception = new \RuntimeException(is_string($message) ? $message : 'Unknown error', $code);
             }
         }
 
@@ -291,11 +309,12 @@ final class Process
 
                 $reflection = new \ReflectionObject($exception);
 
-                while ($reflection && !$reflection->hasProperty('file')) {
-                    $reflection = $reflection->getParentClass();
+                while ($reflection instanceof \ReflectionClass && !$reflection->hasProperty('file')) {
+                    $parentReflection = $reflection->getParentClass();
+                    $reflection = $parentReflection !== false ? $parentReflection : null;
                 }
 
-                if ($reflection) {
+                if ($reflection instanceof \ReflectionClass) {
                     $fileProp = $reflection->getProperty('file');
                     $fileProp->setAccessible(true);
                     $fileProp->setValue($exception, $file);

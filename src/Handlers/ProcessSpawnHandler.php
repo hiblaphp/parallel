@@ -24,6 +24,9 @@ class ProcessSpawnHandler
 {
     private string|int $defaultMemoryLimit;
 
+    /** @var array<string, string> */
+    private array $workerPathCache = [];
+
     public function __construct(
         private SystemUtilities $systemUtils,
         private BackgroundLogger $logger
@@ -31,7 +34,6 @@ class ProcessSpawnHandler
         $requiredFunctions = PHP_OS_FAMILY !== 'Windows'
             ? ['proc_open', 'exec', 'shell_exec', 'posix_kill']
             : ['proc_open', 'exec', 'shell_exec'];
-
 
         $missingFunctions = array_filter($requiredFunctions, static function (string $function): bool {
             // @phpstan-ignore-next-line the functions are check at runtime
@@ -279,27 +281,42 @@ class ProcessSpawnHandler
      */
     private function getWorkerPath(string $scriptName): string
     {
-        /** @var array<int, string> $possiblePaths */
-        $possiblePaths = [];
-
-        try {
-            $reflector = new \ReflectionClass(\Composer\Autoload\ClassLoader::class);
-            $fileName = $reflector->getFileName();
-
-            if ($fileName !== false) {
-                $possiblePaths[] = dirname($fileName, 2) . '/hiblaphp/parallel/src/' . $scriptName;
-            }
-        } catch (\ReflectionException $e) {
-            // Composer autoloader not found, continue with other paths
+        if (isset($this->workerPathCache[$scriptName])) {
+            return $this->workerPathCache[$scriptName];
         }
 
-        $possiblePaths[] = dirname(__DIR__) . '/../' . $scriptName;
-        $possiblePaths[] = dirname(__DIR__) . '/' . $scriptName;
+        $localPaths = [
+            dirname(__DIR__) . '/' . $scriptName,
+            dirname(__DIR__) . '/../' . $scriptName,
+        ];
 
-        foreach ($possiblePaths as $path) {
-            $realPath = realpath($path);
-            if ($realPath !== false && is_readable($realPath)) {
-                return $realPath;
+        foreach ($localPaths as $path) {
+            if (file_exists($path) && is_readable($path)) {
+                $resolvedPath = realpath($path);
+                if ($resolvedPath !== false) {
+                    $this->workerPathCache[$scriptName] = $resolvedPath;
+                    return $resolvedPath;
+                }
+            }
+        }
+
+        if (class_exists(\Composer\Autoload\ClassLoader::class, false)) {
+            try {
+                $reflector = new \ReflectionClass(\Composer\Autoload\ClassLoader::class);
+                $fileName = $reflector->getFileName();
+
+                if ($fileName !== false) {
+                    $vendorPath = dirname($fileName, 2) . '/hiblaphp/parallel/src/' . $scriptName;
+                    if (file_exists($vendorPath) && is_readable($vendorPath)) {
+                        $resolvedPath = realpath($vendorPath);
+                        if ($resolvedPath !== false) {
+                            $this->workerPathCache[$scriptName] = $resolvedPath;
+                            return $resolvedPath;
+                        }
+                    }
+                }
+            } catch (\ReflectionException $e) {
+                // Continue if reflection fails
             }
         }
 

@@ -201,6 +201,24 @@ function stream_output_handler($buffer, $phase): string
     return '';
 }
 
+function containsObjects($value): bool {
+    if (is_object($value)) {
+        return true;
+    }
+    
+    if (!is_array($value)) {
+        return false;
+    }
+    
+    foreach ($value as $item) {
+        if (is_object($item) || (is_array($item) && containsObjects($item))) {
+            return true;
+        }
+    }
+    
+    return false;
+}
+
 // --- Main Worker Loop (Single Task) ---
 
 $taskProcessed = false;
@@ -345,8 +363,6 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
             throw new RuntimeException('Deserialized task is not callable.');
         }
 
-        write_status_to_stdout(['status' => 'RUNNING']);
-
         $result = $callback();
         ob_end_flush();
 
@@ -354,10 +370,22 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
             pcntl_alarm(0);
         }
 
-        $finalStatus = [
-            'status' => 'COMPLETED',
-            'result' => $result,
-        ];
+        $needsSerialization = is_object($result) || is_resource($result) ||
+            (is_array($result) && containsObjects($result));
+
+        if ($needsSerialization) {
+            $finalStatus = [
+                'status' => 'COMPLETED',
+                'result' => base64_encode(serialize($result)),
+                'result_serialized' => true,
+            ];
+        } else {
+            $finalStatus = [
+                'status' => 'COMPLETED',
+                'result' => $result,
+                'result_serialized' => false,
+            ];
+        }
 
         write_status_to_stdout($finalStatus);
 
