@@ -14,6 +14,8 @@ use Rcalicdan\ConfigLoader\Config;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 
 /**
+ * @internal
+ * 
  * Handles spawning and managing parallel worker processes.
  *
  * This class is responsible for creating both streamed and fire-and-forget

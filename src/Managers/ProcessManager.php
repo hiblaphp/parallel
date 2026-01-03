@@ -15,15 +15,11 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
 
 /**
  * Manages the lifecycle of parallel processes and background tasks.
- *
- * This class serves as the central coordinator for spawning, tracking, and managing
- * parallel tasks. It handles both streamed tasks (with real-time output) and
- * fire-and-forget background tasks. Implements a singleton pattern for global access.
  */
 class ProcessManager
 {
     /**
-     * @var self|null Singleton instance of the ProcessManager
+     * @var self|null Global instance of the ProcessManager
      */
     private static ?self $instance = null;
 
@@ -47,12 +43,11 @@ class ProcessManager
     private float $lastSpawnReset = 0.0;
 
     /**
-     * Gets or creates the global singleton instance.
+     * Gets or creates the global shared instance.
+     * 
+     * Useful for simple scripts or legacy code integration.
      *
-     * Provides a single global instance of ProcessManager for consistent
-     * task management across the application.
-     *
-     * @return self The singleton ProcessManager instance
+     * @return self
      */
     public static function getGlobal(): self
     {
@@ -63,11 +58,27 @@ class ProcessManager
         return self::$instance;
     }
 
-    public function __construct()
+    /**
+     * Reset the global instance (Useful for testing)
+     */
+    public static function setGlobal(?self $instance): void
     {
-        $this->serializer = new CallbackSerializationManager();
-        $this->systemUtils = new SystemUtilities();
-        $this->logger = new BackgroundLogger();
+        self::$instance = $instance;
+    }
+
+    /**
+     * Allow public instantiation for Dependency Injection or Testing.
+     * 
+     * You can optionally inject dependencies here in the future if needed.
+     */
+    public function __construct(
+        ?SystemUtilities $systemUtils = null,
+        ?BackgroundLogger $logger = null,
+        ?CallbackSerializationManager $serializer = null
+    ) {
+        $this->systemUtils = $systemUtils ?? new SystemUtilities();
+        $this->logger = $logger ?? new BackgroundLogger();
+        $this->serializer = $serializer ?? new CallbackSerializationManager();
 
         $this->statusHandler = new TaskStatusHandler(
             $this->logger->getLogDirectory(),
@@ -77,7 +88,7 @@ class ProcessManager
         $this->spawnHandler = new ProcessSpawnHandler($this->systemUtils, $this->logger);
         $this->frameworkInfo = $this->systemUtils->getFrameworkBootstrap();
     }
-
+    
     /**
      * Spawns a streamed task with real-time output communication.
      *
@@ -125,11 +136,6 @@ class ProcessManager
 
     /**
      * Spawns a fire-and-forget background task.
-     *
-     * Creates a detached background process that runs independently without
-     * maintaining communication channels. Suitable for tasks that don't require
-     * real-time output monitoring. Task registration and logging are conditional
-     * based on logging configuration.
      *
      * @param callable $callback The callback function to execute in the worker process
      * @return BackgroundProcess The spawned background process instance

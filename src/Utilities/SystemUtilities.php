@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Utilities;
 
-use Rcalicdan\ConfigLoader\ConfigLoader;
+use Rcalicdan\ConfigLoader\Config;
 
 use function Rcalicdan\ConfigLoader\configRoot;
 
@@ -71,7 +71,7 @@ class SystemUtilities
      */
     public function findAutoloadPath(): string
     {
-       $rootDir = ConfigLoader::getInstance()->getRootPath();
+       $rootDir = Config::getRootPath();
 
        return $rootDir . '/vendor/autoload.php';
     }
