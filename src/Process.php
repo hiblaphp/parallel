@@ -8,6 +8,7 @@ use function Hibla\async;
 use function Hibla\await;
 use function Hibla\delay;
 
+use Hibla\Parallel\Handlers\ExceptionHandler;
 use Hibla\Promise\Exceptions\TimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
@@ -290,55 +291,7 @@ final class Process
      */
     private function createExceptionFromError(array $errorData): \Throwable
     {
-        $className = $errorData['class'] ?? \RuntimeException::class;
-        $message = $errorData['message'] ?? 'Unknown error';
-        $codeValue = $errorData['code'] ?? 0;
-        $code = \is_int($codeValue) ? $codeValue : (is_numeric($codeValue) ? (int)$codeValue : 0);
-
-        if (! \is_string($className) || ! class_exists($className)) {
-            $exception = new \RuntimeException(is_string($message) ? $message : 'Unknown error', $code);
-        } else {
-            try {
-                /** @var \Throwable $exception */
-                $exception = new $className(is_string($message) ? $message : 'Unknown error', $code);
-            } catch (\Throwable) {
-                $exception = new \RuntimeException(is_string($message) ? $message : 'Unknown error', $code);
-            }
-        }
-
-        if ($this->sourceLocation !== 'unknown' && str_contains($this->sourceLocation, ':')) {
-            try {
-                $lastColonPos = strrpos($this->sourceLocation, ':');
-                if ($lastColonPos !== false) {
-                    $file = substr($this->sourceLocation, 0, $lastColonPos);
-                    $line = substr($this->sourceLocation, $lastColonPos + 1);
-                } else {
-                    $file = $this->sourceLocation;
-                    $line = '0';
-                }
-
-                $reflection = new \ReflectionObject($exception);
-
-                while ($reflection instanceof \ReflectionClass && ! $reflection->hasProperty('file')) {
-                    $parentReflection = $reflection->getParentClass();
-                    $reflection = $parentReflection !== false ? $parentReflection : null;
-                }
-
-                if ($reflection instanceof \ReflectionClass) {
-                    $fileProp = $reflection->getProperty('file');
-                    $fileProp->setAccessible(true);
-                    $fileProp->setValue($exception, $file);
-
-                    $lineProp = $reflection->getProperty('line');
-                    $lineProp->setAccessible(true);
-                    $lineProp->setValue($exception, (int)$line);
-                }
-            } catch (\Throwable) {
-                // If reflection fails, we still return the exception anyway
-            }
-        }
-
-        return $exception;
+        return ExceptionHandler::createFromWorkerError($errorData, $this->sourceLocation);
     }
 
     /**
