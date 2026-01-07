@@ -30,6 +30,11 @@ class ProcessManager
     public const int DEFAULT_SPAWN_LIMIT = 50;
 
     /**
+     * Default maximum nesting level for parallel processes.
+     */
+    public const int DEFAULT_MAX_NESTING_LEVEL = 5;
+
+    /**
      * @var self|null Singleton instance of the ProcessManager
      */
     private static ?self $instance = null;
@@ -54,6 +59,8 @@ class ProcessManager
     private float $lastSpawnReset = 0.0;
 
     private int $maxSpawnsPerSecond;
+
+    private int $maxNestingLevel;
 
     /**
      * Gets or creates the global singleton instance.
@@ -89,12 +96,14 @@ class ProcessManager
      * @param BackgroundLogger|null $logger Optional dependency injection for logging
      * @param CallbackSerializationManager|null $serializer Optional dependency injection for serialization
      * @param int|null $maxSpawnsPerSecond Optional safety limit for background spawns/sec. If null, loads from config or uses default.
+     * @param int|null $maxNestingLevel Optional maximum nesting level for parallel processes. If null, loads from config or uses default.
      */
     public function __construct(
         ?SystemUtilities $systemUtils = null,
         ?BackgroundLogger $logger = null,
         ?CallbackSerializationManager $serializer = null,
-        ?int $maxSpawnsPerSecond = null
+        ?int $maxSpawnsPerSecond = null,
+        ?int $maxNestingLevel = null
     ) {
         $this->systemUtils = $systemUtils ?? new SystemUtilities();
         $this->logger = $logger ?? new BackgroundLogger();
@@ -111,6 +120,35 @@ class ProcessManager
             );
             $this->maxSpawnsPerSecond = (int) $configLimit;
         }
+
+        if ($maxNestingLevel !== null) {
+            $this->maxNestingLevel = $maxNestingLevel;
+        } else {
+            /** @var int $configNesting */
+            $configNesting = Config::loadFromRoot(
+                'hibla_parallel',
+                'max_nesting_level',
+                self::DEFAULT_MAX_NESTING_LEVEL
+            );
+            $this->maxNestingLevel = (int) $configNesting;
+        }
+
+        if ($this->maxNestingLevel < 1) {
+            throw new \InvalidArgumentException(
+                'max_nesting_level must be at least 1. Got: ' . $this->maxNestingLevel
+            );
+        }
+
+        if ($this->maxNestingLevel > 10) {
+            throw new \InvalidArgumentException(
+                'max_nesting_level cannot exceed 10 for safety reasons. Got: ' . $this->maxNestingLevel
+            );
+        }
+
+        // Set environment variable for child processes to know the maximum allowed level
+        putenv("HIBLA_MAX_NESTING_LEVEL={$this->maxNestingLevel}");
+        $_ENV['HIBLA_MAX_NESTING_LEVEL'] = (string) $this->maxNestingLevel;
+        $_SERVER['HIBLA_MAX_NESTING_LEVEL'] = (string) $this->maxNestingLevel;
 
         $this->statusHandler = new TaskStatusHandler(
             $this->logger->getLogDirectory(),
@@ -178,7 +216,7 @@ class ProcessManager
      * @param callable $callback The callback function to execute in the worker process
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @return BackgroundProcess The spawned background process instance
-     * @throws \RuntimeException If task nesting is detected, validation fails, or rate limit is exceeded
+     * @throws \RuntimeException If task nesting limit is exceeded, validation fails, or rate limit is exceeded
      * @throws SerializationException If the callback cannot be serialized
      */
     public function spawnBackgroundTask(callable $callback, int $timeoutSeconds = 600): BackgroundProcess
@@ -221,25 +259,44 @@ class ProcessManager
     }
 
     /**
+     * Get the current nesting level
+     *
+     * @return int Current nesting level (0 = main process, 1+ = nested)
+     */
+    public function getCurrentNestingLevel(): int
+    {
+        $nestingLevel = getenv('DEFER_NESTING_LEVEL');
+
+        return (int)($nestingLevel !== false ? $nestingLevel : 0);
+    }
+
+    /**
+     * Get the maximum allowed nesting level
+     *
+     * @return int Maximum nesting level
+     */
+    public function getMaxNestingLevel(): int
+    {
+        return $this->maxNestingLevel;
+    }
+
+    /**
      * @param callable $callback The callback to validate
      * @return void
-     * @throws \RuntimeException If task nesting is detected
+     * @throws \RuntimeException If task nesting limit is exceeded
      * @throws SerializationException If the callback cannot be serialized
      */
     private function validate(callable $callback): void
     {
-        if ($this->isRunningInBackground()) {
-            throw new \RuntimeException('Nesting parallel tasks is not allowed.');
+        $currentLevel = $this->getCurrentNestingLevel();
+
+        if ($currentLevel >= $this->maxNestingLevel) {
+            throw new \RuntimeException(
+                "Cannot spawn parallel task: Already at maximum nesting level " .
+                "{$currentLevel}/{$this->maxNestingLevel}. " .
+                "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file. " .
+                "Maximum safe limit is 10 levels."
+            );
         }
-    }
-
-    /**
-     * @return bool True if running in a background worker process, false otherwise
-     */
-    private function isRunningInBackground(): bool
-    {
-        $nestingLevel = getenv('DEFER_NESTING_LEVEL');
-
-        return (int)($nestingLevel !== false ? $nestingLevel : 0) > 0;
     }
 }

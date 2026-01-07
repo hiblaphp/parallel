@@ -14,6 +14,17 @@ require __DIR__ . '/vendor/autoload.php';
 return [
     /*
     |--------------------------------------------------------------------------
+    | Maximum Nesting Level
+    |--------------------------------------------------------------------------
+    |
+    | The maximum number of parallel() calls that can be nested.
+    |
+    | .env variable: HIBLA_PARALLEL_MAX_NESTING_LEVEL (int)
+    */
+    'max_nesting_level' => env('HIBLA_PARALLEL_MAX_NESTING_LEVEL', 5),
+    
+    /*
+    |--------------------------------------------------------------------------
     | Logging Configuration
     |--------------------------------------------------------------------------
     |

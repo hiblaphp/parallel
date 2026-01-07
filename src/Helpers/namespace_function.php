@@ -15,28 +15,81 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
 /**
  * Run a task in parallel (separate process) and return a Promise.
  *
- * ⚠️ CLOSURE SERIALIZATION WARNING
+ * ⚠️ NESTED PARALLEL CLOSURE WARNING - FORK BOMB PREVENTION
  *
- * The way you format closures affects what gets captured during serialization:
+ * Nesting parallel() calls with closures can cause FORK BOMBS where each process
+ * spawns exponentially more processes, rapidly exhausting system resources.
  *
- * ❌ DANGEROUS (may cause fork bomb and the process spawner immediately throws an exception to prevent mass spawn):
+ * The library AUTOMATICALLY DETECTS and THROWS EXCEPTIONS to prevent fork bombs,
+ * but it's better to avoid this pattern entirely.
+ *
+ * ❌ DANGEROUS (closure nesting - library will throw exception to prevent fork bomb):
+ * parallel(fn() => await(parallel(fn() => sleep(5))));
  * async(fn() => await(parallel(fn() => sleep(5))));
  *
- * ✅ SAFE (multi-line formatting):
+ * ✅ RECOMMENDED - Use non-closure callables for nested parallel tasks:
+ *
+ * 1. Array callable (static method):
+ *    parallel([MyTask::class, 'run']);
+ *
+ * 2. Array callable (instance method):
+ *    parallel([new MyTask(), 'execute']);
+ *
+ * 3. Invokable class:
+ *    parallel(new MyInvokableTask());
+ *
+ * 4. String function name:
+ *    parallel('myNamespacedFunction');
+ *
+ * ⚠️ IMPORTANT: Functions and classes MUST be:
+ * - Properly namespaced
+ * - Autoloaded via Composer
+ * - Available in child worker processes
+ *
+ * This ensures context is preserved when the task executes in the child process.
+ *
+ * ✅ SAFE PATTERNS:
+ *
+ * // Using static methods
+ * class DataProcessor {
+ *     public static function process($data) {
+ *         return await(parallel([self::class, 'heavyComputation']));
+ *     }
+ *     
+ *     public static function heavyComputation() {
+ *         return expensive_operation();
+ *     }
+ * }
+ * await(parallel([DataProcessor::class, 'process']));
+ *
+ * // Using invokable classes
+ * class InnerTask {
+ *     public function __invoke() {
+ *         return expensive_operation();
+ *     }
+ * }
+ *
+ * class OuterTask {
+ *     public function __invoke() {
+ *         return await(parallel(new InnerTask()));
+ *     }
+ * }
+ * await(parallel(new OuterTask()));
+ *
+ * // Using namespaced functions (must be autoloaded)
+ * namespace App\Tasks;
+ * function innerTask() { return expensive_operation(); }
+ * function outerTask() { return await(parallel('App\Tasks\innerTask')); }
+ * await(parallel('App\Tasks\outerTask'));
+ *
+ * // Multi-line closure formatting (safer but still not recommended for nesting)
  * async(
  *     fn() => await(parallel(
  *         fn() => sleep(5)
  *     ))
  * );
  *
- * ✅ SAFEST (use regular closures):
- * async(function() {
- *     return await(parallel(function() {
- *         return sleep(5);
- *     }));
- * });
- *
- * ✅ BEST (avoid nesting entirely):
+ * ✅ BEST PRACTICE - Avoid nesting entirely when possible:
  * await(parallel(fn() => sleep(5)));
  *
  * @template TResult
@@ -45,19 +98,27 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  * @param int $timeout Maximum seconds to wait for task completion (default: 60)
  * @return PromiseInterface<TResult> Promise resolving to the task's return value
  *
+ * @throws \RuntimeException If fork bomb pattern is detected
+ * @throws SerializationException If task cannot be serialized
+ *
  * @example
  * ```php
- * // Simple parallel execution
+ * // Simple parallel execution with closure
  * $result = await(parallel(fn() => heavyComputation()));
  *
- * // With context
- * $result = await(parallel(
- *     fn($ctx) => processData($ctx['data']),
- *     ['data' => $myData]
- * ));
+ * // Nested parallel with array callable (RECOMMENDED)
+ * class Task {
+ *     public static function run() {
+ *         return await(parallel([self::class, 'process']));
+ *     }
+ *     public static function process() {
+ *         return expensiveWork();
+ *     }
+ * }
+ * $result = await(parallel([Task::class, 'run']));
  *
  * // With timeout
- * $result = await(parallel(fn() => slowTask(), [], 120));
+ * $result = await(parallel(fn() => slowTask(), 120));
  * ```
  */
 function parallel(callable $task, int $timeout = 60): PromiseInterface
@@ -88,6 +149,9 @@ function parallel(callable $task, int $timeout = 60): PromiseInterface
  *
  * The arguments passed to the returned function will be serialized and passed
  * to the background process.
+ *
+ * ⚠️ IMPORTANT: The wrapped callable must be properly namespaced and autoloaded
+ * via Composer to be available in child worker processes.
  *
  * @template TResult
  *
@@ -123,12 +187,25 @@ function parallelFn(callable $task, int $timeout = 60): callable
  * Unlike `parallel()`, this gives you full control over the process lifecycle.
  * You must manually call `await()` on the returned process to get the result.
  *
- * ⚠️ CLOSURE SERIALIZATION WARNING
+ * ⚠️ NESTED SPAWN CLOSURE WARNING - FORK BOMB PREVENTION
  *
- * The way you format closures affects what gets captured during serialization:
+ * Nesting spawn() calls with closures can cause FORK BOMBS. The library automatically
+ * detects and throws exceptions to prevent this, but you should use non-closure
+ * callables for nested parallel operations.
  *
- * ❌ DANGEROUS (may cause fork bomb):
+ * ❌ DANGEROUS (closure nesting - library will throw exception):
+ * spawn(fn() => await(spawn(fn() => sleep(5))));
  * async(fn() => await(spawn(fn() => sleep(5))));
+ *
+ * ✅ RECOMMENDED - Use non-closure callables:
+ * - Array callables: [MyClass::class, 'method']
+ * - Invokable classes: new MyInvokableTask()
+ * - String functions: 'App\Tasks\myFunction'
+ *
+ * ⚠️ IMPORTANT: All callables must be:
+ * - Properly namespaced
+ * - Autoloaded via Composer
+ * - Available in child worker processes
  *
  * ✅ SAFE (multi-line formatting):
  * async(
@@ -143,14 +220,14 @@ function parallelFn(callable $task, int $timeout = 60): callable
  * @template TResult
  *
  * @param callable(): TResult $task The task to execute in parallel
+ * @param int $timeout Maximum seconds for task completion (default: 600)
  * @return PromiseInterface<BackgroundProcess> Promise resolving to the Process instance
  *
- * @throws \RuntimeException If process spawning fails
+ * @throws \RuntimeException If process spawning fails or fork bomb pattern detected
  * @throws SerializationException If task cannot be serialized
  *
  * @example
  * ```php
- *
  * // Spawn multiple processes
  * $process1 = await(spawn(fn() => task1()));
  * $process2 = await(spawn(fn() => task2()));
@@ -160,6 +237,19 @@ function parallelFn(callable $task, int $timeout = 60): callable
  * $result1 = await($process1->await());
  * $result2 = await($process2->await());
  * $result3 = await($process3->await());
+ *
+ * // Nested spawn with array callable (RECOMMENDED)
+ * class BackgroundJob {
+ *     public static function run() {
+ *         $child = await(spawn([self::class, 'childTask']));
+ *         return await($child->await());
+ *     }
+ *     public static function childTask() {
+ *         return longRunningWork();
+ *     }
+ * }
+ * $process = await(spawn([BackgroundJob::class, 'run']));
+ * $result = await($process->await());
  *
  * // Cancel if needed
  * $process = await(spawn(fn() => longRunningTask()));
@@ -185,6 +275,9 @@ function spawn(callable $task, int $timeout = 600): PromiseInterface
  *
  * This acts as a factory for fire-and-forget background tasks.
  *
+ * ⚠️ IMPORTANT: The wrapped callable must be properly namespaced and autoloaded
+ * via Composer to be available in child worker processes.
+ *
  * @template TResult
  *
  * @param callable(): TResult $task The task to execute in background
@@ -194,9 +287,13 @@ function spawn(callable $task, int $timeout = 600): PromiseInterface
  *
  * @example
  * ```php
- * $logToDb = spawnFn(function(string $msg) {
+ * // Using namespaced function (must be autoloaded)
+ * namespace App\Logging;
+ * function logToDb(string $msg) {
  *     Logger::toDb($msg);
- * });
+ * }
+ *
+ * $logToDb = spawnFn('App\Logging\logToDb');
  *
  * // Spawns 3 background processes
  * $processes = await(Promise::map(['msg1', 'msg2', 'msg3'], $logToDb));

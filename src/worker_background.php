@@ -11,12 +11,15 @@ putenv('DEFER_BACKGROUND_PROCESS=1');
 $_ENV['DEFER_BACKGROUND_PROCESS'] = '1';
 $_SERVER['DEFER_BACKGROUND_PROCESS'] = '1';
 
-$nestingLevel = (int) (getenv('DEFER_NESTING_LEVEL') ?: 0) + 1;
+$maxNestingLevel = (int)(getenv('HIBLA_MAX_NESTING_LEVEL') ?: 3);
+$nestingLevel = (int)(getenv('DEFER_NESTING_LEVEL') ?: 0) + 1;
 putenv("DEFER_NESTING_LEVEL={$nestingLevel}");
-$_ENV['DEFER_NESTING_LEVEL'] = (string) $nestingLevel;
-$_SERVER['DEFER_NESTING_LEVEL'] = (string) $nestingLevel;
+$_ENV['DEFER_NESTING_LEVEL'] = (string)$nestingLevel;
+$_SERVER['DEFER_NESTING_LEVEL'] = (string)$nestingLevel;
 
-if ($nestingLevel > 1) {
+
+if ($nestingLevel > $maxNestingLevel) {
+    fprintf(STDERR, "FATAL: Nesting level {$nestingLevel} exceeds maximum ({$maxNestingLevel}). Exiting to prevent fork bomb.\n");
     exit(1);
 }
 // ==========================================
