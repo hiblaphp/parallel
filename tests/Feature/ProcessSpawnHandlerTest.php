@@ -110,7 +110,9 @@ describe('ProcessSpawnHandler Feature Test', function () {
 
         $process = $handler->spawnStreamedTask(
             'test_path',
-            function () { usleep(100000); },
+            function () {
+                usleep(100000);
+            },
             $utils->getFrameworkBootstrap(),
             $serializer,
             false,

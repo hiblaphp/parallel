@@ -292,10 +292,10 @@ class ProcessManager
 
         if ($currentLevel >= $this->maxNestingLevel) {
             throw new \RuntimeException(
-                "Cannot spawn parallel task: Already at maximum nesting level " .
+                'Cannot spawn parallel task: Already at maximum nesting level ' .
                 "{$currentLevel}/{$this->maxNestingLevel}. " .
                 "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file. " .
-                "Maximum safe limit is 10 levels."
+                'Maximum safe limit is 10 levels.'
             );
         }
     }

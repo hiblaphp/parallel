@@ -74,7 +74,8 @@ describe('TaskStatusHandler', function () {
             $taskId = 'type_closure';
 
             $handler = new TaskStatusHandler($tempPath, true);
-            $handler->createInitialStatus($taskId, function () {});
+            $handler->createInitialStatus($taskId, function () {
+            });
 
             $content = json_decode(file_get_contents($tempPath . DIRECTORY_SEPARATOR . $taskId . '.json'), true);
             expect($content['callback_type'])->toBe('closure');

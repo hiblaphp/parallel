@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Hibla\Parallel\Handlers;
 
 /**
- * @internal 
- * 
+ * @internal
+ *
  * Handles reconstruction and formatting of exceptions from worker processes
  */
 final class ExceptionHandler
@@ -194,7 +194,7 @@ final class ExceptionHandler
                 'file' => '--- WORKER STACK TRACE ---',
                 'line' => 0,
                 'function' => '',
-                'args' => []
+                'args' => [],
             ];
 
             $currentTrace = array_merge($currentTrace, $workerTraceArray);
@@ -224,14 +224,14 @@ final class ExceptionHandler
                     'file' => $matches[1],
                     'line' => $matches[2] !== '' ? (int)$matches[2] : 0,
                     'function' => $matches[3],
-                    'args' => []
+                    'args' => [],
                 ];
             } elseif (preg_match('/^#\d+\s+\{main\}$/', $trimmedLine) === 1) {
                 $workerTraceArray[] = [
                     'file' => '[worker main]',
                     'line' => 0,
                     'function' => '{main}',
-                    'args' => []
+                    'args' => [],
                 ];
             }
         }

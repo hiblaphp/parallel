@@ -5,22 +5,22 @@ declare(strict_types=1);
 use function Hibla\async;
 use function Hibla\await;
 
+use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Promise\Promise;
 use Hibla\Stream\PromiseReadableStream;
-
 use Hibla\Stream\PromiseWritableStream;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 
 describe('Worker Scripts Integration', function () {
-
     $projectRoot = dirname(__DIR__, 2);
     $autoloadPath = $projectRoot . '/vendor/autoload.php';
     $streamWorker = $projectRoot . '/src/worker.php';
     $bgWorker = $projectRoot . '/src/worker_background.php';
     $serializer = new CallbackSerializationManager();
+    $utils = new SystemUtilities();
 
-    $runStreamWorker = function (callable $task) use ($streamWorker, $autoloadPath, $serializer) {
-        return await(async(function () use ($task, $streamWorker, $autoloadPath, $serializer) {
+    $runStreamWorker = function (callable $task) use ($streamWorker, $autoloadPath, $serializer, $utils) {
+        return await(async(function () use ($task, $streamWorker, $autoloadPath, $serializer, $utils) {
             $serializedCallback = $serializer->serializeCallback($task);
 
             $payload = json_encode([
@@ -39,35 +39,41 @@ describe('Worker Scripts Integration', function () {
                 2 => ['pipe', 'w'],
             ];
 
-            $process = proc_open('php ' . escapeshellarg($streamWorker), $descriptors, $pipes);
+            $phpBinary = $utils->getPhpBinary();
+            $process = proc_open(escapeshellarg($phpBinary) . ' ' . escapeshellarg($streamWorker), $descriptors, $pipes);
+
             if (! is_resource($process)) {
                 throw new RuntimeException('Failed to spawn worker');
             }
+
+            stream_set_blocking($pipes[0], false);
+            stream_set_blocking($pipes[1], false);
+            stream_set_blocking($pipes[2], false);
 
             $stdin = new PromiseWritableStream($pipes[0]);
             $stdout = new PromiseReadableStream($pipes[1]);
             $stderr = new PromiseReadableStream($pipes[2]);
 
             await($stdin->writeAsync($payload . PHP_EOL));
-            $stdin->close();
 
             [$output, $errors] = await(Promise::all([
                 $stdout->readAllAsync(),
                 $stderr->readAllAsync(),
             ]));
 
+            $stdin->close();
             proc_close($process);
 
             if ($errors) {
                 throw new RuntimeException('Worker Error: ' . $errors);
             }
 
-            return array_filter(explode("\n", $output));
+            return array_filter(explode("\n", (string)$output));
         }));
     };
 
-    $runBgWorker = function (callable $task, string $statusFile) use ($bgWorker, $autoloadPath, $serializer) {
-        await(async(function () use ($task, $statusFile, $bgWorker, $autoloadPath, $serializer) {
+    $runBgWorker = function (callable $task, string $statusFile) use ($bgWorker, $autoloadPath, $serializer, $utils) {
+        await(async(function () use ($task, $statusFile, $bgWorker, $autoloadPath, $serializer, $utils) {
             $serializedCallback = $serializer->serializeCallback($task);
 
             $payload = json_encode([
@@ -86,19 +92,23 @@ describe('Worker Scripts Integration', function () {
                 2 => ['pipe', 'w'],
             ];
 
-            $process = proc_open('php ' . escapeshellarg($bgWorker), $descriptors, $pipes);
+            $phpBinary = $utils->getPhpBinary();
+            $process = proc_open(escapeshellarg($phpBinary) . ' ' . escapeshellarg($bgWorker), $descriptors, $pipes);
+
             if (! is_resource($process)) {
                 throw new RuntimeException('Failed to spawn background worker');
             }
 
-            $stdin = new PromiseWritableStream($pipes[0]);
-            $stderr = new PromiseReadableStream($pipes[2]);
+            fwrite($pipes[0], $payload . PHP_EOL);
+            fflush($pipes[0]);
+            fclose($pipes[0]);
 
-            await($stdin->writeAsync($payload . PHP_EOL));
-            $stdin->close();
+            stream_set_blocking($pipes[2], false);
+            $stderr = new PromiseReadableStream($pipes[2]);
 
             $errors = await($stderr->readAllAsync());
 
+            fclose($pipes[1]);
             proc_close($process);
 
             if ($errors) {
@@ -111,8 +121,9 @@ describe('Worker Scripts Integration', function () {
         $lines = $runStreamWorker(fn () => 'Hello from Stream Worker');
 
         $lastLine = array_pop($lines);
-        $data = json_decode($lastLine, true);
+        $data = json_decode((string)$lastLine, true);
 
+        expect($data)->not->toBeNull('JSON decode failed. Last line was: ' . var_export($lastLine, true));
         expect($data['status'])->toBe('COMPLETED');
         expect($data['result'])->toBe('Hello from Stream Worker');
     });
@@ -129,7 +140,7 @@ describe('Worker Scripts Integration', function () {
         $completed = false;
 
         foreach ($lines as $line) {
-            $data = json_decode($line, true);
+            $data = json_decode((string)$line, true);
             if (! $data) {
                 continue;
             }
@@ -153,8 +164,9 @@ describe('Worker Scripts Integration', function () {
         });
 
         $lastLine = array_pop($lines);
-        $data = json_decode($lastLine, true);
+        $data = json_decode((string)$lastLine, true);
 
+        expect($data)->not->toBeNull();
         expect($data['status'])->toBe('ERROR');
         expect($data['class'])->toBe(InvalidArgumentException::class);
         expect($data['message'])->toBe('Something went wrong');
@@ -166,8 +178,9 @@ describe('Worker Scripts Integration', function () {
         });
 
         $lastLine = array_pop($lines);
-        $data = json_decode($lastLine, true);
+        $data = json_decode((string)$lastLine, true);
 
+        expect($data)->not->toBeNull();
         expect($data['status'])->toBe('COMPLETED');
         expect($data['result_serialized'])->toBeTrue();
 
@@ -193,7 +206,9 @@ describe('Worker Scripts Integration', function () {
         expect($data['status'])->toBe('COMPLETED');
         expect($data['message'])->toBe('Task completed');
 
-        unlink($statusFile);
+        if (file_exists($statusFile)) {
+            unlink($statusFile);
+        }
     });
 
     it('catches exceptions and updates status file with error (worker_background.php)', function () use ($runBgWorker) {
@@ -211,6 +226,8 @@ describe('Worker Scripts Integration', function () {
         expect($data['status'])->toBe('ERROR');
         expect($data['message'])->toBe('Background Crash');
 
-        unlink($statusFile);
+        if (file_exists($statusFile)) {
+            unlink($statusFile);
+        }
     });
 });

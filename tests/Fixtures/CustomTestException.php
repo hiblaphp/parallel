@@ -4,4 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Fixtures;
 
-class CustomTestException extends \Exception {}
+class CustomTestException extends \Exception
+{
+}

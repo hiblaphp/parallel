@@ -369,7 +369,6 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
             throw new RuntimeException('Deserialized task is not callable.');
         }
 
-
         //wrap the callback in a fiber and get the result
         $result = Hibla\await(Hibla\async($callback));
         ob_end_flush();

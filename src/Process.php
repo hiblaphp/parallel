@@ -46,7 +46,8 @@ final class Process
         private readonly string $statusFilePath,
         private readonly bool $loggingEnabled = true,
         private readonly string $sourceLocation = 'unknown'
-    ) {}
+    ) {
+    }
 
     /**
      * Get the result of the background process

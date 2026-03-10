@@ -22,7 +22,7 @@ return [
     | .env variable: HIBLA_PARALLEL_MAX_NESTING_LEVEL (int)
     */
     'max_nesting_level' => env('HIBLA_PARALLEL_MAX_NESTING_LEVEL', 5),
-    
+
     /*
     |--------------------------------------------------------------------------
     | Logging Configuration

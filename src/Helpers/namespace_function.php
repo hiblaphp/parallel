@@ -55,7 +55,7 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  *     public static function process($data) {
  *         return await(parallel([self::class, 'heavyComputation']));
  *     }
- *     
+ *
  *     public static function heavyComputation() {
  *         return expensive_operation();
  *     }

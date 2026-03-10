@@ -17,7 +17,6 @@ putenv("DEFER_NESTING_LEVEL={$nestingLevel}");
 $_ENV['DEFER_NESTING_LEVEL'] = (string)$nestingLevel;
 $_SERVER['DEFER_NESTING_LEVEL'] = (string)$nestingLevel;
 
-
 if ($nestingLevel > $maxNestingLevel) {
     fprintf(STDERR, "FATAL: Nesting level {$nestingLevel} exceeds maximum ({$maxNestingLevel}). Exiting to prevent fork bomb.\n");
     exit(1);
