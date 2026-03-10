@@ -159,7 +159,7 @@ try {
 
     $callback = $serializationManager->unserializeCallback($taskData['serialized_callback']);
 
-    $callback();
+    Hibla\await(Hibla\async($callback));
 
     if (! $isWindows && function_exists('pcntl_alarm')) {
         pcntl_alarm(0);
