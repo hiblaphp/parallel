@@ -46,8 +46,7 @@ final class Process
         private readonly string $statusFilePath,
         private readonly bool $loggingEnabled = true,
         private readonly string $sourceLocation = 'unknown'
-    ) {
-    }
+    ) {}
 
     /**
      * Get the result of the background process
@@ -66,8 +65,11 @@ final class Process
             }
 
             try {
+                if ($timeoutSeconds > 0) {
+                    return await(Promise::timeout($resultPromise, $timeoutSeconds));
+                }
 
-                return await(Promise::timeout($resultPromise, $timeoutSeconds));
+                return await($resultPromise);
             } catch (TimeoutException) {
                 $this->terminate();
 

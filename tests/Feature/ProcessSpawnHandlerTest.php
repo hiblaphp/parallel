@@ -92,8 +92,8 @@ describe('ProcessSpawnHandler Feature Test', function () {
             $frameworkInfo,
             $serializer,
             false,
-            0
-        ))->toThrow(InvalidArgumentException::class, 'Timeout must be at least 1 second');
+            -1
+        ))->toThrow(InvalidArgumentException::class);
 
         expect(fn () => $handler->spawnBackgroundTask(
             'id',

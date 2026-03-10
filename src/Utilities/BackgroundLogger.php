@@ -34,14 +34,13 @@ final class BackgroundLogger
 
         $defaultDir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'hibla_parallel_logs';
 
-        if ($this->enableDetailedLogging) {
-            $configLogDir = Config::loadFromRoot('hibla_parallel', 'logging.directory', $defaultDir);
-            $calculatedDir = (\is_string($configLogDir) && $configLogDir !== '') ? $configLogDir : $defaultDir;
+        $configLogDir = Config::loadFromRoot('hibla_parallel', 'logging.directory', $defaultDir);
+        $calculatedDir = (\is_string($configLogDir) && $configLogDir !== '') ? $configLogDir : $defaultDir;
+        $this->logDir = $customLogDir ?? $calculatedDir;
 
-            $this->logDir = $customLogDir ?? $calculatedDir;
+        if ($this->enableDetailedLogging) {
             $this->logFile = $this->logDir . DIRECTORY_SEPARATOR . 'background_tasks.log';
         } else {
-            $this->logDir = $customLogDir ?? $defaultDir;
             $this->logFile = null;
         }
 

@@ -70,6 +70,8 @@ class ProcessSpawnHandler
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param bool $loggingEnabled Whether logging is enabled for this task
      * @param int $timeoutSeconds Maximum execution time in seconds
+     * @param string $sourceLocation Source file and line triggering the process
+     * @param string|null $memoryLimit Custom memory limit for this specific process
      * @return Process<TResult> The spawned process instance with communication streams
      * @throws \RuntimeException If process spawning fails
      */
@@ -80,7 +82,8 @@ class ProcessSpawnHandler
         CallbackSerializationManager $serializationManager,
         bool $loggingEnabled,
         int $timeoutSeconds = 60,
-        string $sourceLocation = 'unknown'
+        string $sourceLocation = 'unknown',
+        ?string $memoryLimit = null
     ): Process {
         $phpBinary = $this->systemUtils->getPhpBinary();
         $workerScript = $this->getWorkerPath('worker.php');
@@ -123,7 +126,8 @@ class ProcessSpawnHandler
                 $frameworkInfo,
                 $serializationManager,
                 $loggingEnabled,
-                $timeoutSeconds
+                $timeoutSeconds,
+                $memoryLimit
             );
             $stdin->writeAsync($payload . PHP_EOL);
         } catch (\Throwable $e) {
@@ -160,6 +164,7 @@ class ProcessSpawnHandler
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param bool $loggingEnabled Whether logging is enabled for this task
      * @param int $timeoutSeconds The maximum execution time in seconds. Use 0 for no limit.
+     * @param string|null $memoryLimit Custom memory limit for this specific process
      * @return BackgroundProcess The spawned background process instance
      * @throws \RuntimeException If process spawning fails
      */
@@ -170,6 +175,7 @@ class ProcessSpawnHandler
         CallbackSerializationManager $serializationManager,
         bool $loggingEnabled,
         int $timeoutSeconds = 600,
+        ?string $memoryLimit = null
     ): BackgroundProcess {
         $this->validateTimeout($timeoutSeconds);
 
@@ -207,7 +213,8 @@ class ProcessSpawnHandler
                 $frameworkInfo,
                 $serializationManager,
                 $loggingEnabled,
-                $timeoutSeconds
+                $timeoutSeconds,
+                $memoryLimit
             );
 
             fwrite($pipes[0], $payload . PHP_EOL);
@@ -229,6 +236,7 @@ class ProcessSpawnHandler
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param bool $loggingEnabled Whether logging is enabled for this task
      * @param int $timeoutSeconds Maximum execution time in seconds
+     * @param string|null $memoryLimit Custom memory limit for this specific process
      * @return string JSON-encoded payload string
      * @throws \RuntimeException If serialization fails
      */
@@ -239,7 +247,8 @@ class ProcessSpawnHandler
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
         bool $loggingEnabled,
-        int $timeoutSeconds = 60
+        int $timeoutSeconds = 60,
+        ?string $memoryLimit = null
     ): string {
         $serializedCallback = $serializationManager->serializeCallback($callback);
 
@@ -259,7 +268,7 @@ class ProcessSpawnHandler
             'framework_bootstrap_callback' => $serializedBootstrapCallback,
             'logging_enabled' => $loggingEnabled,
             'timeout_seconds' => $timeoutSeconds,
-            'memory_limit' => $this->defaultMemoryLimit,
+            'memory_limit' => $memoryLimit ?? $this->defaultMemoryLimit,
         ];
 
         $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);
@@ -338,17 +347,18 @@ class ProcessSpawnHandler
      */
     private function validateTimeout(int $timeoutSeconds): void
     {
-        if ($timeoutSeconds < 1) {
-            throw new \InvalidArgumentException(
-                'Timeout must be at least 1 second. Use a reasonable timeout to prevent runaway processes. ' .
-                    'If you need a very long timeout, use a high value like 3600 (1 hour) or 86400 (24 hours).'
-            );
+        if ($timeoutSeconds < 0) {
+            throw new \InvalidArgumentException('Timeout cannot be a negative number.');
+        }
+
+        if ($timeoutSeconds === 0) {
+            return;
         }
 
         if ($timeoutSeconds > 86400) {
             throw new \InvalidArgumentException(
                 'Timeout cannot exceed 86400 seconds (24 hours). ' .
-                    'For tasks that need longer execution, consider breaking them into smaller chunks.'
+                    'For tasks that need longer execution, consider breaking them into smaller chunks or use withoutTimeout().'
             );
         }
     }

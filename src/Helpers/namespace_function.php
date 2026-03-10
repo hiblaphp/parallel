@@ -4,12 +4,9 @@ declare(strict_types=1);
 
 namespace Hibla;
 
-use Hibla\Cancellation\CancellationTokenSource;
 use Hibla\Parallel\BackgroundProcess;
-use Hibla\Parallel\Managers\ProcessManager;
-use Hibla\Parallel\Process;
+use Hibla\Parallel\ParallelExecutor;
 use Hibla\Promise\Interfaces\PromiseInterface;
-use Hibla\Promise\Promise;
 use Rcalicdan\Serializer\Exceptions\SerializationException;
 
 /**
@@ -55,7 +52,7 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  *     public static function process($data) {
  *         return await(parallel([self::class, 'heavyComputation']));
  *     }
- *
+ *     
  *     public static function heavyComputation() {
  *         return expensive_operation();
  *     }
@@ -123,21 +120,9 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  */
 function parallel(callable $task, int $timeout = 60): PromiseInterface
 {
-    $source = new CancellationTokenSource();
-
-    /** @var Process<TResult> $process */
-    $process = ProcessManager::getGlobal()->spawnStreamedTask($task, $timeout);
-
-    $source->token->onCancel(function () use ($process) {
-        $process->terminate();
-    });
-
-    /** @var PromiseInterface<TResult> */
-    return $process->getResult($timeout)
-        ->onCancel(function () use ($source) {
-            $source->cancel();
-        })
-    ;
+    return ParallelExecutor::create()
+        ->withTimeout($timeout)
+        ->run($task);
 }
 
 /**
@@ -168,7 +153,7 @@ function parallel(callable $task, int $timeout = 60): PromiseInterface
  *     return Image::load($path)->resize(100, 100)->save();
  * });
  *
- * $images = ['img1.jpg', 'img2.jpg', 'img3.jpg'];
+ * $images =['img1.jpg', 'img2.jpg', 'img3.jpg'];
  *
  * // Use with Promise::map to process concurrently
  * $results = await(Promise::map($images, $resizeImage, concurrency: 2));
@@ -198,7 +183,7 @@ function parallelFn(callable $task, int $timeout = 60): callable
  * async(fn() => await(spawn(fn() => sleep(5))));
  *
  * ✅ RECOMMENDED - Use non-closure callables:
- * - Array callables: [MyClass::class, 'method']
+ * - Array callables:[MyClass::class, 'method']
  * - Invokable classes: new MyInvokableTask()
  * - String functions: 'App\Tasks\myFunction'
  *
@@ -265,9 +250,9 @@ function parallelFn(callable $task, int $timeout = 60): callable
  */
 function spawn(callable $task, int $timeout = 600): PromiseInterface
 {
-    return Promise::resolved(
-        ProcessManager::getGlobal()->spawnBackgroundTask($task, $timeout)
-    );
+    return ParallelExecutor::create()
+        ->withTimeout($timeout)
+        ->spawn($task);
 }
 
 /**

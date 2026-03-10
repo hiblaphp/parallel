@@ -32,11 +32,14 @@ final readonly class TaskStatusHandler
      *
      * @param string $taskId Unique identifier for the task
      * @param callable $callback The callback function to be executed
+     * @param bool|null $loggingOverride Optional override to explicitly enable/disable logging for this task
      * @return void
      */
-    public function createInitialStatus(string $taskId, callable $callback): void
+    public function createInitialStatus(string $taskId, callable $callback, ?bool $loggingOverride = null): void
     {
-        if (! $this->loggingEnabled) {
+        $isLoggingEnabled = $loggingOverride ?? $this->loggingEnabled;
+
+        if (! $isLoggingEnabled) {
             return;
         }
 
@@ -49,7 +52,7 @@ final readonly class TaskStatusHandler
         $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
         /** @var array<string, mixed> $initialStatus */
-        $initialStatus = [
+        $initialStatus =[
             'task_id' => $taskId,
             'status' => 'PENDING',
             'message' => 'Task created and queued for execution',

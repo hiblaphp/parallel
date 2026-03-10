@@ -166,40 +166,53 @@ class ProcessManager
      *
      * @param callable(): TResult $callback The callback function to execute in the worker process
      * @param int $timeoutSeconds Maximum execution time in seconds
+     * @param string|null $memoryLimit Optional memory limit override
+     * @param bool|null $loggingEnabled Optional logging override
+     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null $customBootstrap Optional bootstrap override
      * @return Process<TResult> The spawned process instance with communication streams
      */
-    public function spawnStreamedTask(callable $callback, int $timeoutSeconds = 60): Process
-    {
+    public function spawnStreamedTask(
+        callable $callback,
+        int $timeoutSeconds = 60,
+        ?string $memoryLimit = null,
+        ?bool $loggingEnabled = null,
+        ?array $customBootstrap = null
+    ): Process {
         $this->validate($callback);
         $taskId = $this->systemUtils->generateTaskId();
 
         $sourceLocation = 'unknown';
-        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 3);
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 4);
 
         foreach ($trace as $frame) {
             $file = $frame['file'] ?? '';
-            if ($file !== '' && ! str_contains($file, 'ProcessManager.php') && ! str_contains($file, 'namespace_function.php')) {
+            // Make sure we skip ParallelExecutor so we capture the actual user code
+            if ($file !== '' && ! str_contains($file, 'ProcessManager.php') && ! str_contains($file, 'namespace_function.php') && ! str_contains($file, 'ParallelExecutor.php')) {
                 $sourceLocation = $file . ':' . ($frame['line'] ?? '?');
 
                 break;
             }
         }
 
-        $this->statusHandler->createInitialStatus($taskId, $callback);
+        $logging = $loggingEnabled ?? $this->logger->isDetailedLoggingEnabled();
+        $frameworkInfo = $customBootstrap ?? $this->frameworkInfo;
 
-        $logging = $this->logger->isDetailedLoggingEnabled();
+        $this->statusHandler->createInitialStatus($taskId, $callback, $logging);
 
         $process = $this->spawnHandler->spawnStreamedTask(
             $taskId,
             $callback,
-            $this->frameworkInfo,
+            $frameworkInfo,
             $this->serializer,
             $logging,
             $timeoutSeconds,
-            $sourceLocation
+            $sourceLocation,
+            $memoryLimit
         );
 
-        $this->logger->logTaskEvent($taskId, 'SPAWNED', 'Streamed task PID: ' . $process->getPid());
+        if ($logging) {
+            $this->logger->logTaskEvent($taskId, 'SPAWNED', 'Streamed task PID: ' . $process->getPid());
+        }
 
         /** @var Process<TResult> */
         return $process;
@@ -215,12 +228,20 @@ class ProcessManager
      *
      * @param callable $callback The callback function to execute in the worker process
      * @param int $timeoutSeconds Maximum execution time in seconds
+     * @param string|null $memoryLimit Optional memory limit override
+     * @param bool|null $loggingEnabled Optional logging override
+     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null $customBootstrap Optional bootstrap override
      * @return BackgroundProcess The spawned background process instance
      * @throws \RuntimeException If task nesting limit is exceeded, validation fails, or rate limit is exceeded
      * @throws SerializationException If the callback cannot be serialized
      */
-    public function spawnBackgroundTask(callable $callback, int $timeoutSeconds = 600): BackgroundProcess
-    {
+    public function spawnBackgroundTask(
+        callable $callback,
+        int $timeoutSeconds = 600,
+        ?string $memoryLimit = null,
+        ?bool $loggingEnabled = null,
+        ?array $customBootstrap = null
+    ): BackgroundProcess {
         if (microtime(true) - $this->lastSpawnReset > 1.0) {
             $this->spawnCount = 0;
             $this->lastSpawnReset = microtime(true);
@@ -236,19 +257,22 @@ class ProcessManager
 
         $this->validate($callback);
         $taskId = $this->systemUtils->generateTaskId();
-        $logging = $this->logger->isDetailedLoggingEnabled();
+        
+        $logging = $loggingEnabled ?? $this->logger->isDetailedLoggingEnabled();
+        $frameworkInfo = $customBootstrap ?? $this->frameworkInfo;
 
         if ($logging) {
-            $this->statusHandler->createInitialStatus($taskId, $callback);
+            $this->statusHandler->createInitialStatus($taskId, $callback, $logging);
         }
 
         $process = $this->spawnHandler->spawnBackgroundTask(
             $taskId,
             $callback,
-            $this->frameworkInfo,
+            $frameworkInfo,
             $this->serializer,
             $logging,
-            $timeoutSeconds
+            $timeoutSeconds,
+            $memoryLimit
         );
 
         if ($logging) {
@@ -292,10 +316,10 @@ class ProcessManager
 
         if ($currentLevel >= $this->maxNestingLevel) {
             throw new \RuntimeException(
-                'Cannot spawn parallel task: Already at maximum nesting level ' .
+                "Cannot spawn parallel task: Already at maximum nesting level " .
                 "{$currentLevel}/{$this->maxNestingLevel}. " .
                 "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file. " .
-                'Maximum safe limit is 10 levels.'
+                "Maximum safe limit is 10 levels."
             );
         }
     }
