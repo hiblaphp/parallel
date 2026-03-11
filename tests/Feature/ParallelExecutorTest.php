@@ -188,4 +188,26 @@ describe('ParallelExecutor Feature Test', function () {
 
         $process->terminate();
     });
+
+    it('respects a custom maximum nesting level', function () {
+        putenv('DEFER_NESTING_LEVEL=2');
+
+        expect(
+            fn() =>
+            ParallelExecutor::create()
+                ->withMaxNestingLevel(2)
+                ->spawn(fn() => true)
+        )->toThrow(\RuntimeException::class, 'Already at maximum nesting level');
+
+        $process = \Hibla\await(
+            ParallelExecutor::create()
+                ->withMaxNestingLevel(3)
+                ->spawn(fn() => true)
+        );
+
+        expect($process)->toBeInstanceOf(BackgroundProcess::class);
+        $process->terminate();
+
+        putenv('DEFER_NESTING_LEVEL=');
+    });
 });

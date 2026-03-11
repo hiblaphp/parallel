@@ -30,6 +30,8 @@ final class ParallelExecutor
 
     private bool $unlimitedTimeout = false;
 
+    private ?int $maxNestingLevel = null;
+
     public function __construct() {}
 
     /**
@@ -132,11 +134,29 @@ final class ParallelExecutor
     public function withBootstrap(string $file, ?callable $callback = null): self
     {
         $clone = clone $this;
-        $clone->bootstrap = [
+        $clone->bootstrap =[
             'name' => 'custom',
             'bootstrap_file' => $file,
             'bootstrap_callback' => $callback,
         ];
+
+        return $clone;
+    }
+
+    /**
+     * Set the maximum nesting level for this specific task.
+     *
+     * @param int $level Maximum nesting depth (1-10)
+     * @return self
+     */
+    public function withMaxNestingLevel(int $level): self
+    {
+        if ($level < 1 || $level > 10) {
+            throw new \InvalidArgumentException('max_nesting_level must be between 1 and 10.');
+        }
+
+        $clone = clone $this;
+        $clone->maxNestingLevel = $level;
 
         return $clone;
     }
@@ -158,7 +178,8 @@ final class ParallelExecutor
             $finalTimeout,
             $this->memoryLimit,
             $this->loggingEnabled,
-            $this->bootstrap
+            $this->bootstrap,
+            $this->maxNestingLevel
         );
 
         $source->token->onCancel(static function () use ($process) {
@@ -188,7 +209,8 @@ final class ParallelExecutor
                 $finalTimeout,
                 $this->memoryLimit,
                 $this->loggingEnabled,
-                $this->bootstrap
+                $this->bootstrap,
+                $this->maxNestingLevel
             )
         );
     }

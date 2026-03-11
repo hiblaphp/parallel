@@ -169,6 +169,7 @@ class ProcessManager
      * @param string|null $memoryLimit Optional memory limit override
      * @param bool|null $loggingEnabled Optional logging override
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null $customBootstrap Optional bootstrap override
+     * @param int|null $maxNestingLevel Optional max nesting level override
      * @return Process<TResult> The spawned process instance with communication streams
      */
     public function spawnStreamedTask(
@@ -176,9 +177,12 @@ class ProcessManager
         int $timeoutSeconds = 60,
         ?string $memoryLimit = null,
         ?bool $loggingEnabled = null,
-        ?array $customBootstrap = null
+        ?array $customBootstrap = null,
+        ?int $maxNestingLevel = null
     ): Process {
-        $this->validate($callback);
+        $finalMaxNestingLevel = $maxNestingLevel ?? $this->maxNestingLevel;
+        $this->validate($callback, $finalMaxNestingLevel);
+        
         $taskId = $this->systemUtils->generateTaskId();
 
         $sourceLocation = 'unknown';
@@ -207,7 +211,8 @@ class ProcessManager
             $logging,
             $timeoutSeconds,
             $sourceLocation,
-            $memoryLimit
+            $memoryLimit,
+            $finalMaxNestingLevel
         );
 
         if ($logging) {
@@ -231,6 +236,7 @@ class ProcessManager
      * @param string|null $memoryLimit Optional memory limit override
      * @param bool|null $loggingEnabled Optional logging override
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null $customBootstrap Optional bootstrap override
+     * @param int|null $maxNestingLevel Optional max nesting level override
      * @return BackgroundProcess The spawned background process instance
      * @throws \RuntimeException If task nesting limit is exceeded, validation fails, or rate limit is exceeded
      * @throws SerializationException If the callback cannot be serialized
@@ -240,7 +246,8 @@ class ProcessManager
         int $timeoutSeconds = 600,
         ?string $memoryLimit = null,
         ?bool $loggingEnabled = null,
-        ?array $customBootstrap = null
+        ?array $customBootstrap = null,
+        ?int $maxNestingLevel = null
     ): BackgroundProcess {
         if (microtime(true) - $this->lastSpawnReset > 1.0) {
             $this->spawnCount = 0;
@@ -255,7 +262,9 @@ class ProcessManager
 
         $this->spawnCount++;
 
-        $this->validate($callback);
+        $finalMaxNestingLevel = $maxNestingLevel ?? $this->maxNestingLevel;
+        $this->validate($callback, $finalMaxNestingLevel);
+        
         $taskId = $this->systemUtils->generateTaskId();
         
         $logging = $loggingEnabled ?? $this->logger->isDetailedLoggingEnabled();
@@ -272,7 +281,8 @@ class ProcessManager
             $this->serializer,
             $logging,
             $timeoutSeconds,
-            $memoryLimit
+            $memoryLimit,
+            $finalMaxNestingLevel
         );
 
         if ($logging) {
@@ -306,19 +316,21 @@ class ProcessManager
 
     /**
      * @param callable $callback The callback to validate
+     * @param int $maxNestingLevel The explicit max nesting level for this task
      * @return void
      * @throws \RuntimeException If task nesting limit is exceeded
      * @throws SerializationException If the callback cannot be serialized
      */
-    private function validate(callable $callback): void
+    private function validate(callable $callback, int $maxNestingLevel): void
     {
         $currentLevel = $this->getCurrentNestingLevel();
 
-        if ($currentLevel >= $this->maxNestingLevel) {
+        if ($currentLevel >= $maxNestingLevel) {
             throw new \RuntimeException(
                 "Cannot spawn parallel task: Already at maximum nesting level " .
-                "{$currentLevel}/{$this->maxNestingLevel}. " .
-                "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file. " .
+                "{$currentLevel}/{$maxNestingLevel}. " .
+                "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file, " .
+                "or use ->withMaxNestingLevel() on the ParallelExecutor. " .
                 "Maximum safe limit is 10 levels."
             );
         }

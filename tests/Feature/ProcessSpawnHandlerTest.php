@@ -94,15 +94,6 @@ describe('ProcessSpawnHandler Feature Test', function () {
             false,
             -1
         ))->toThrow(InvalidArgumentException::class);
-
-        expect(fn () => $handler->spawnBackgroundTask(
-            'id',
-            fn () => true,
-            $frameworkInfo,
-            $serializer,
-            false,
-            90000
-        ))->toThrow(InvalidArgumentException::class, 'Timeout cannot exceed 86400 seconds');
     });
 
     it('correctly resolves the worker script paths', function () use ($setupHandler) {

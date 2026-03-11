@@ -27,15 +27,15 @@ class ProcessSpawnHandler
     private string|int $defaultMemoryLimit;
 
     /** @var array<string, string> */
-    private array $workerPathCache = [];
+    private array $workerPathCache =[];
 
     public function __construct(
         private SystemUtilities $systemUtils,
         private BackgroundLogger $logger
     ) {
         $requiredFunctions = PHP_OS_FAMILY !== 'Windows'
-            ? ['proc_open', 'exec', 'shell_exec', 'posix_kill']
-            : ['proc_open', 'exec', 'shell_exec'];
+            ?['proc_open', 'exec', 'shell_exec', 'posix_kill']
+            :['proc_open', 'exec', 'shell_exec'];
 
         $missingFunctions = array_filter($requiredFunctions, static function (string $function): bool {
             // @phpstan-ignore-next-line the functions are check at runtime
@@ -72,6 +72,7 @@ class ProcessSpawnHandler
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @param string $sourceLocation Source file and line triggering the process
      * @param string|null $memoryLimit Custom memory limit for this specific process
+     * @param int $maxNestingLevel Maximum nesting level for this process
      * @return Process<TResult> The spawned process instance with communication streams
      * @throws \RuntimeException If process spawning fails
      */
@@ -83,20 +84,21 @@ class ProcessSpawnHandler
         bool $loggingEnabled,
         int $timeoutSeconds = 60,
         string $sourceLocation = 'unknown',
-        ?string $memoryLimit = null
+        ?string $memoryLimit = null,
+        int $maxNestingLevel = 5
     ): Process {
         $phpBinary = $this->systemUtils->getPhpBinary();
         $workerScript = $this->getWorkerPath('worker.php');
 
-        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript);
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string)$maxNestingLevel);
 
-        $descriptorSpec = [
+        $descriptorSpec =[
             0 => ['pipe', 'r'],
             1 => ['pipe', 'w'],
-            2 => ['pipe', 'w'],
+            2 =>['pipe', 'w'],
         ];
 
-        $pipes = [];
+        $pipes =[];
         $processResource = @proc_open($command, $descriptorSpec, $pipes);
 
         if (! \is_resource($processResource)) {
@@ -165,6 +167,7 @@ class ProcessSpawnHandler
      * @param bool $loggingEnabled Whether logging is enabled for this task
      * @param int $timeoutSeconds The maximum execution time in seconds. Use 0 for no limit.
      * @param string|null $memoryLimit Custom memory limit for this specific process
+     * @param int $maxNestingLevel Maximum nesting level for this process
      * @return BackgroundProcess The spawned background process instance
      * @throws \RuntimeException If process spawning fails
      */
@@ -175,22 +178,23 @@ class ProcessSpawnHandler
         CallbackSerializationManager $serializationManager,
         bool $loggingEnabled,
         int $timeoutSeconds = 600,
-        ?string $memoryLimit = null
+        ?string $memoryLimit = null,
+        int $maxNestingLevel = 5
     ): BackgroundProcess {
         $this->validateTimeout($timeoutSeconds);
 
         $phpBinary = $this->systemUtils->getPhpBinary();
         $workerScript = $this->getWorkerPath(scriptName: 'worker_background.php');
 
-        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript);
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string)$maxNestingLevel);
 
-        $descriptorSpec = [
+        $descriptorSpec =[
             0 => ['pipe', 'r'],
-            1 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
-            2 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
+            1 =>['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
+            2 =>['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
         ];
 
-        $pipes = [];
+        $pipes =[];
         $processResource = @proc_open($command, $descriptorSpec, $pipes);
 
         if (! \is_resource($processResource)) {
@@ -259,7 +263,7 @@ class ProcessSpawnHandler
         }
 
         /** @var array<string, mixed> $payloadData */
-        $payloadData = [
+        $payloadData =[
             'task_id' => $taskId,
             'status_file' => $statusFile,
             'serialized_callback' => $serializedCallback,
@@ -296,7 +300,7 @@ class ProcessSpawnHandler
             return $this->workerPathCache[$scriptName];
         }
 
-        $localPaths = [
+        $localPaths =[
             dirname(__DIR__) . '/' . $scriptName,
             dirname(__DIR__) . '/../' . $scriptName,
         ];
@@ -353,13 +357,6 @@ class ProcessSpawnHandler
 
         if ($timeoutSeconds === 0) {
             return;
-        }
-
-        if ($timeoutSeconds > 86400) {
-            throw new \InvalidArgumentException(
-                'Timeout cannot exceed 86400 seconds (24 hours). ' .
-                    'For tasks that need longer execution, consider breaking them into smaller chunks or use withoutTimeout().'
-            );
         }
     }
 }
