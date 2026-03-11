@@ -73,7 +73,7 @@ final class Process
             } catch (TimeoutException) {
                 $this->terminate();
 
-                throw new \RuntimeException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
+                throw new TimeoutException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
             } catch (\Throwable $e) {
                 $this->terminate();
 
@@ -288,7 +288,7 @@ final class Process
                 }
             }
 
-            throw new \RuntimeException('Timeout polling status file.');
+            throw new TimeoutException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
         });
     }
 
