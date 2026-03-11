@@ -29,7 +29,7 @@ describe('Worker Scripts Integration', function () {
         $stdoutFile = sys_get_temp_dir() . '/hibla_stream_stdout_' . uniqid() . '.log';
         $stderrFile = sys_get_temp_dir() . '/hibla_stream_stderr_' . uniqid() . '.log';
 
-        $descriptors =[
+        $descriptors = [
             0 => ['pipe', 'r'],
             1 => ['file', $stdoutFile, 'w'],
             2 => ['file', $stderrFile, 'w'],
@@ -50,9 +50,10 @@ describe('Worker Scripts Integration', function () {
         do {
             if (microtime(true) - $start > 10) {
                 proc_terminate($process);
+
                 throw new RuntimeException('Worker test timed out after 10 seconds');
             }
-            usleep(10000); 
+            usleep(10000);
             $status = proc_get_status($process);
         } while ($status['running']);
 
@@ -69,6 +70,7 @@ describe('Worker Scripts Integration', function () {
         }
 
         $output = str_replace("\r\n", "\n", (string)$output);
+
         return array_filter(explode("\n", $output));
     };
 
@@ -89,7 +91,7 @@ describe('Worker Scripts Integration', function () {
 
         $descriptors = [
             0 => ['pipe', 'r'],
-            1 =>['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
+            1 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
             2 => ['file', $stderrFile, 'w'],
         ];
 
@@ -108,6 +110,7 @@ describe('Worker Scripts Integration', function () {
         do {
             if (microtime(true) - $start > 10) {
                 proc_terminate($process);
+
                 throw new RuntimeException('Background worker test timed out after 10 seconds');
             }
             usleep(10000);

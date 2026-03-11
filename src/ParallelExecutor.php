@@ -18,7 +18,7 @@ use Hibla\Promise\Promise;
 final class ParallelExecutor
 {
     /**
-     *  @var array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null 
+     *  @var array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null
      */
     private ?array $bootstrap = null;
 
@@ -32,7 +32,9 @@ final class ParallelExecutor
 
     private ?int $maxNestingLevel = null;
 
-    public function __construct() {}
+    public function __construct()
+    {
+    }
 
     /**
      * Create a new instance of the ParallelExecutor.
@@ -54,7 +56,7 @@ final class ParallelExecutor
     {
         $clone = clone $this;
         $clone->timeoutSeconds = $seconds;
-        $clone->unlimitedTimeout = false; 
+        $clone->unlimitedTimeout = false;
 
         return $clone;
     }
@@ -134,7 +136,7 @@ final class ParallelExecutor
     public function withBootstrap(string $file, ?callable $callback = null): self
     {
         $clone = clone $this;
-        $clone->bootstrap =[
+        $clone->bootstrap = [
             'name' => 'custom',
             'bootstrap_file' => $file,
             'bootstrap_callback' => $callback,
@@ -190,7 +192,8 @@ final class ParallelExecutor
         return $process->getResult($finalTimeout)
             ->onCancel(static function () use ($source) {
                 $source->cancel();
-            });
+            })
+        ;
     }
 
     /**

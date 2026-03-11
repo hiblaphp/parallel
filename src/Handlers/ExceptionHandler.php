@@ -126,11 +126,9 @@ final class ExceptionHandler
             }
 
             $fileProp = $reflection->getProperty('file');
-            $fileProp->setAccessible(true);
             $fileProp->setValue($exception, $file);
 
             $lineProp = $reflection->getProperty('line');
-            $lineProp->setAccessible(true);
             $lineProp->setValue($exception, (int)$line);
         } catch (\Throwable) {
             // Ignore reflection errors
@@ -176,7 +174,6 @@ final class ExceptionHandler
             }
 
             $traceProp = $reflection->getProperty('trace');
-            $traceProp->setAccessible(true);
 
             $currentTrace = $traceProp->getValue($exception);
 

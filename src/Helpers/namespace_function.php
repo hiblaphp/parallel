@@ -52,7 +52,7 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  *     public static function process($data) {
  *         return await(parallel([self::class, 'heavyComputation']));
  *     }
- *     
+ *
  *     public static function heavyComputation() {
  *         return expensive_operation();
  *     }
@@ -122,7 +122,8 @@ function parallel(callable $task, int $timeout = 60): PromiseInterface
 {
     return ParallelExecutor::create()
         ->withTimeout($timeout)
-        ->run($task);
+        ->run($task)
+    ;
 }
 
 /**
@@ -252,7 +253,8 @@ function spawn(callable $task, int $timeout = 600): PromiseInterface
 {
     return ParallelExecutor::create()
         ->withTimeout($timeout)
-        ->spawn($task);
+        ->spawn($task)
+    ;
 }
 
 /**

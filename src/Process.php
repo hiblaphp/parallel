@@ -6,13 +6,12 @@ namespace Hibla\Parallel;
 
 use function Hibla\async;
 use function Hibla\await;
-use function Hibla\delay;
 
 use Hibla\Parallel\Handlers\ExceptionHandler;
 use Hibla\Promise\Exceptions\TimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
-
+use Hibla\Stream\Exceptions\StreamException;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
 
@@ -35,6 +34,7 @@ final class Process
      * @param PromiseReadableStreamInterface $stderr Standard error stream
      * @param string $statusFilePath Path to status file
      * @param bool $loggingEnabled Whether logging is enabled
+     * @param string $sourceLocation Source file and line that spawned this process
      */
     public function __construct(
         private readonly string $taskId,
@@ -44,25 +44,29 @@ final class Process
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr,
         private readonly string $statusFilePath,
+        //@phpstan-ignore-next-line
         private readonly bool $loggingEnabled = true,
         private readonly string $sourceLocation = 'unknown'
-    ) {}
+    ) {
+    }
 
     /**
-     * Get the result of the background process
+     * Get the result of the background process.
      *
-     * @param int $timeoutSeconds Maximum time to wait for result in seconds
+     * Reads structured JSON frames from the worker's stdout stream until a
+     * terminal frame (COMPLETED, ERROR, or TIMEOUT) is received. Uses
+     * socket-pair descriptors which properly support non-blocking I/O on all
+     * platforms including Windows, unlike anonymous pipes which ignore
+     * stream_set_blocking(false) at the kernel level.
+     *
+     * @param int $timeoutSeconds Maximum time to wait for result in seconds. 0 means no limit.
      * @return PromiseInterface<TResult> Promise that resolves with the task result
-     * @throws \RuntimeException If task times out or fails
+     * @throws \RuntimeException If the task times out, fails, or the stream closes unexpectedly
      */
     public function getResult(int $timeoutSeconds = 60): PromiseInterface
     {
         return async(function () use ($timeoutSeconds) {
-            if (PHP_OS_FAMILY === 'Windows') {
-                $resultPromise = $this->pollResultFromFile($timeoutSeconds);
-            } else {
-                $resultPromise = $this->readResultFromStream();
-            }
+            $resultPromise = $this->readResultFromStream();
 
             try {
                 if ($timeoutSeconds > 0) {
@@ -71,7 +75,10 @@ final class Process
 
                 return await($resultPromise);
             } catch (TimeoutException) {
-                $this->terminate();
+                $this->terminate(
+                    'TIMEOUT',
+                    "Task {$this->taskId} timed out after {$timeoutSeconds} seconds."
+                );
 
                 throw new TimeoutException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
             } catch (\Throwable $e) {
@@ -80,17 +87,20 @@ final class Process
                 throw $e;
             } finally {
                 $this->close();
-                $this->cleanupIfNeeded();
             }
         });
     }
 
     /**
-     * Terminate the process forcefully
+     * Terminate the process forcefully.
+     *
+     * Sends a force-kill signal to the worker process and any child processes
+     * it may have spawned. Safe to call multiple times — subsequent calls are
+     * no-ops once the process has already stopped.
      *
      * @return void
      */
-    public function terminate(): void
+    public function terminate(string $reason = 'CANCELLED', string $message = 'Task cancelled by parent process'): void
     {
         if (! $this->isSystemRunning) {
             return;
@@ -103,12 +113,17 @@ final class Process
                 exec("pkill -9 -P {$this->pid} 2>/dev/null; kill -9 {$this->pid} 2>/dev/null");
             }
         }
-        $this->updateStatusFile('CANCELLED', 'Task cancelled by parent process');
+
+        $this->updateStatusFile($reason, $message);
         $this->close();
     }
 
     /**
-     * Check if the process is currently running
+     * Check if the process is currently running.
+     *
+     * On Unix, uses proc_get_status() for an efficient in-process check.
+     * On Windows, falls back to tasklist since proc_get_status() is unreliable
+     * for processes opened with socket descriptors on that platform.
      *
      * @return bool True if process is running, false otherwise
      */
@@ -143,9 +158,9 @@ final class Process
     }
 
     /**
-     * Get the process ID
+     * Get the process ID.
      *
-     * @return int The process ID
+     * @return int The OS-level process ID of the worker
      */
     public function getPid(): int
     {
@@ -153,9 +168,9 @@ final class Process
     }
 
     /**
-     * Get the task ID
+     * Get the task ID.
      *
-     * @return string The task ID
+     * @return string The unique task identifier assigned at spawn time
      */
     public function getTaskId(): string
     {
@@ -163,47 +178,76 @@ final class Process
     }
 
     /**
-     * Read task result from stdout stream (Unix/Linux systems)
+     * Read the task result from the stdout socket stream.
      *
-     * @return PromiseInterface<TResult> Promise that resolves with task result
-     * @throws \RuntimeException If task fails or stream ends unexpectedly
+     * Processes structured JSON frames emitted by the worker:
+     *   - OUTPUT:    Forwards buffered echo/print output to the parent's stdout.
+     *   - COMPLETED: Deserializes the result and closes stdin to unblock the worker's drain.
+     *   - ERROR:     Reconstructs and rethrows the worker exception.
+     *   - TIMEOUT:   Throws a RuntimeException with the timeout message.
+     *
+     * A StreamException is caught and treated as socket EOF — on Windows the
+     * socket closure from the worker side surfaces as a StreamException rather
+     * than readLineAsync() returning null as it would on a clean pipe EOF.
+     * If a terminal frame was already processed before the exception this path
+     * is never reached.
+     *
+     * @return PromiseInterface<TResult> Promise that resolves with the task result
+     * @throws \RuntimeException If the task fails or the stream ends without a terminal frame
      */
     private function readResultFromStream(): PromiseInterface
     {
         return async(function () {
-            while (null !== ($line = await($this->stdout->readLineAsync()))) {
-                if (trim($line) === '') {
-                    continue;
-                }
-
-                $status = @json_decode($line, true);
-                if (! \is_array($status)) {
-                    continue;
-                }
-
-                $statusType = $status['status'] ?? '';
-
-                if ($statusType === 'OUTPUT') {
-                    $output = $status['output'] ?? '';
-                    if (\is_scalar($output) || (\is_object($output) && method_exists($output, '__toString'))) {
-                        echo $output;
+            try {
+                while (null !== ($line = await($this->stdout->readLineAsync()))) {
+                    if (trim($line) === '') {
+                        continue;
                     }
-                } elseif ($statusType === 'COMPLETED') {
-                    $result = $status['result'] ?? null;
 
-                    if (($status['result_serialized'] ?? false) === true && is_string($result)) {
-                        $decoded = base64_decode($result, true);
-                        if ($decoded !== false) {
-                            $result = unserialize($decoded);
+                    $status = @json_decode($line, true);
+                    if (! \is_array($status)) {
+                        continue;
+                    }
+
+                    $statusType = $status['status'] ?? '';
+
+                    if ($statusType === 'OUTPUT') {
+                        $output = $status['output'] ?? '';
+                        if (\is_scalar($output) || (\is_object($output) && method_exists($output, '__toString'))) {
+                            echo $output;
                         }
-                    }
+                    } elseif ($statusType === 'COMPLETED') {
+                        $result = $status['result'] ?? null;
 
-                    /** @var TResult */
-                    return $result;
-                } elseif ($statusType === 'ERROR') {
-                    /** @var array<string, mixed> $status */
-                    throw $this->createExceptionFromError($status);
+                        if (($status['result_serialized'] ?? false) === true && is_string($result)) {
+                            $decoded = base64_decode($result, true);
+                            if ($decoded !== false) {
+                                $result = unserialize($decoded);
+                            }
+                        }
+
+                        // Close stdin to unblock the worker's drain_and_wait() loop,
+                        $this->stdin->close();
+
+                        /** @var TResult */
+                        return $result;
+                    } elseif ($statusType === 'ERROR') {
+                        // Close stdin to unblock the worker's drain_and_wait() loop
+                        // before rethrowing so the worker doesn't hang on exit.
+                        $this->stdin->close();
+
+                        /** @var array<string, mixed> $status */
+                        throw $this->createExceptionFromError($status);
+                    } elseif ($statusType === 'TIMEOUT') {
+                        $this->stdin->close();
+
+                        throw new TimeoutException("Task {$this->taskId} timed out.");
+                    }
                 }
+            } catch (StreamException) {
+                // The worker closed its socket end before readLineAsync() returned
+                // null — this is normal on Windows when the process exits. If a
+                // terminal frame was already handled above we never reach this point.
             }
 
             throw new \RuntimeException("Process stream for task {$this->taskId} ended unexpectedly.");
@@ -211,92 +255,10 @@ final class Process
     }
 
     /**
-     * Poll for task result from status file (Windows systems).
+     * Reconstructs a Throwable from the structured error data sent by the worker.
      *
-     * This method implements a high-performance, low-CPU polling mechanism specifically for Windows,
-     * working around several limitations in PHP's underlying async and process control architecture on that OS.
-     *
-     * @param int $timeoutSeconds Maximum time to poll in seconds
-     * @return PromiseInterface<TResult> Promise that resolves with task result
-     * @throws \RuntimeException If task fails, is cancelled, or times out
-     */
-    private function pollResultFromFile(int $timeoutSeconds): PromiseInterface
-    {
-        return async(function () use ($timeoutSeconds) {
-            $startTime = hrtime(true);
-            $lastOutputPosition = 0;
-            $timeoutNs = $timeoutSeconds * 1_000_000_000;
-
-            while ($timeoutSeconds === 0 || (hrtime(true) - $startTime) < $timeoutNs) {
-                $loopStart = hrtime(true);
-
-                // Yield control back to event loop to allow other async tasks to execute.
-                await(delay(0));
-
-                if (! $this->isSystemRunning && ! file_exists($this->statusFilePath)) {
-                    throw new \RuntimeException("Task {$this->taskId} terminated without producing a status file.");
-                }
-
-                if (file_exists($this->statusFilePath)) {
-                    clearstatcache(true, $this->statusFilePath);
-                    $content = @file_get_contents($this->statusFilePath);
-
-                    if ($content !== false) {
-                        $status = json_decode($content, true);
-
-                        if (\is_array($status)) {
-                            if (isset($status['buffered_output']) && \is_string($status['buffered_output'])) {
-                                $output = $status['buffered_output'];
-                                if (\strlen($output) > $lastOutputPosition) {
-                                    echo substr($output, $lastOutputPosition);
-                                    $lastOutputPosition = \strlen($output);
-                                }
-                            }
-
-                            $currentStatus = $status['status'] ?? '';
-
-                            if ($currentStatus === 'COMPLETED') {
-                                $result = $status['result'] ?? null;
-                                if (($status['result_serialized'] ?? false) === true && \is_string($result)) {
-                                    $decoded = base64_decode($result, true);
-                                    if ($decoded !== false) {
-                                        $result = unserialize($decoded);
-                                    }
-                                }
-                                /** @var TResult */
-                                return $result;
-                            } elseif ($currentStatus === 'CANCELLED') {
-                                throw new \RuntimeException('Task cancelled.');
-                            } elseif ($currentStatus === 'ERROR') {
-                                /** @var array<string, mixed> $status */
-                                throw $this->createExceptionFromError($status);
-                            }
-                        }
-                    }
-                }
-
-                $elapsed = (hrtime(true) - $loopStart) / 1_000_000_000;
-                $targetLoopTime = 0.015;
-
-                if ($elapsed < $targetLoopTime) {
-                    // Sleep for the remaining time to meet the 15ms target.
-                    // This forces the PHP process to yield its time slice to the OS, dropping CPU to ~0%.
-                    $sleepMicroseconds = (int)(($targetLoopTime - $elapsed) * 1_000_000);
-                    if ($sleepMicroseconds > 0) {
-                        usleep($sleepMicroseconds);
-                    }
-                }
-            }
-
-            throw new TimeoutException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
-        });
-    }
-
-    /**
-     * Reconstructs an exception from the worker error data.
-     *
-     * @param array<string, mixed> $errorData
-     * @return \Throwable
+     * @param array<string, mixed> $errorData Decoded ERROR frame from the worker
+     * @return \Throwable The reconstructed exception
      */
     private function createExceptionFromError(array $errorData): \Throwable
     {
@@ -304,10 +266,14 @@ final class Process
     }
 
     /**
-     * Update the status file with new status and message
+     * Update the status file with a new status and message.
      *
-     * @param string $status Status value (COMPLETED, ERROR, CANCELLED, etc.)
-     * @param string $message Status message
+     * Reads the existing status file (if present) to preserve fields such as
+     * created_at and callback_type, then merges in the new status values and
+     * writes the result back atomically via file_put_contents.
+     *
+     * @param string $status Status value (e.g. COMPLETED, ERROR, CANCELLED)
+     * @param string $message Human-readable status message
      * @return void
      */
     private function updateStatusFile(string $status, string $message): void
@@ -326,7 +292,11 @@ final class Process
     }
 
     /**
-     * Close all streams and process resources
+     * Close all streams and the process resource handle.
+     *
+     * Safe to call multiple times — guarded by the isSystemRunning flag.
+     * Sets isSystemRunning to false so subsequent calls from terminate(),
+     * getResult()'s finally block, or __destruct() are no-ops.
      *
      * @return void
      */
@@ -348,22 +318,10 @@ final class Process
     }
 
     /**
-     * Cleanup status file and directory if logging is disabled
-     *
-     * @return void
+     * Forcefully terminate the process if it is still running when the object
+     * is garbage collected. This is a safety net for cases where getResult()
+     * was never awaited or the promise was abandoned.
      */
-    private function cleanupIfNeeded(): void
-    {
-        if (! $this->loggingEnabled && file_exists($this->statusFilePath)) {
-            @unlink($this->statusFilePath);
-            $dir = dirname($this->statusFilePath);
-            $scanResult = is_dir($dir) ? scandir($dir) : false;
-            if ($scanResult !== false && \count($scanResult) <= 2 && strpos($dir, sys_get_temp_dir()) === 0) {
-                @rmdir($dir);
-            }
-        }
-    }
-
     public function __destruct()
     {
         if ($this->isSystemRunning) {

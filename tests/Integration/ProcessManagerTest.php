@@ -42,7 +42,6 @@ describe('ProcessManager Real Integration', function () {
 
         $ref = new ReflectionClass($manager);
         $prop = $ref->getProperty('maxSpawnsPerSecond');
-        $prop->setAccessible(true);
 
         expect($prop->getValue($manager))->toBe(10);
     });
@@ -95,7 +94,7 @@ describe('ProcessManager Real Integration', function () {
         $proofFile = sys_get_temp_dir() . '/hibla_bg_proof_' . uniqid();
 
         $process = $manager->spawnBackgroundTask(function () use ($proofFile) {
-            usleep(10000);
+            usleep(500000);
             file_put_contents($proofFile, 'I ran successfully');
         });
 
@@ -137,7 +136,6 @@ describe('ProcessManager Real Integration', function () {
         expect($limitReached)
             ->toBeTrue("Failed to trigger Safety Limit. Expected exception after $limit spawns.")
         ;
-
     });
 
     it('respects the spawn limit defined in configuration', function () use (&$activeProcesses) {

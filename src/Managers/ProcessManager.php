@@ -182,7 +182,7 @@ class ProcessManager
     ): Process {
         $finalMaxNestingLevel = $maxNestingLevel ?? $this->maxNestingLevel;
         $this->validate($callback, $finalMaxNestingLevel);
-        
+
         $taskId = $this->systemUtils->generateTaskId();
 
         $sourceLocation = 'unknown';
@@ -264,9 +264,9 @@ class ProcessManager
 
         $finalMaxNestingLevel = $maxNestingLevel ?? $this->maxNestingLevel;
         $this->validate($callback, $finalMaxNestingLevel);
-        
+
         $taskId = $this->systemUtils->generateTaskId();
-        
+
         $logging = $loggingEnabled ?? $this->logger->isDetailedLoggingEnabled();
         $frameworkInfo = $customBootstrap ?? $this->frameworkInfo;
 
@@ -327,11 +327,11 @@ class ProcessManager
 
         if ($currentLevel >= $maxNestingLevel) {
             throw new \RuntimeException(
-                "Cannot spawn parallel task: Already at maximum nesting level " .
+                'Cannot spawn parallel task: Already at maximum nesting level ' .
                 "{$currentLevel}/{$maxNestingLevel}. " .
                 "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file, " .
-                "or use ->withMaxNestingLevel() on the ParallelExecutor. " .
-                "Maximum safe limit is 10 levels."
+                'or use ->withMaxNestingLevel() on the ParallelExecutor. ' .
+                'Maximum safe limit is 10 levels.'
             );
         }
     }

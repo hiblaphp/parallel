@@ -52,7 +52,7 @@ final readonly class TaskStatusHandler
         $statusFile = $this->logDir . DIRECTORY_SEPARATOR . $taskId . '.json';
 
         /** @var array<string, mixed> $initialStatus */
-        $initialStatus =[
+        $initialStatus = [
             'task_id' => $taskId,
             'status' => 'PENDING',
             'message' => 'Task created and queued for execution',

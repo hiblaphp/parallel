@@ -29,14 +29,14 @@ describe('ParallelExecutor Feature Test', function () {
 
     it('successfully executes a basic task', function () {
         $result = await(
-            ParallelExecutor::create()->run(fn() => 'Success')
+            ParallelExecutor::create()->run(fn () => 'Success')
         );
 
         expect($result)->toBe('Success');
     });
 
     it('respects a custom timeout and throws an exception', function () {
-        $task = fn() => sleep(5);
+        $task = fn () => sleep(5);
 
         await(
             ParallelExecutor::create()
@@ -51,6 +51,7 @@ describe('ParallelExecutor Feature Test', function () {
                 ->withoutTimeout()
                 ->run(function () {
                     usleep(100000);
+
                     return 'Completed';
                 })
         );
@@ -87,7 +88,7 @@ describe('ParallelExecutor Feature Test', function () {
         Config::setFromRoot('hibla_parallel', 'logging.enabled', false);
 
         $logDir = sys_get_temp_dir() . '/hibla_executor_test_logs';
-        if (!is_dir($logDir)) {
+        if (! is_dir($logDir)) {
             mkdir($logDir, 0777, true);
         }
 
@@ -96,7 +97,7 @@ describe('ParallelExecutor Feature Test', function () {
         $process = await(
             ParallelExecutor::create()
                 ->withLogging()
-                ->spawn(fn() => true)
+                ->spawn(fn () => true)
         );
 
         $statusFile = $logDir . DIRECTORY_SEPARATOR . $process->getTaskId() . '.json';
@@ -123,7 +124,7 @@ describe('ParallelExecutor Feature Test', function () {
         $process = await(
             ParallelExecutor::create()
                 ->withoutLogging()
-                ->spawn(fn() => true)
+                ->spawn(fn () => true)
         );
 
         $statusFile = $logDir . DIRECTORY_SEPARATOR . $process->getTaskId() . '.json';
@@ -142,7 +143,7 @@ describe('ParallelExecutor Feature Test', function () {
         $result = await(
             ParallelExecutor::create()
                 ->withBootstrap($bootstrapFile)
-                ->run(fn() => defined('BOOTSTRAP_EXECUTED') ? BOOTSTRAP_EXECUTED : 'no')
+                ->run(fn () => defined('BOOTSTRAP_EXECUTED') ? BOOTSTRAP_EXECUTED : 'no')
         );
 
         expect($result)->toBe('yes');
@@ -157,6 +158,7 @@ describe('ParallelExecutor Feature Test', function () {
         $getTimeout = function (ParallelExecutor $executor): int {
             $ref = new \ReflectionObject($executor);
             $prop = $ref->getProperty('timeoutSeconds');
+
             return $prop->getValue($executor);
         };
 
@@ -178,7 +180,7 @@ describe('ParallelExecutor Feature Test', function () {
         expect($process)->toBeInstanceOf(BackgroundProcess::class);
 
         $attempts = 0;
-        while (!file_exists($proofFile) && $attempts < 20) {
+        while (! file_exists($proofFile) && $attempts < 20) {
             usleep(100000);
             $attempts++;
         }
@@ -193,16 +195,15 @@ describe('ParallelExecutor Feature Test', function () {
         putenv('DEFER_NESTING_LEVEL=2');
 
         expect(
-            fn() =>
-            ParallelExecutor::create()
+            fn () => ParallelExecutor::create()
                 ->withMaxNestingLevel(2)
-                ->spawn(fn() => true)
+                ->spawn(fn () => true)
         )->toThrow(\RuntimeException::class, 'Already at maximum nesting level');
 
         $process = \Hibla\await(
             ParallelExecutor::create()
                 ->withMaxNestingLevel(3)
-                ->spawn(fn() => true)
+                ->spawn(fn () => true)
         );
 
         expect($process)->toBeInstanceOf(BackgroundProcess::class);
