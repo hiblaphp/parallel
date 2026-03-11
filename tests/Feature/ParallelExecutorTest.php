@@ -16,7 +16,7 @@ describe('ParallelExecutor Feature Test', function () {
 
     afterEach(function () use (&$tempFiles) {
         Config::reset();
-        
+
         ProcessManager::setGlobal(null);
 
         foreach ($tempFiles as $file) {
@@ -24,7 +24,7 @@ describe('ParallelExecutor Feature Test', function () {
                 @unlink($file);
             }
         }
-        $tempFiles =[];
+        $tempFiles = [];
     });
 
     it('successfully executes a basic task', function () {
@@ -75,7 +75,6 @@ describe('ParallelExecutor Feature Test', function () {
             ParallelExecutor::create()
                 ->withUnlimitedMemory()
                 ->run(function () {
-                    // Allocate a reasonable amount that would fail with the default limit
                     return strlen(str_repeat('a', 10 * 1024 * 1024));
                 })
         );
@@ -92,7 +91,6 @@ describe('ParallelExecutor Feature Test', function () {
             mkdir($logDir, 0777, true);
         }
 
-        // Configure BackgroundLogger to use our temp dir
         Config::setFromRoot('hibla_parallel', 'logging.directory', $logDir);
 
         $process = await(
@@ -104,9 +102,9 @@ describe('ParallelExecutor Feature Test', function () {
         $statusFile = $logDir . DIRECTORY_SEPARATOR . $process->getTaskId() . '.json';
         expect(file_exists($statusFile))->toBeTrue();
 
-        // Cleanup
         $process->terminate();
         @unlink($statusFile);
+        @unlink($logDir . DIRECTORY_SEPARATOR . 'background_tasks.log');
         @rmdir($logDir);
     });
 
@@ -126,7 +124,6 @@ describe('ParallelExecutor Feature Test', function () {
         $statusFile = $logDir . DIRECTORY_SEPARATOR . $process->getTaskId() . '.json';
         expect(file_exists($statusFile))->toBeFalse();
 
-        // Cleanup
         $process->terminate();
     });
 

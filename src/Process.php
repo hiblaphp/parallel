@@ -224,7 +224,7 @@ final class Process
             $pollInterval = 0.05;
             $lastOutputPosition = 0;
 
-            while ((microtime(true) - $startTime) < $timeoutSeconds) {
+            while ($timeoutSeconds === 0 || (microtime(true) - $startTime) < $timeoutSeconds) {
                 if (! $this->isSystemRunning && ! file_exists($this->statusFilePath)) {
                     throw new \RuntimeException("Task {$this->taskId} terminated without producing a status file.");
                 }

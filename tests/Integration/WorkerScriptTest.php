@@ -2,13 +2,7 @@
 
 declare(strict_types=1);
 
-use function Hibla\async;
-use function Hibla\await;
-
 use Hibla\Parallel\Utilities\SystemUtilities;
-use Hibla\Promise\Promise;
-use Hibla\Stream\PromiseReadableStream;
-use Hibla\Stream\PromiseWritableStream;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 
 describe('Worker Scripts Integration', function () {
@@ -20,101 +14,114 @@ describe('Worker Scripts Integration', function () {
     $utils = new SystemUtilities();
 
     $runStreamWorker = function (callable $task) use ($streamWorker, $autoloadPath, $serializer, $utils) {
-        return await(async(function () use ($task, $streamWorker, $autoloadPath, $serializer, $utils) {
-            $serializedCallback = $serializer->serializeCallback($task);
+        $serializedCallback = $serializer->serializeCallback($task);
 
-            $payload = json_encode([
-                'task_id' => 'test_stream_worker',
-                'status_file' => null,
-                'serialized_callback' => $serializedCallback,
-                'autoload_path' => $autoloadPath,
-                'logging_enabled' => false,
-                'timeout_seconds' => 5,
-                'memory_limit' => '128M',
-            ]);
+        $payload = json_encode([
+            'task_id' => 'test_stream_worker',
+            'status_file' => null,
+            'serialized_callback' => $serializedCallback,
+            'autoload_path' => $autoloadPath,
+            'logging_enabled' => false,
+            'timeout_seconds' => 5,
+            'memory_limit' => '128M',
+        ]);
 
-            $descriptors = [
-                0 => ['pipe', 'r'],
-                1 => ['pipe', 'w'],
-                2 => ['pipe', 'w'],
-            ];
+        $stdoutFile = sys_get_temp_dir() . '/hibla_stream_stdout_' . uniqid() . '.log';
+        $stderrFile = sys_get_temp_dir() . '/hibla_stream_stderr_' . uniqid() . '.log';
 
-            $phpBinary = $utils->getPhpBinary();
-            $process = proc_open(escapeshellarg($phpBinary) . ' ' . escapeshellarg($streamWorker), $descriptors, $pipes);
+        $descriptors =[
+            0 => ['pipe', 'r'],
+            1 => ['file', $stdoutFile, 'w'],
+            2 => ['file', $stderrFile, 'w'],
+        ];
 
-            if (! is_resource($process)) {
-                throw new RuntimeException('Failed to spawn worker');
+        $phpBinary = $utils->getPhpBinary();
+        $process = proc_open(escapeshellarg($phpBinary) . ' ' . escapeshellarg($streamWorker), $descriptors, $pipes);
+
+        if (! is_resource($process)) {
+            throw new RuntimeException('Failed to spawn worker');
+        }
+
+        fwrite($pipes[0], $payload . PHP_EOL);
+        fflush($pipes[0]);
+        fclose($pipes[0]);
+
+        $start = microtime(true);
+        do {
+            if (microtime(true) - $start > 10) {
+                proc_terminate($process);
+                throw new RuntimeException('Worker test timed out after 10 seconds');
             }
+            usleep(10000); 
+            $status = proc_get_status($process);
+        } while ($status['running']);
 
-            stream_set_blocking($pipes[0], false);
-            stream_set_blocking($pipes[1], false);
-            stream_set_blocking($pipes[2], false);
+        proc_close($process);
 
-            $stdin = new PromiseWritableStream($pipes[0]);
-            $stdout = new PromiseReadableStream($pipes[1]);
-            $stderr = new PromiseReadableStream($pipes[2]);
+        $output = file_get_contents($stdoutFile);
+        $errors = file_get_contents($stderrFile);
 
-            await($stdin->writeAsync($payload . PHP_EOL));
+        @unlink($stdoutFile);
+        @unlink($stderrFile);
 
-            [$output, $errors] = await(Promise::all([
-                $stdout->readAllAsync(),
-                $stderr->readAllAsync(),
-            ]));
+        if ($errors) {
+            throw new RuntimeException('Worker Error: ' . $errors);
+        }
 
-            $stdin->close();
-            proc_close($process);
-
-            if ($errors) {
-                throw new RuntimeException('Worker Error: ' . $errors);
-            }
-
-            return array_filter(explode("\n", (string)$output));
-        }));
+        $output = str_replace("\r\n", "\n", (string)$output);
+        return array_filter(explode("\n", $output));
     };
 
     $runBgWorker = function (callable $task, string $statusFile) use ($bgWorker, $autoloadPath, $serializer, $utils) {
-        await(async(function () use ($task, $statusFile, $bgWorker, $autoloadPath, $serializer, $utils) {
-            $serializedCallback = $serializer->serializeCallback($task);
+        $serializedCallback = $serializer->serializeCallback($task);
 
-            $payload = json_encode([
-                'task_id' => 'test_bg_worker',
-                'status_file' => $statusFile,
-                'serialized_callback' => $serializedCallback,
-                'autoload_path' => $autoloadPath,
-                'logging_enabled' => true,
-                'timeout_seconds' => 5,
-                'memory_limit' => '128M',
-            ]);
+        $payload = json_encode([
+            'task_id' => 'test_bg_worker',
+            'status_file' => $statusFile,
+            'serialized_callback' => $serializedCallback,
+            'autoload_path' => $autoloadPath,
+            'logging_enabled' => true,
+            'timeout_seconds' => 5,
+            'memory_limit' => '128M',
+        ]);
 
-            $descriptors = [
-                0 => ['pipe', 'r'],
-                1 => ['pipe', 'w'],
-                2 => ['pipe', 'w'],
-            ];
+        $stderrFile = sys_get_temp_dir() . '/hibla_bg_stderr_' . uniqid() . '.log';
 
-            $phpBinary = $utils->getPhpBinary();
-            $process = proc_open(escapeshellarg($phpBinary) . ' ' . escapeshellarg($bgWorker), $descriptors, $pipes);
+        $descriptors = [
+            0 => ['pipe', 'r'],
+            1 =>['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
+            2 => ['file', $stderrFile, 'w'],
+        ];
 
-            if (! is_resource($process)) {
-                throw new RuntimeException('Failed to spawn background worker');
+        $phpBinary = $utils->getPhpBinary();
+        $process = proc_open(escapeshellarg($phpBinary) . ' ' . escapeshellarg($bgWorker), $descriptors, $pipes);
+
+        if (! is_resource($process)) {
+            throw new RuntimeException('Failed to spawn background worker');
+        }
+
+        fwrite($pipes[0], $payload . PHP_EOL);
+        fflush($pipes[0]);
+        fclose($pipes[0]);
+
+        $start = microtime(true);
+        do {
+            if (microtime(true) - $start > 10) {
+                proc_terminate($process);
+                throw new RuntimeException('Background worker test timed out after 10 seconds');
             }
+            usleep(10000);
+            $status = proc_get_status($process);
+        } while ($status['running']);
 
-            fwrite($pipes[0], $payload . PHP_EOL);
-            fflush($pipes[0]);
-            fclose($pipes[0]);
+        proc_close($process);
 
-            stream_set_blocking($pipes[2], false);
-            $stderr = new PromiseReadableStream($pipes[2]);
+        $errors = file_get_contents($stderrFile);
+        @unlink($stderrFile);
 
-            $errors = await($stderr->readAllAsync());
-
-            fclose($pipes[1]);
-            proc_close($process);
-
-            if ($errors) {
-                throw new RuntimeException('Background Worker Error: ' . $errors);
-            }
-        }));
+        if ($errors) {
+            throw new RuntimeException('Background Worker Error: ' . $errors);
+        }
     };
 
     it('executes a closure and streams result back (worker.php)', function () use ($runStreamWorker) {
