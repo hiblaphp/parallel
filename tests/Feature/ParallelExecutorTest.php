@@ -103,8 +103,13 @@ describe('ParallelExecutor Feature Test', function () {
         expect(file_exists($statusFile))->toBeTrue();
 
         $process->terminate();
-        @unlink($statusFile);
-        @unlink($logDir . DIRECTORY_SEPARATOR . 'background_tasks.log');
+
+        foreach (glob($logDir . DIRECTORY_SEPARATOR . '*') as $file) {
+            if (is_file($file)) {
+                @unlink($file);
+            }
+        }
+
         @rmdir($logDir);
     });
 
