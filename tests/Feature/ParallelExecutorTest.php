@@ -7,6 +7,7 @@ namespace Tests\Feature;
 use function Hibla\await;
 
 use Hibla\Parallel\BackgroundProcess;
+use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\ParallelExecutor;
 use Rcalicdan\ConfigLoader\Config;
 
@@ -15,13 +16,15 @@ describe('ParallelExecutor Feature Test', function () {
 
     afterEach(function () use (&$tempFiles) {
         Config::reset();
+        
+        ProcessManager::setGlobal(null);
 
         foreach ($tempFiles as $file) {
             if (file_exists($file)) {
                 @unlink($file);
             }
         }
-        $tempFiles = [];
+        $tempFiles =[];
     });
 
     it('successfully executes a basic task', function () {
