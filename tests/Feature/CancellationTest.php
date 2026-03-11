@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 use Hibla\EventLoop\Loop;
 
+use function Hibla\await;
 use function Hibla\parallel;
+use function Hibla\spawn;
 
 use Hibla\Parallel\Managers\ProcessManager;
 use Rcalicdan\ConfigLoader\Config;
@@ -20,7 +22,7 @@ describe('Process Cancellation Integration', function () {
     it('cancels a running task via Loop::addTimer() and finishes early', function () {
         $start = microtime(true);
 
-        $promise = parallel(fn () => usleep(5000000));
+        $promise = parallel(fn() => usleep(5000000));
 
         Loop::addTimer(1.0, function () use ($promise) {
             $promise->cancel();
@@ -58,5 +60,22 @@ describe('Process Cancellation Integration', function () {
         if (file_exists($file)) {
             @unlink($file);
         }
+    });
+
+    it('can terminate a background process before it completes', function () {
+        $proofFile = sys_get_temp_dir() . '/proof_cancel_' . uniqid() . '.txt';
+
+        $process = await(spawn(function () use ($proofFile) {
+            sleep(5);
+            file_put_contents($proofFile, 'not_cancelled');
+        }));
+
+        usleep(1_000_000);
+        
+        $process->terminate();
+
+        sleep(2);
+
+        expect(file_exists($proofFile))->toBeFalse();
     });
 });

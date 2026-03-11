@@ -21,8 +21,7 @@ final class BackgroundProcess
         private readonly int $pid,
         private readonly ?string $statusFilePath = null,
         private readonly bool $loggingEnabled = false
-    ) {
-    }
+    ) {}
 
     /**
      * Terminate the background process forcefully
@@ -35,7 +34,7 @@ final class BackgroundProcess
             if (PHP_OS_FAMILY === 'Windows') {
                 exec("taskkill /F /T /PID {$this->pid} 2>nul");
             } else {
-                exec("kill -9 {$this->pid} 2>/dev/null");
+                exec("pkill -9 -P {$this->pid} 2>/dev/null; kill -9 {$this->pid} 2>/dev/null"); 
             }
         }
 
