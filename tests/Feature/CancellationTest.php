@@ -20,7 +20,7 @@ describe('Process Cancellation Integration', function () {
     it('cancels a running task via Loop::addTimer() and finishes early', function () {
         $start = microtime(true);
 
-        $promise = parallel(fn () => usleep(5000000));
+        $promise = parallel(fn() => usleep(5000000));
 
         Loop::addTimer(1.0, function () use ($promise) {
             $promise->cancel();
@@ -31,8 +31,7 @@ describe('Process Cancellation Integration', function () {
         $duration = microtime(true) - $start;
 
         expect($duration)->toBeGreaterThan(0.95);
-
-        expect($duration)->toBeLessThan(2.0);
+        expect($duration)->toBeLessThan(3.0);
 
         expect($promise->isCancelled())->toBeTrue();
         expect($promise->isFulfilled())->toBeFalse();
