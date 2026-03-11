@@ -211,7 +211,10 @@ final class Process
     }
 
     /**
-     * Poll for task result from status file (Windows systems)
+     * Poll for task result from status file (Windows systems).
+     *
+     * This method implements a high-performance, low-CPU polling mechanism specifically for Windows,
+     * working around several limitations in PHP's underlying async and process control architecture on that OS.
      *
      * @param int $timeoutSeconds Maximum time to poll in seconds
      * @return PromiseInterface<TResult> Promise that resolves with task result
@@ -220,66 +223,69 @@ final class Process
     private function pollResultFromFile(int $timeoutSeconds): PromiseInterface
     {
         return async(function () use ($timeoutSeconds) {
-            $startTime = microtime(true);
-            $pollInterval = 0.05;
+            $startTime = hrtime(true);
             $lastOutputPosition = 0;
+            $timeoutNs = $timeoutSeconds * 1_000_000_000;
 
-            while ($timeoutSeconds === 0 || (microtime(true) - $startTime) < $timeoutSeconds) {
+            while ($timeoutSeconds === 0 || (hrtime(true) - $startTime) < $timeoutNs) {
+                $loopStart = hrtime(true);
+
+                // Yield control back to event loop to allow other async tasks to execute.
+                await(delay(0));
+
                 if (! $this->isSystemRunning && ! file_exists($this->statusFilePath)) {
                     throw new \RuntimeException("Task {$this->taskId} terminated without producing a status file.");
                 }
 
-                if (! file_exists($this->statusFilePath)) {
-                    await(delay($pollInterval));
+                if (file_exists($this->statusFilePath)) {
+                    clearstatcache(true, $this->statusFilePath);
+                    $content = @file_get_contents($this->statusFilePath);
 
-                    continue;
-                }
+                    if ($content !== false) {
+                        $status = json_decode($content, true);
 
-                clearstatcache(true, $this->statusFilePath);
-                $content = @file_get_contents($this->statusFilePath);
-                if ($content === false) {
-                    await(delay($pollInterval));
+                        if (\is_array($status)) {
+                            if (isset($status['buffered_output']) && \is_string($status['buffered_output'])) {
+                                $output = $status['buffered_output'];
+                                if (\strlen($output) > $lastOutputPosition) {
+                                    echo substr($output, $lastOutputPosition);
+                                    $lastOutputPosition = \strlen($output);
+                                }
+                            }
 
-                    continue;
-                }
+                            $currentStatus = $status['status'] ?? '';
 
-                $status = json_decode($content, true);
-                if (! \is_array($status)) {
-                    await(delay($pollInterval));
-
-                    continue;
-                }
-
-                if (isset($status['buffered_output']) && \is_string($status['buffered_output'])) {
-                    $output = $status['buffered_output'];
-                    if (\strlen($output) > $lastOutputPosition) {
-                        echo substr($output, $lastOutputPosition);
-                        $lastOutputPosition = \strlen($output);
-                    }
-                }
-
-                $currentStatus = $status['status'] ?? '';
-
-                if ($currentStatus === 'COMPLETED') {
-                    $result = $status['result'] ?? null;
-
-                    if (($status['result_serialized'] ?? false) === true && \is_string($result)) {
-                        $decoded = base64_decode($result, true);
-                        if ($decoded !== false) {
-                            $result = unserialize($decoded);
+                            if ($currentStatus === 'COMPLETED') {
+                                $result = $status['result'] ?? null;
+                                if (($status['result_serialized'] ?? false) === true && \is_string($result)) {
+                                    $decoded = base64_decode($result, true);
+                                    if ($decoded !== false) {
+                                        $result = unserialize($decoded);
+                                    }
+                                }
+                                /** @var TResult */
+                                return $result;
+                            } elseif ($currentStatus === 'CANCELLED') {
+                                throw new \RuntimeException('Task cancelled.');
+                            } elseif ($currentStatus === 'ERROR') {
+                                /** @var array<string, mixed> $status */
+                                throw $this->createExceptionFromError($status);
+                            }
                         }
                     }
-
-                    /** @var TResult */
-                    return $result;
-                } elseif ($currentStatus === 'CANCELLED') {
-                    throw new \RuntimeException('Task cancelled.');
-                } elseif ($currentStatus === 'ERROR') {
-                    /** @var array<string, mixed> $status */
-                    throw $this->createExceptionFromError($status);
                 }
 
-                await(delay($pollInterval));
+                $elapsed = (hrtime(true) - $loopStart) / 1_000_000_000;
+                $targetLoopTime = 0.015;
+
+                if ($elapsed < $targetLoopTime) {
+                    // Sleep for the remaining time to meet the 15ms target.
+                    // This forces the PHP process to yield its time slice to the OS, dropping CPU to ~0%.
+                    $sleepMicroseconds = (int)(($targetLoopTime - $elapsed) * 1_000_000);
+                    if ($sleepMicroseconds > 0) {
+                        usleep($sleepMicroseconds);
+                    }
+                }
             }
 
             throw new \RuntimeException('Timeout polling status file.');
