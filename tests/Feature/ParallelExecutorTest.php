@@ -7,8 +7,11 @@ namespace Tests\Feature;
 use function Hibla\await;
 
 use Hibla\Parallel\BackgroundProcess;
+use Hibla\Parallel\Interfaces\NonPersistentExecutorInterface;
+use Hibla\Parallel\Interfaces\PersistentPoolExecutorInterface;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\ParallelExecutor;
+use Hibla\Promise\Promise;
 use Rcalicdan\ConfigLoader\Config;
 
 describe('ParallelExecutor Feature Test', function () {
@@ -16,7 +19,6 @@ describe('ParallelExecutor Feature Test', function () {
 
     afterEach(function () use (&$tempFiles) {
         Config::reset();
-
         ProcessManager::setGlobal(null);
 
         foreach ($tempFiles as $file) {
@@ -25,6 +27,11 @@ describe('ParallelExecutor Feature Test', function () {
             }
         }
         $tempFiles = [];
+    });
+
+    it('create() returns a NonPersistentExecutorInterface', function () {
+        $executor = ParallelExecutor::create();
+        expect($executor)->toBeInstanceOf(NonPersistentExecutorInterface::class);
     });
 
     it('successfully executes a basic task', function () {
@@ -36,12 +43,10 @@ describe('ParallelExecutor Feature Test', function () {
     });
 
     it('respects a custom timeout and throws an exception', function () {
-        $task = fn () => sleep(5);
-
         await(
             ParallelExecutor::create()
                 ->withTimeout(1)
-                ->run($task)
+                ->run(fn () => sleep(5))
         );
     })->throws(\RuntimeException::class, 'timed out after 1 seconds');
 
@@ -60,14 +65,10 @@ describe('ParallelExecutor Feature Test', function () {
     });
 
     it('fails when a custom memory limit is exceeded', function () {
-        $task = function () {
-            return str_repeat('a', 32 * 1024 * 1024);
-        };
-
         await(
             ParallelExecutor::create()
                 ->withMemoryLimit('16M')
-                ->run($task)
+                ->run(fn () => str_repeat('a', 32 * 1024 * 1024))
         );
     })->throws(\Exception::class, 'Allowed memory size');
 
@@ -75,16 +76,13 @@ describe('ParallelExecutor Feature Test', function () {
         $result = await(
             ParallelExecutor::create()
                 ->withUnlimitedMemory()
-                ->run(function () {
-                    return strlen(str_repeat('a', 10 * 1024 * 1024));
-                })
+                ->run(fn () => strlen(str_repeat('a', 10 * 1024 * 1024)))
         );
 
         expect($result)->toBe(10 * 1024 * 1024);
     });
 
     it('enables logging for a single task when global logging is off', function () {
-        // Disable logging globally
         Config::setFromRoot('hibla_parallel', 'logging.enabled', false);
 
         $logDir = sys_get_temp_dir() . '/hibla_executor_test_logs';
@@ -110,12 +108,10 @@ describe('ParallelExecutor Feature Test', function () {
                 @unlink($file);
             }
         }
-
         @rmdir($logDir);
     });
 
     it('disables logging for a single task when global logging is on', function () {
-        // Enable logging globally
         Config::setFromRoot('hibla_parallel', 'logging.enabled', true);
 
         $logDir = sys_get_temp_dir() . '/hibla_executor_test_logs';
@@ -137,8 +133,7 @@ describe('ParallelExecutor Feature Test', function () {
         $bootstrapFile = sys_get_temp_dir() . '/test_bootstrap_' . uniqid() . '.php';
         $tempFiles[] = $bootstrapFile;
 
-        $bootstrapCode = "<?php define('BOOTSTRAP_EXECUTED', 'yes');";
-        file_put_contents($bootstrapFile, $bootstrapCode);
+        file_put_contents($bootstrapFile, "<?php define('BOOTSTRAP_EXECUTED', 'yes');");
 
         $result = await(
             ParallelExecutor::create()
@@ -149,21 +144,21 @@ describe('ParallelExecutor Feature Test', function () {
         expect($result)->toBe('yes');
     });
 
-    it('is immutable when chaining configuration methods', function () {
-        $baseExecutor = ParallelExecutor::create()->withTimeout(1);
-        $derivedExecutor = $baseExecutor->withTimeout(10);
+    it('is immutable when chaining configuration methods on create()', function () {
+        $base = ParallelExecutor::create()->withTimeout(1);
+        $derived = $base->withTimeout(10);
 
-        expect($baseExecutor)->not->toBe($derivedExecutor);
+        expect($base)->not->toBe($derived);
 
-        $getTimeout = function (ParallelExecutor $executor): int {
+        $getTimeout = function (NonPersistentExecutorInterface $executor): int {
             $ref = new \ReflectionObject($executor);
             $prop = $ref->getProperty('timeoutSeconds');
 
             return $prop->getValue($executor);
         };
 
-        expect($getTimeout($baseExecutor))->toBe(1);
-        expect($getTimeout($derivedExecutor))->toBe(10);
+        expect($getTimeout($base))->toBe(1);
+        expect($getTimeout($derived))->toBe(10);
     });
 
     it('can spawn a background process', function () use (&$tempFiles) {
@@ -200,7 +195,7 @@ describe('ParallelExecutor Feature Test', function () {
                 ->spawn(fn () => true)
         )->toThrow(\RuntimeException::class, 'Already at maximum nesting level');
 
-        $process = \Hibla\await(
+        $process = await(
             ParallelExecutor::create()
                 ->withMaxNestingLevel(3)
                 ->spawn(fn () => true)
@@ -210,5 +205,144 @@ describe('ParallelExecutor Feature Test', function () {
         $process->terminate();
 
         putenv('DEFER_NESTING_LEVEL=');
+    });
+
+    it('createPersistentPool() returns a PersistentPoolExecutorInterface', function () {
+        $pool = ParallelExecutor::createPersistentPool(size: 2);
+        expect($pool)->toBeInstanceOf(PersistentPoolExecutorInterface::class);
+        $pool->shutdown();
+    });
+
+    it('createPersistentPool() throws when size is less than 1', function () {
+        expect(fn () => ParallelExecutor::createPersistentPool(size: 0))
+            ->toThrow(\InvalidArgumentException::class, 'Pool size must be at least 1')
+        ;
+    });
+
+    it('persistent pool executes a basic task', function () {
+        $pool = ParallelExecutor::createPersistentPool(size: 2);
+
+        $result = await($pool->run(fn () => 'hello from pool'));
+
+        expect($result)->toBe('hello from pool');
+        $pool->shutdown();
+    });
+
+    it('persistent pool runs concurrent tasks in parallel', function () {
+        $pool = ParallelExecutor::createPersistentPool(size: 3);
+
+        $results = await(Promise::all([
+            $pool->run(fn () => 'task-1'),
+            $pool->run(fn () => 'task-2'),
+            $pool->run(fn () => 'task-3'),
+        ]));
+
+        expect($results)->toBe(['task-1', 'task-2', 'task-3']);
+        $pool->shutdown();
+    });
+
+    it('persistent pool respects custom timeout', function () {
+        $pool = ParallelExecutor::createPersistentPool(size: 2)
+            ->withTimeout(1)
+        ;
+
+        await($pool->run(fn () => sleep(5)));
+    })->throws(\RuntimeException::class);
+
+    it('persistent pool respects custom memory limit', function () {
+        $pool = ParallelExecutor::createPersistentPool(size: 2)
+            ->withMemoryLimit('16M')
+        ;
+
+        await($pool->run(fn () => str_repeat('a', 32 * 1024 * 1024)));
+    })->throws(\Exception::class, 'Allowed memory size');
+
+    it('persistent pool reuses worker processes across batches', function () {
+        $pool = ParallelExecutor::createPersistentPool(size: 2);
+
+        $batch1 = await(Promise::all([
+            $pool->run(fn () => getmypid()),
+            $pool->run(fn () => getmypid()),
+        ]));
+
+        $batch2 = await(Promise::all([
+            $pool->run(fn () => getmypid()),
+            $pool->run(fn () => getmypid()),
+        ]));
+
+        $initialPids = array_unique($batch1);
+        $reusedPids = array_unique($batch2);
+        sort($initialPids);
+        sort($reusedPids);
+
+        expect($reusedPids)->toBe($initialPids);
+        $pool->shutdown();
+    });
+
+    it('persistent pool rejects tasks after shutdown', function () {
+        $pool = ParallelExecutor::createPersistentPool(size: 2);
+        $pool->shutdown();
+
+        $results = await(Promise::allSettled([
+            $pool->run(fn () => 'should not run'),
+        ]));
+
+        expect($results[0]->isRejected())->toBeTrue();
+        expect($results[0]->reason->getMessage())->toContain('shutdown');
+    });
+
+    it('persistent pool uses a custom bootstrap file', function () use (&$tempFiles) {
+        $bootstrapFile = sys_get_temp_dir() . '/test_pool_bootstrap_' . uniqid() . '.php';
+        $tempFiles[] = $bootstrapFile;
+
+        file_put_contents($bootstrapFile, "<?php define('POOL_BOOTSTRAP', 'pool_yes');");
+
+        $pool = ParallelExecutor::createPersistentPool(size: 2)
+            ->withBootstrap($bootstrapFile)
+        ;
+
+        $result = await($pool->run(
+            fn () => defined('POOL_BOOTSTRAP') ? POOL_BOOTSTRAP : 'no'
+        ));
+
+        expect($result)->toBe('pool_yes');
+        $pool->shutdown();
+    });
+
+    it('persistent pool is immutable when chaining configuration methods', function () {
+        $base = ParallelExecutor::createPersistentPool(size: 2)->withTimeout(5);
+        $derived = $base->withTimeout(30);
+
+        expect($base)->not->toBe($derived);
+
+        $getTimeout = function (PersistentPoolExecutorInterface $executor): int {
+            $ref = new \ReflectionObject($executor);
+            $prop = $ref->getProperty('timeoutSeconds');
+
+            return $prop->getValue($executor);
+        };
+
+        expect($getTimeout($base))->toBe(5);
+        expect($getTimeout($derived))->toBe(30);
+
+        $base->shutdown();
+        $derived->shutdown();
+    });
+
+    it('create() does not expose withPersistentPool() or createPersistentPool()', function () {
+        $executor = ParallelExecutor::create();
+
+        expect(method_exists($executor, 'withPersistentPool'))->toBeFalse();
+        expect(method_exists($executor, 'createPersistentPool'))->toBeFalse();
+        expect(method_exists($executor, 'shutdown'))->toBeFalse();
+    });
+
+    it('createPersistentPool() does not expose run() without pool context or spawn()', function () {
+        $pool = ParallelExecutor::createPersistentPool(size: 2);
+        expect(method_exists($pool, 'spawn'))->toBeFalse();
+        expect(method_exists($pool, 'withLogging'))->toBeFalse();
+        expect(method_exists($pool, 'withoutLogging'))->toBeFalse();
+
+        $pool->shutdown();
     });
 });
