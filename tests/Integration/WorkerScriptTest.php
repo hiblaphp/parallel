@@ -45,10 +45,11 @@ describe('Worker Scripts Integration', function () {
 
         $start = microtime(true);
         $timedOut = false;
-        
+
         do {
             if (microtime(true) - $start > 10) {
                 $timedOut = true;
+
                 break;
             }
             usleep(10000);
@@ -97,7 +98,7 @@ describe('Worker Scripts Integration', function () {
 
         $descriptors = [
             0 => ['pipe', 'r'],
-            1 =>['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
+            1 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
             2 => ['file', $stderrFile, 'w'],
         ];
 
@@ -114,10 +115,11 @@ describe('Worker Scripts Integration', function () {
 
         $start = microtime(true);
         $timedOut = false;
-        
+
         do {
             if (microtime(true) - $start > 10) {
                 $timedOut = true;
+
                 break;
             }
             usleep(10000);

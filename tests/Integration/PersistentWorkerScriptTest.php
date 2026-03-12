@@ -21,12 +21,12 @@ describe('Persistent Worker Script Integration', function () {
         $stdoutFile = sys_get_temp_dir() . '/hibla_persistent_stdout_' . uniqid() . '.log';
 
         $descriptors = [
-            0 =>['pipe', 'r'],
+            0 => ['pipe', 'r'],
             1 => ['file', $stdoutFile, 'w'],
-            2 =>['pipe', 'w'],
+            2 => ['pipe', 'w'],
         ];
 
-        $pipes =[];
+        $pipes = [];
         $process = proc_open(escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript), $descriptors, $pipes);
 
         if (! is_resource($process)) {
@@ -101,7 +101,7 @@ describe('Persistent Worker Script Integration', function () {
                 }
                 $status = $data['status'] ?? '';
                 if (in_array($status, ['COMPLETED', 'ERROR', 'CRASHED', 'READY'], true)) {
-                    $frames =[];
+                    $frames = [];
                     foreach ($lines as $l) {
                         $d = json_decode($l, true);
                         if (is_array($d)) {
@@ -160,7 +160,8 @@ describe('Persistent Worker Script Integration', function () {
         $teardown($process, $pipes, $stdoutFile);
     });
 
-    it('executes a task and returns COMPLETED with result', function () use ($bootWorker, $submitTask, $teardown) {[$process, $pipes, $stdoutFile] = $bootWorker();
+    it('executes a task and returns COMPLETED with result', function () use ($bootWorker, $submitTask, $teardown) {
+        [$process, $pipes, $stdoutFile] = $bootWorker();
 
         $frames = $submitTask($process, $pipes, $stdoutFile, fn () => 'Hello from persistent worker', 'task-completed');
         $terminal = array_values(array_filter($frames, fn ($f) => ($f['status'] ?? '') === 'COMPLETED'));
@@ -171,7 +172,8 @@ describe('Persistent Worker Script Integration', function () {
         $teardown($process, $pipes, $stdoutFile);
     });
 
-    it('captures echoed output as OUTPUT frames', function () use ($bootWorker, $submitTask, $teardown) {[$process, $pipes, $stdoutFile] = $bootWorker();
+    it('captures echoed output as OUTPUT frames', function () use ($bootWorker, $submitTask, $teardown) {
+        [$process, $pipes, $stdoutFile] = $bootWorker();
 
         $frames = $submitTask($process, $pipes, $stdoutFile, function () {
             echo 'line one';
@@ -242,7 +244,8 @@ describe('Persistent Worker Script Integration', function () {
         $teardown($process, $pipes, $stdoutFile);
     });
 
-    it('sends CRASHED frame when worker calls exit()', function () use ($bootWorker, $submitTask, $teardown) {[$process, $pipes, $stdoutFile] = $bootWorker();
+    it('sends CRASHED frame when worker calls exit()', function () use ($bootWorker, $submitTask, $teardown) {
+        [$process, $pipes, $stdoutFile] = $bootWorker();
 
         $frames = $submitTask($process, $pipes, $stdoutFile, function () {
             exit(1);
@@ -257,7 +260,8 @@ describe('Persistent Worker Script Integration', function () {
         $teardown($process, $pipes, $stdoutFile);
     });
 
-    it('sends ERROR frame for catchable fatal (calling undefined function)', function () use ($bootWorker, $submitTask, $teardown) {[$process, $pipes, $stdoutFile] = $bootWorker();
+    it('sends ERROR frame for catchable fatal (calling undefined function)', function () use ($bootWorker, $submitTask, $teardown) {
+        [$process, $pipes, $stdoutFile] = $bootWorker();
 
         $frames = $submitTask($process, $pipes, $stdoutFile, function () {
             /** @phpstan-ignore-next-line */
@@ -291,7 +295,7 @@ describe('Persistent Worker Script Integration', function () {
     it('runs multiple sequential tasks on the same worker without state leaking', function () use ($bootWorker, $submitTask, $teardown) {
         [$process, $pipes, $stdoutFile] = $bootWorker();
 
-        $results =[];
+        $results = [];
         for ($i = 1; $i <= 4; $i++) {
             $n = $i;
             $frames = $submitTask($process, $pipes, $stdoutFile, function () use ($n) {

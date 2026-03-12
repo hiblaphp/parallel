@@ -287,7 +287,7 @@ class ProcessSpawnHandler
         $phpBinary = $this->systemUtils->getPhpBinary();
         $workerScript = $this->getWorkerPath('worker_persistent.php');
 
-        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript);
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string)$maxNestingLevel);
 
         $descriptorSpec = PHP_OS_FAMILY === 'Windows'
             ? [

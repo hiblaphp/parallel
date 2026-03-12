@@ -17,7 +17,7 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  * Nesting `parallel()` calls using arrow functions / short closures (`fn() => ...`)
  * causes AST serialization corruption in the underlying Opis Closure library.
  * Because short closures automatically capture the entire parent scope by value,
- * nesting them corrupts the serialized payload. This causes the child worker to 
+ * nesting them corrupts the serialized payload. This causes the child worker to
  * mistakenly re-evaluate the parent call, triggering an infinite FORK BOMB.
  *
  * The library AUTOMATICALLY DETECTS and THROWS EXCEPTIONS to prevent this,
@@ -64,7 +64,8 @@ function parallel(callable $task, int $timeout = 60): PromiseInterface
 {
     return ParallelExecutor::create()
         ->withTimeout($timeout)
-        ->run($task);
+        ->run($task)
+    ;
 }
 
 /**
@@ -132,7 +133,8 @@ function spawn(callable $task, int $timeout = 600): PromiseInterface
 {
     return ParallelExecutor::create()
         ->withTimeout($timeout)
-        ->spawn($task);
+        ->spawn($task)
+    ;
 }
 
 /**

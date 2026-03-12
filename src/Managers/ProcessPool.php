@@ -30,6 +30,11 @@ final class ProcessPool
      */
     private array $allWorkers = [];
 
+    /**
+     * @var array<int, array<string, Promise<mixed>>> Worker ID -> Task ID -> Promise
+     */
+    private array $activeTasks = [];
+
     private bool $isShutdown = false;
 
     /**
@@ -43,6 +48,18 @@ final class ProcessPool
         private readonly ?string $memoryLimit,
         private readonly int $maxNestingLevel
     ) {
+        // Pre-flight check: prevent pool creation if exceeds the max nesting level
+        $currentLevel = (int)((($env = getenv('DEFER_NESTING_LEVEL')) !== false) ? $env : 0);
+
+        if ($currentLevel >= $this->maxNestingLevel) {
+            throw new \RuntimeException(
+                'Cannot create persistent pool: Already at maximum nesting level ' .
+                    "{$currentLevel}/{$this->maxNestingLevel}. " .
+                    "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file. " .
+                    'Maximum safe limit is 10 levels.'
+            );
+        }
+
         $this->idleWorkers = new SplQueue();
         $this->taskQueue = new SplQueue();
         $this->initialize();
@@ -100,7 +117,40 @@ final class ProcessPool
             $promise->reject(new \RuntimeException('Pool was shut down before the task could be processed.'));
         }
 
+        foreach ($this->activeTasks as $workerId => $tasks) {
+            foreach ($tasks as $promise) {
+                $promise->reject(new \RuntimeException('Pool was shut down before the task completed.'));
+            }
+        }
+
         $this->allWorkers = [];
+        $this->activeTasks = [];
+    }
+
+    /**
+     * Halts the pool entirely if a worker fails to boot (e.g. syntax error, nesting limit).
+     */
+    private function shutdownDueToFatalError(\Throwable $e): void
+    {
+        $this->isShutdown = true;
+
+        foreach ($this->allWorkers as $worker) {
+            $worker->terminate();
+        }
+        $this->allWorkers = [];
+
+        while (! $this->taskQueue->isEmpty()) {
+            [, $promise] = $this->taskQueue->dequeue();
+            /** @var Promise<mixed> $promise */
+            $promise->reject($e);
+        }
+
+        foreach ($this->activeTasks as $workerId => $tasks) {
+            foreach ($tasks as $promise) {
+                $promise->reject($e);
+            }
+        }
+        $this->activeTasks = [];
     }
 
     private function spawnWorker(): void
@@ -112,9 +162,14 @@ final class ProcessPool
             $this->maxNestingLevel
         );
 
-        $this->allWorkers[spl_object_id($process)] = $process;
+        $workerId = spl_object_id($process);
+        $this->allWorkers[$workerId] = $process;
+        $this->activeTasks[$workerId] = [];
+        $workerIsReady = false;
 
-        $onReady = function (PersistentProcess $worker): void {
+        $onReady = function (PersistentProcess $worker) use (&$workerIsReady): void {
+            $workerIsReady = true;
+
             if ($this->isShutdown) {
                 $worker->terminate();
                 unset($this->allWorkers[spl_object_id($worker)]);
@@ -132,10 +187,29 @@ final class ProcessPool
             }
         };
 
-        $onCrash = function (PersistentProcess $worker): void {
-            unset($this->allWorkers[spl_object_id($worker)]);
+        $onCrash = function (PersistentProcess $worker) use (&$workerIsReady): void {
+            $wId = spl_object_id($worker);
+            unset($this->allWorkers[$wId]);
+
+            // Check if the worker had any active tasks before trying to access them.
+            if (isset($this->activeTasks[$wId]) && \count($this->activeTasks[$wId]) > 0) {
+                foreach ($this->activeTasks[$wId] as $pendingPromise) {
+                    $pendingPromise->reject(new \RuntimeException('Worker crashed or was forcefully closed while executing task.'));
+                }
+            }
+
+            // It's also good practice to unset the key after you're done, regardless of whether it was empty or not.
+            unset($this->activeTasks[$wId]);
 
             if ($this->isShutdown) {
+                return;
+            }
+
+            if (! $workerIsReady) {
+                $this->shutdownDueToFatalError(
+                    new \RuntimeException('A persistent worker crashed during boot. Check logs for fatal errors (e.g., nesting limits or syntax errors).')
+                );
+
                 return;
             }
 
@@ -156,18 +230,32 @@ final class ProcessPool
     {
         $taskId = bin2hex(random_bytes(16));
 
+        try {
+            $serializedTask = $this->serializer->serializeCallback($task);
+        } catch (\Throwable $e) {
+            // Rejects cleanly if you accidentally pass $pool via "use ($pool)" to a nested closure
+            $promise->reject(new \RuntimeException('Failed to serialize task payload: ' . $e->getMessage(), 0, $e));
+            $this->idleWorkers->enqueue($worker);
+
+            return;
+        }
+
         $payload = [
             'task_id' => $taskId,
-            'serialized_callback' => $this->serializer->serializeCallback($task),
+            'serialized_callback' => $serializedTask,
         ];
 
         $jsonPayload = json_encode($payload, JSON_UNESCAPED_SLASHES);
 
         if ($jsonPayload === false) {
             $promise->reject(new \RuntimeException('Failed to encode task payload: ' . json_last_error_msg()));
+            $this->idleWorkers->enqueue($worker);
 
             return;
         }
+
+        $workerId = spl_object_id($worker);
+        $this->activeTasks[$workerId][$taskId] = $promise;
 
         $executionPromise = $worker->submitTask($taskId, $jsonPayload);
 
@@ -176,8 +264,14 @@ final class ProcessPool
         }
 
         $executionPromise->then(
-            $promise->resolve(...),
-            $promise->reject(...)
+            function ($value) use ($workerId, $taskId, $promise) {
+                unset($this->activeTasks[$workerId][$taskId]);
+                $promise->resolve($value);
+            },
+            function ($reason) use ($workerId, $taskId, $promise) {
+                unset($this->activeTasks[$workerId][$taskId]);
+                $promise->reject($reason);
+            }
         );
     }
 }
