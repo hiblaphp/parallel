@@ -25,26 +25,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Logging Configuration
-    |--------------------------------------------------------------------------
-    |
-    | 'enabled':   Controls whether detailed logs are written for each task.
-    |              Set to `false` in production for better performance if you
-    |              don't need detailed per-task logs.
-    |
-    | 'directory': The absolute path to store logs and status files.
-    |              If null, a system temporary directory will be used.
-    |
-    | .env variable: HIBLA_PARALLEL_LOGGING_ENABLED (true|false)
-    |
-    */
-    'logging' => [
-        'enabled' => env('HIBLA_PARALLEL_LOGGING_ENABLED', false),
-        'directory' => null,
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
     | Background Process Settings
     |--------------------------------------------------------------------------
     |
