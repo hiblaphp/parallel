@@ -198,7 +198,6 @@ final class ProcessPool
                 }
             }
 
-            // It's also good practice to unset the key after you're done, regardless of whether it was empty or not.
             unset($this->activeTasks[$wId]);
 
             if ($this->isShutdown) {
@@ -233,7 +232,7 @@ final class ProcessPool
         try {
             $serializedTask = $this->serializer->serializeCallback($task);
         } catch (\Throwable $e) {
-            // Rejects cleanly if you accidentally pass $pool via "use ($pool)" to a nested closure
+            // Rejects cleanly if the user pass $pool via "use ($pool)" to a nested closure
             $promise->reject(new \RuntimeException('Failed to serialize task payload: ' . $e->getMessage(), 0, $e));
             $this->idleWorkers->enqueue($worker);
 
