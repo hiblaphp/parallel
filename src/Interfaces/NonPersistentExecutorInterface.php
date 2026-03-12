@@ -24,8 +24,4 @@ interface NonPersistentExecutorInterface extends ExecutorConfigInterface
      * @return PromiseInterface<BackgroundProcess>
      */
     public function spawn(callable $task): PromiseInterface;
-
-    public function withLogging(): static;
-
-    public function withoutLogging(): static;
 }

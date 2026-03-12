@@ -133,7 +133,6 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
                 size: $this->size,
                 spawnHandler: $manager->getSpawnHandler(),
                 serializer: $manager->getSerializer(),
-                systemUtils: $manager->getSystemUtils(),
                 frameworkInfo: $this->bootstrap ?? $manager->getFrameworkBootstrap(),
                 memoryLimit: $this->memoryLimit,
                 maxNestingLevel: $this->maxNestingLevel ?? $manager->getMaxNestingLevel(),

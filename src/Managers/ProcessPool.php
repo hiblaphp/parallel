@@ -6,7 +6,6 @@ namespace Hibla\Parallel\Managers;
 
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\PersistentProcess;
-use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Promise\Promise;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 use SplQueue;
@@ -40,7 +39,6 @@ final class ProcessPool
         private readonly int $size,
         private readonly ProcessSpawnHandler $spawnHandler,
         private readonly CallbackSerializationManager $serializer,
-        private readonly SystemUtilities $systemUtils,
         private readonly array $frameworkInfo,
         private readonly ?string $memoryLimit,
         private readonly int $maxNestingLevel
@@ -156,7 +154,7 @@ final class ProcessPool
      */
     private function dispatch(PersistentProcess $worker, callable $task, Promise $promise, int $timeoutSeconds): void
     {
-        $taskId = $this->systemUtils->generateTaskId();
+        $taskId = bin2hex(random_bytes(16));
 
         $payload = [
             'task_id' => $taskId,

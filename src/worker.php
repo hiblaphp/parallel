@@ -74,14 +74,17 @@ $stdin = fopen('php://stdin',  'r');
 $stdout = fopen('php://stdout', 'w');
 $stderr = fopen('php://stderr', 'w');
 
-stream_set_blocking($stdin,  false);
+// Keep stdin blocking for the initial payload read to reliably wait for the
+// parent to write the task payload. On Linux, anonymous pipes in non-blocking
+// mode return false immediately if no data is ready yet, creating a race
+// condition. Blocking mode eliminates this without requiring a polling loop.
+// stdout and stderr remain non-blocking so the event loop is never starved.
+stream_set_blocking($stdin,  true);
 stream_set_blocking($stdout, false);
 stream_set_blocking($stderr, false);
 
 $autoloadPath = null;
 $taskId = 'unknown';
-$statusFile = null;
-$loggingEnabled = false;
 $startTime = microtime(true);
 $serializationManager = null;
 
@@ -101,60 +104,6 @@ function write_status_to_stdout(array $data): void
         @fwrite($stdout, $json . PHP_EOL);
         @fflush($stdout);
     }
-}
-
-/**
- * Writes task status to the JSON status file when logging is enabled.
- *
- * This is purely for observability — it has no role in the stream-based
- * result transport. Reads the existing file first to preserve immutable
- * fields like created_at and callback_type before merging in new values.
- *
- * @param string $status    Status value (e.g. RUNNING, COMPLETED, ERROR)
- * @param string $message   Human-readable status message
- * @param array  $extra     Additional fields to merge into the status document
- */
-function update_status_file(string $status, string $message, array $extra = []): void
-{
-    global $statusFile, $loggingEnabled, $startTime, $taskId;
-
-    if (! $loggingEnabled || $statusFile === null) {
-        return;
-    }
-
-    $existing = [];
-    if (file_exists($statusFile)) {
-        $content = @file_get_contents($statusFile);
-        if ($content !== false) {
-            $existing = json_decode($content, true) ?: [];
-        }
-    }
-
-    $preservedFields = [
-        'created_at' => $existing['created_at'] ?? date('Y-m-d H:i:s'),
-        'callback_type' => $existing['callback_type'] ?? null,
-    ];
-
-    $statusData = array_merge(
-        $preservedFields,
-        [
-            'task_id' => $taskId,
-            'status' => $status,
-            'message' => $message,
-            'pid' => getmypid(),
-            'timestamp' => time(),
-            'duration' => microtime(true) - $startTime,
-            'memory_usage' => memory_get_usage(true),
-            'memory_peak' => memory_get_peak_usage(true),
-            'updated_at' => date('Y-m-d H:i:s'),
-        ],
-        $extra
-    );
-
-    @file_put_contents(
-        $statusFile,
-        json_encode($statusData, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT)
-    );
 }
 
 /**
@@ -206,7 +155,6 @@ function stream_output_handler(string $buffer, int $phase): string
             'message' => 'Task exceeded maximum execution time (detected in output stream)',
             'output' => $buffer,
         ]);
-        update_status_file('TIMEOUT', 'Task exceeded maximum execution time (detected in output stream)');
         drain_and_wait();
 
         return '';
@@ -241,21 +189,15 @@ function containsObjects(mixed $value): bool
 // --- Main Worker Loop ---
 
 $taskProcessed = false;
-$maxWaitTime = 5;
-$waitStart = microtime(true);
 
 while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
+    // Blocking stdin ensures fgets() waits for the parent to write the payload
+    // rather than returning false immediately on an empty pipe (Linux behaviour).
     $payload = fgets($stdin);
 
     if ($payload === false || trim($payload) === '') {
-        if ((microtime(true) - $waitStart) > $maxWaitTime) {
-            fwrite($stderr, "Worker timeout: No task received within {$maxWaitTime} seconds.\n");
-
-            break;
-        }
-        usleep(10000);
-
-        continue;
+        // EOF or pipe closed — nothing to process.
+        break;
     }
 
     // ── Mark task as in-flight so the shutdown function knows to send an
@@ -275,8 +217,6 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
         }
 
         $taskId = $taskData['task_id'] ?? 'unknown';
-        $statusFile = $taskData['status_file'] ?? null;
-        $loggingEnabled = (bool)($taskData['logging_enabled'] ?? false);
         $timeoutSeconds = $taskData['timeout_seconds'] ?? 60;
         $memoryLimit = $taskData['memory_limit'] ?? '512M';
 
@@ -294,7 +234,6 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
                 $message = 'Task exceeded maximum execution time (wall-clock timeout)';
 
                 write_status_to_stdout(['status' => 'TIMEOUT', 'message' => $message]);
-                update_status_file('TIMEOUT', $message);
 
                 $terminalFrameWritten = true; // prevent double-write in shutdown
 
@@ -330,8 +269,6 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
             }
         }
 
-        update_status_file('RUNNING', 'Worker process started execution for task: ' . $taskId);
-
         try {
             $callback = $serializationManager->unserializeCallback($taskData['serialized_callback']);
         } catch (Throwable $e) {
@@ -359,7 +296,6 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
         write_status_to_stdout($finalStatus);
         $terminalFrameWritten = true; // ← clean exit, shutdown function should no-op
 
-        update_status_file('COMPLETED', 'Task completed successfully.', $finalStatus);
         drain_and_wait();
 
     } catch (Throwable $e) {
@@ -383,7 +319,6 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
         write_status_to_stdout($errorStatus);
         $terminalFrameWritten = true; // ← handled error, shutdown function should no-op
 
-        update_status_file('ERROR', $e->getMessage(), $errorStatus);
         drain_and_wait();
 
     } finally {

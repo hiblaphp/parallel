@@ -25,10 +25,14 @@ $stdin = fopen('php://stdin',  'r');
 $stdout = fopen('php://stdout', 'w');
 $stderr = fopen('php://stderr', 'w');
 
-stream_set_blocking($stdin,  false);
+// Keep stdin blocking throughout. For the boot payload read this eliminates
+// the Linux race condition where non-blocking fgets() returns false immediately
+// on an empty pipe. For the task loop fgets() this is also safe — the event
+// loop only runs during task execution inside await(), never between tasks,
+// so there is nothing to starve while waiting for the next payload.
+stream_set_blocking($stdin,  true);
 stream_set_blocking($stdout, false);
 stream_set_blocking($stderr, false);
-
 function write_frame(array $data): void
 {
     global $stdout;

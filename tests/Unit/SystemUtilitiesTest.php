@@ -6,27 +6,6 @@ use Hibla\Parallel\Utilities\SystemUtilities;
 use Rcalicdan\ConfigLoader\Config;
 
 describe('SystemUtilities', function () {
-    describe('generateTaskId', function () {
-        it('generates a task id with the correct format', function () {
-            $utils = new SystemUtilities();
-            $taskId = $utils->generateTaskId();
-
-            expect($taskId)
-                ->toBeString()
-                ->toMatch('/^defer_\d{8}_\d{6}_[0-9a-f.]+$/')
-            ;
-        });
-
-        it('generates unique ids on subsequent calls', function () {
-            $utils = new SystemUtilities();
-            $id1 = $utils->generateTaskId();
-            usleep(10);
-            $id2 = $utils->generateTaskId();
-
-            expect($id1)->not->toBe($id2);
-        });
-    });
-
     describe('getPhpBinary', function () {
         it('returns a valid executable path', function () {
             $utils = new SystemUtilities();

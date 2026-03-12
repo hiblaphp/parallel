@@ -26,26 +26,19 @@ final class Process
     private bool $isSystemRunning = true;
 
     /**
-     * @param string $taskId Unique identifier for the task
      * @param int $pid Process ID
      * @param resource $processResource Process resource handle
      * @param PromiseWritableStreamInterface $stdin Standard input stream
      * @param PromiseReadableStreamInterface $stdout Standard output stream
      * @param PromiseReadableStreamInterface $stderr Standard error stream
-     * @param string $statusFilePath Path to status file
-     * @param bool $loggingEnabled Whether logging is enabled
      * @param string $sourceLocation Source file and line that spawned this process
      */
     public function __construct(
-        private readonly string $taskId,
         private readonly int $pid,
         private readonly mixed $processResource,
         private readonly PromiseWritableStreamInterface $stdin,
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr,
-        private readonly string $statusFilePath,
-        //@phpstan-ignore-next-line
-        private readonly bool $loggingEnabled = true,
         private readonly string $sourceLocation = 'unknown'
     ) {
     }
@@ -75,12 +68,9 @@ final class Process
 
                 return await($resultPromise);
             } catch (TimeoutException) {
-                $this->terminate(
-                    'TIMEOUT',
-                    "Task {$this->taskId} timed out after {$timeoutSeconds} seconds."
-                );
+                $this->terminate();
 
-                throw new TimeoutException("Task {$this->taskId} timed out after {$timeoutSeconds} seconds.");
+                throw new TimeoutException("Process PID {$this->pid} timed out after {$timeoutSeconds} seconds.");
             } catch (\Throwable $e) {
                 $this->terminate();
 
@@ -100,7 +90,7 @@ final class Process
      *
      * @return void
      */
-    public function terminate(string $reason = 'CANCELLED', string $message = 'Task cancelled by parent process'): void
+    public function terminate(): void
     {
         if (! $this->isSystemRunning) {
             return;
@@ -114,7 +104,6 @@ final class Process
             }
         }
 
-        $this->updateStatusFile($reason, $message);
         $this->close();
     }
 
@@ -168,23 +157,13 @@ final class Process
     }
 
     /**
-     * Get the task ID.
-     *
-     * @return string The unique task identifier assigned at spawn time
-     */
-    public function getTaskId(): string
-    {
-        return $this->taskId;
-    }
-
-    /**
      * Read the task result from the stdout socket stream.
      *
      * Processes structured JSON frames emitted by the worker:
      *   - OUTPUT:    Forwards buffered echo/print output to the parent's stdout.
      *   - COMPLETED: Deserializes the result and closes stdin to unblock the worker's drain.
      *   - ERROR:     Reconstructs and rethrows the worker exception.
-     *   - TIMEOUT:   Throws a RuntimeException with the timeout message.
+     *   - TIMEOUT:   Throws a TimeoutException with the timeout message.
      *
      * A StreamException is caught and treated as socket EOF — on Windows the
      * socket closure from the worker side surfaces as a StreamException rather
@@ -226,7 +205,7 @@ final class Process
                             }
                         }
 
-                        // Close stdin to unblock the worker's drain_and_wait() loop,
+                        // Close stdin to unblock the worker's drain_and_wait() loop
                         $this->stdin->close();
 
                         /** @var TResult */
@@ -241,7 +220,7 @@ final class Process
                     } elseif ($statusType === 'TIMEOUT') {
                         $this->stdin->close();
 
-                        throw new TimeoutException("Task {$this->taskId} timed out.");
+                        throw new TimeoutException("Process PID {$this->pid} timed out.");
                     }
                 }
             } catch (StreamException) {
@@ -250,7 +229,7 @@ final class Process
                 // terminal frame was already handled above we never reach this point.
             }
 
-            throw new \RuntimeException("Process stream for task {$this->taskId} ended unexpectedly.");
+            throw new \RuntimeException("Process stream for PID {$this->pid} ended unexpectedly.");
         });
     }
 
@@ -263,32 +242,6 @@ final class Process
     private function createExceptionFromError(array $errorData): \Throwable
     {
         return ExceptionHandler::createFromWorkerError($errorData, $this->sourceLocation);
-    }
-
-    /**
-     * Update the status file with a new status and message.
-     *
-     * Reads the existing status file (if present) to preserve fields such as
-     * created_at and callback_type, then merges in the new status values and
-     * writes the result back atomically via file_put_contents.
-     *
-     * @param string $status Status value (e.g. COMPLETED, ERROR, CANCELLED)
-     * @param string $message Human-readable status message
-     * @return void
-     */
-    private function updateStatusFile(string $status, string $message): void
-    {
-        if (file_exists($this->statusFilePath)) {
-            $content = @file_get_contents($this->statusFilePath);
-            $data = $content !== false ? json_decode($content, true) : [];
-            if (! \is_array($data)) {
-                $data = [];
-            }
-            $data['status'] = $status;
-            $data['message'] = $message;
-            $data['updated_at'] = date('Y-m-d H:i:s');
-            @file_put_contents($this->statusFilePath, json_encode($data, JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT));
-        }
     }
 
     /**

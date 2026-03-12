@@ -17,11 +17,8 @@ describe('Worker Scripts Integration', function () {
         $serializedCallback = $serializer->serializeCallback($task);
 
         $payload = json_encode([
-            'task_id' => 'test_stream_worker',
-            'status_file' => null,
             'serialized_callback' => $serializedCallback,
             'autoload_path' => $autoloadPath,
-            'logging_enabled' => false,
             'timeout_seconds' => 5,
             'memory_limit' => '128M',
         ]);
@@ -74,15 +71,12 @@ describe('Worker Scripts Integration', function () {
         return array_filter(explode("\n", $output));
     };
 
-    $runBgWorker = function (callable $task, string $statusFile) use ($bgWorker, $autoloadPath, $serializer, $utils) {
+    $runBgWorker = function (callable $task) use ($bgWorker, $autoloadPath, $serializer, $utils) {
         $serializedCallback = $serializer->serializeCallback($task);
 
         $payload = json_encode([
-            'task_id' => 'test_bg_worker',
-            'status_file' => $statusFile,
             'serialized_callback' => $serializedCallback,
             'autoload_path' => $autoloadPath,
-            'logging_enabled' => true,
             'timeout_seconds' => 5,
             'memory_limit' => '128M',
         ]);
@@ -118,6 +112,8 @@ describe('Worker Scripts Integration', function () {
         } while ($status['running']);
 
         proc_close($process);
+
+        $exitCode = proc_get_status($process)['exitcode'] ?? -1;
 
         $errors = file_get_contents($stderrFile);
         @unlink($stderrFile);
@@ -199,45 +195,13 @@ describe('Worker Scripts Integration', function () {
         expect($resultObj->format('Y-m-d'))->toBe('2025-01-01');
     });
 
-    it('executes closure and updates status file (worker_background.php)', function () use ($runBgWorker) {
-        $statusFile = sys_get_temp_dir() . '/hibla_bg_test_' . uniqid() . '.json';
-
-        if (file_exists($statusFile)) {
-            unlink($statusFile);
-        }
-
-        $runBgWorker(fn () => 'Bg Result', $statusFile);
-
-        expect(file_exists($statusFile))->toBeTrue();
-
-        $content = file_get_contents($statusFile);
-        $data = json_decode($content, true);
-
-        expect($data['status'])->toBe('COMPLETED');
-        expect($data['message'])->toBe('Task completed');
-
-        if (file_exists($statusFile)) {
-            unlink($statusFile);
-        }
+    it('executes a closure without errors (worker_background.php)', function () use ($runBgWorker) {
+        expect(fn () => $runBgWorker(fn () => true))->not->toThrow(RuntimeException::class);
     });
 
-    it('catches exceptions and updates status file with error (worker_background.php)', function () use ($runBgWorker) {
-        $statusFile = sys_get_temp_dir() . '/hibla_bg_error_' . uniqid() . '.json';
-
-        $runBgWorker(function () {
+    it('handles exceptions silently without crashing (worker_background.php)', function () use ($runBgWorker) {
+        expect(fn () => $runBgWorker(function () {
             throw new RuntimeException('Background Crash');
-        }, $statusFile);
-
-        expect(file_exists($statusFile))->toBeTrue();
-
-        $content = file_get_contents($statusFile);
-        $data = json_decode($content, true);
-
-        expect($data['status'])->toBe('ERROR');
-        expect($data['message'])->toBe('Background Crash');
-
-        if (file_exists($statusFile)) {
-            unlink($statusFile);
-        }
+        }))->not->toThrow(RuntimeException::class);
     });
 });

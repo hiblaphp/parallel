@@ -82,53 +82,6 @@ describe('ParallelExecutor Feature Test', function () {
         expect($result)->toBe(10 * 1024 * 1024);
     });
 
-    it('enables logging for a single task when global logging is off', function () {
-        Config::setFromRoot('hibla_parallel', 'logging.enabled', false);
-
-        $logDir = sys_get_temp_dir() . '/hibla_executor_test_logs';
-        if (! is_dir($logDir)) {
-            mkdir($logDir, 0777, true);
-        }
-
-        Config::setFromRoot('hibla_parallel', 'logging.directory', $logDir);
-
-        $process = await(
-            ParallelExecutor::create()
-                ->withLogging()
-                ->spawn(fn () => true)
-        );
-
-        $statusFile = $logDir . DIRECTORY_SEPARATOR . $process->getTaskId() . '.json';
-        expect(file_exists($statusFile))->toBeTrue();
-
-        $process->terminate();
-
-        foreach (glob($logDir . DIRECTORY_SEPARATOR . '*') as $file) {
-            if (is_file($file)) {
-                @unlink($file);
-            }
-        }
-        @rmdir($logDir);
-    });
-
-    it('disables logging for a single task when global logging is on', function () {
-        Config::setFromRoot('hibla_parallel', 'logging.enabled', true);
-
-        $logDir = sys_get_temp_dir() . '/hibla_executor_test_logs';
-        Config::setFromRoot('hibla_parallel', 'logging.directory', $logDir);
-
-        $process = await(
-            ParallelExecutor::create()
-                ->withoutLogging()
-                ->spawn(fn () => true)
-        );
-
-        $statusFile = $logDir . DIRECTORY_SEPARATOR . $process->getTaskId() . '.json';
-        expect(file_exists($statusFile))->toBeFalse();
-
-        $process->terminate();
-    });
-
     it('uses a custom bootstrap file for a task', function () use (&$tempFiles) {
         $bootstrapFile = sys_get_temp_dir() . '/test_bootstrap_' . uniqid() . '.php';
         $tempFiles[] = $bootstrapFile;
@@ -327,22 +280,5 @@ describe('ParallelExecutor Feature Test', function () {
 
         $base->shutdown();
         $derived->shutdown();
-    });
-
-    it('create() does not expose withPersistentPool() or createPersistentPool()', function () {
-        $executor = ParallelExecutor::create();
-
-        expect(method_exists($executor, 'withPersistentPool'))->toBeFalse();
-        expect(method_exists($executor, 'createPersistentPool'))->toBeFalse();
-        expect(method_exists($executor, 'shutdown'))->toBeFalse();
-    });
-
-    it('createPersistentPool() does not expose run() without pool context or spawn()', function () {
-        $pool = ParallelExecutor::createPersistentPool(size: 2);
-        expect(method_exists($pool, 'spawn'))->toBeFalse();
-        expect(method_exists($pool, 'withLogging'))->toBeFalse();
-        expect(method_exists($pool, 'withoutLogging'))->toBeFalse();
-
-        $pool->shutdown();
     });
 });

@@ -6,7 +6,6 @@ use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\PersistentProcess;
 use Hibla\Parallel\Process;
-use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Rcalicdan\ConfigLoader\Config;
 use Rcalicdan\Serializer\CallbackSerializationManager;
@@ -15,11 +14,10 @@ describe('ProcessSpawnHandler Feature Test', function () {
 
     $setupHandler = function () {
         $utils = new SystemUtilities();
-        $logger = new BackgroundLogger(enableDetailedLogging: true, customLogDir: sys_get_temp_dir() . '/hibla_spawn_test');
         $serializer = new CallbackSerializationManager();
-        $handler = new ProcessSpawnHandler($utils, $logger);
+        $handler = new ProcessSpawnHandler($utils);
 
-        return [$handler, $utils, $serializer, $logger];
+        return [$handler, $utils, $serializer];
     };
 
     $activeProcesses = [];
@@ -39,16 +37,13 @@ describe('ProcessSpawnHandler Feature Test', function () {
 
     it('can spawn a Streamed Task (worker.php)', function () use ($setupHandler, &$activeProcesses) {
         [$handler, $utils, $serializer] = $setupHandler();
-        $taskId = 'test_stream_' . uniqid();
         $frameworkInfo = $utils->getFrameworkBootstrap();
 
         /** @var Process $process */
         $process = $handler->spawnStreamedTask(
-            taskId: $taskId,
             callback: fn () => 'Hello World',
             frameworkInfo: $frameworkInfo,
             serializationManager: $serializer,
-            loggingEnabled: true,
             timeoutSeconds: 5
         );
 
@@ -56,21 +51,17 @@ describe('ProcessSpawnHandler Feature Test', function () {
 
         expect($process)->toBeInstanceOf(Process::class);
         expect($process->getPid())->toBeInt()->toBeGreaterThan(0);
-        expect($process->getTaskId())->toBe($taskId);
         expect($process->isRunning())->toBeTrue();
     });
 
     it('can spawn a Background Task (worker_background.php)', function () use ($setupHandler, &$activeProcesses) {
         [$handler, $utils, $serializer] = $setupHandler();
-        $taskId = 'test_bg_' . uniqid();
         $frameworkInfo = $utils->getFrameworkBootstrap();
 
         $process = $handler->spawnBackgroundTask(
-            taskId: $taskId,
             callback: fn () => usleep(200000),
             frameworkInfo: $frameworkInfo,
             serializationManager: $serializer,
-            loggingEnabled: true,
             timeoutSeconds: 5
         );
 
@@ -229,12 +220,10 @@ describe('ProcessSpawnHandler Feature Test', function () {
         $frameworkInfo = $utils->getFrameworkBootstrap();
 
         expect(fn () => $handler->spawnBackgroundTask(
-            'id',
-            fn () => true,
-            $frameworkInfo,
-            $serializer,
-            false,
-            -1
+            callback: fn () => true,
+            frameworkInfo: $frameworkInfo,
+            serializationManager: $serializer,
+            timeoutSeconds: -1
         ))->toThrow(InvalidArgumentException::class);
     });
 
@@ -242,14 +231,13 @@ describe('ProcessSpawnHandler Feature Test', function () {
         [$handler, $utils, $serializer] = $setupHandler();
 
         $process = $handler->spawnStreamedTask(
-            'test_path',
-            function () {
+            callback: function () {
                 usleep(100000);
             },
-            $utils->getFrameworkBootstrap(),
-            $serializer,
-            false,
-            5
+            frameworkInfo: $utils->getFrameworkBootstrap(),
+            serializationManager: $serializer,
+            timeoutSeconds: 5,
+            sourceLocation: 'test_path',
         );
 
         expect($process->isRunning())->toBeTrue();

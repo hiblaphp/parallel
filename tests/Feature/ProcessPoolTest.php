@@ -6,7 +6,6 @@ use function Hibla\await;
 
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Managers\ProcessPool;
-use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Promise\Promise;
 use Rcalicdan\Serializer\CallbackSerializationManager;
@@ -15,15 +14,13 @@ describe('ProcessPool', function () {
 
     $buildPool = function (int $size) {
         $utils = new SystemUtilities();
-        $logger = new BackgroundLogger(enableDetailedLogging: false, customLogDir: sys_get_temp_dir() . '/hibla_pool_test');
         $serializer = new CallbackSerializationManager();
-        $handler = new ProcessSpawnHandler($utils, $logger);
+        $handler = new ProcessSpawnHandler($utils);
 
         return new ProcessPool(
             size: $size,
             spawnHandler: $handler,
             serializer: $serializer,
-            systemUtils: $utils,
             frameworkInfo: $utils->getFrameworkBootstrap(),
             memoryLimit: '128M',
             maxNestingLevel: 3

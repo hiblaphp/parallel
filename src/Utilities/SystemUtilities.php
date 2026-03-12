@@ -14,16 +14,6 @@ use function Rcalicdan\ConfigLoader\configRoot;
 class SystemUtilities
 {
     /**
-     * Generate unique task ID with timestamp
-     *
-     * @return string Unique task identifier with format defer_YYYYMMDD_HHMMSS_uniqid
-     */
-    public function generateTaskId(): string
-    {
-        return 'defer_' . date('Ymd_His') . '_' . uniqid('', true);
-    }
-
-    /**
      * Get PHP binary path with enhanced detection
      *
      * @return string Path to PHP binary executable

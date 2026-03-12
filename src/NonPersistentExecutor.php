@@ -22,8 +22,6 @@ final class NonPersistentExecutor implements NonPersistentExecutorInterface
 
     private ?string $memoryLimit = null;
 
-    private ?bool $loggingEnabled = null;
-
     private ?int $maxNestingLevel = null;
 
     private int $timeoutSeconds = 60;
@@ -69,22 +67,6 @@ final class NonPersistentExecutor implements NonPersistentExecutorInterface
         return $this->withMemoryLimit('-1');
     }
 
-    public function withLogging(): static
-    {
-        $clone = clone $this;
-        $clone->loggingEnabled = true;
-
-        return $clone;
-    }
-
-    public function withoutLogging(): static
-    {
-        $clone = clone $this;
-        $clone->loggingEnabled = false;
-
-        return $clone;
-    }
-
     public function withBootstrap(string $file, ?callable $callback = null): static
     {
         $clone = clone $this;
@@ -123,7 +105,6 @@ final class NonPersistentExecutor implements NonPersistentExecutorInterface
             $task,
             $finalTimeout,
             $this->memoryLimit,
-            $this->loggingEnabled,
             $this->bootstrap,
             $this->maxNestingLevel
         );
@@ -153,7 +134,6 @@ final class NonPersistentExecutor implements NonPersistentExecutorInterface
                 $task,
                 $finalTimeout,
                 $this->memoryLimit,
-                $this->loggingEnabled,
                 $this->bootstrap,
                 $this->maxNestingLevel
             )
