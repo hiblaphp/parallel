@@ -44,15 +44,27 @@ describe('Worker Scripts Integration', function () {
         fclose($pipes[0]);
 
         $start = microtime(true);
+        $timedOut = false;
+        
         do {
             if (microtime(true) - $start > 10) {
-                proc_terminate($process);
-
-                throw new RuntimeException('Worker test timed out after 10 seconds');
+                $timedOut = true;
+                break;
             }
             usleep(10000);
             $status = proc_get_status($process);
         } while ($status['running']);
+
+        $pid = proc_get_status($process)['pid'];
+        if (PHP_OS_FAMILY === 'Windows') {
+            exec("taskkill /F /T /PID {$pid} 2>nul");
+        } else {
+            exec("pkill -9 -P {$pid} 2>/dev/null; kill -9 {$pid} 2>/dev/null");
+        }
+
+        if ($timedOut) {
+            throw new RuntimeException('Worker test timed out after 10 seconds');
+        }
 
         proc_close($process);
 
@@ -85,7 +97,7 @@ describe('Worker Scripts Integration', function () {
 
         $descriptors = [
             0 => ['pipe', 'r'],
-            1 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
+            1 =>['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
             2 => ['file', $stderrFile, 'w'],
         ];
 
@@ -101,15 +113,28 @@ describe('Worker Scripts Integration', function () {
         fclose($pipes[0]);
 
         $start = microtime(true);
+        $timedOut = false;
+        
         do {
             if (microtime(true) - $start > 10) {
-                proc_terminate($process);
-
-                throw new RuntimeException('Background worker test timed out after 10 seconds');
+                $timedOut = true;
+                break;
             }
             usleep(10000);
             $status = proc_get_status($process);
         } while ($status['running']);
+
+        // Forcefully kill the process (and any spawned children) after each test execution
+        $pid = proc_get_status($process)['pid'];
+        if (PHP_OS_FAMILY === 'Windows') {
+            exec("taskkill /F /T /PID {$pid} 2>nul");
+        } else {
+            exec("pkill -9 -P {$pid} 2>/dev/null; kill -9 {$pid} 2>/dev/null");
+        }
+
+        if ($timedOut) {
+            throw new RuntimeException('Background worker test timed out after 10 seconds');
+        }
 
         proc_close($process);
 
