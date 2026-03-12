@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use function Hibla\await;
 
-use Hibla\Parallel\Process;
+use Hibla\Parallel\Internals\Process;
 use Hibla\Promise\Promise;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;

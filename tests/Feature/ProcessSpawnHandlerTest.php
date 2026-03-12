@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
-use Hibla\Parallel\PersistentProcess;
-use Hibla\Parallel\Process;
+use Hibla\Parallel\Internals\BackgroundProcess;
+use Hibla\Parallel\Internals\PersistentProcess;
+use Hibla\Parallel\Internals\Process;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Rcalicdan\ConfigLoader\Config;
 use Rcalicdan\Serializer\CallbackSerializationManager;

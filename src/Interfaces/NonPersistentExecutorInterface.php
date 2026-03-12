@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Interfaces;
 
-use Hibla\Parallel\BackgroundProcess;
+use Hibla\Parallel\Internals\BackgroundProcess;
 use Hibla\Promise\Interfaces\PromiseInterface;
 
 /**

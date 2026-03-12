@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 use function Hibla\await;
 
-use Hibla\Parallel\BackgroundProcess;
+use Hibla\Parallel\Internals\BackgroundProcess;
 
 use function Hibla\parallelFn;
 

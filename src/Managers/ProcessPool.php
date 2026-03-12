@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Hibla\Parallel\Managers;
 
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
-use Hibla\Parallel\PersistentProcess;
+use Hibla\Parallel\Internals\PersistentProcess;
 use Hibla\Promise\Promise;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 use SplQueue;

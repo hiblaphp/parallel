@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Hibla\Parallel;
+namespace Hibla\Parallel\Internals;
 
 /**
  * Represents a fire-and-forget background process.

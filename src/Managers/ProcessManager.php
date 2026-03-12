@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Managers;
 
-use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
-use Hibla\Parallel\Process;
+use Hibla\Parallel\Internals\BackgroundProcess;
+use Hibla\Parallel\Internals\Process;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Rcalicdan\ConfigLoader\Config;
 use Rcalicdan\Serializer\CallbackSerializationManager;
@@ -172,10 +172,10 @@ class ProcessManager
 
         foreach ($trace as $frame) {
             $file = $frame['file'] ?? '';
-            // Skip internal library files to capture the actual user call site
-            if ($file !== ''
+            if (
+                $file !== ''
                 && ! str_contains($file, 'ProcessManager.php')
-                && ! str_contains($file, 'namespace_function.php')
+                && ! str_contains($file, 'functions.php')
                 && ! str_contains($file, 'ParallelExecutor.php')
                 && ! str_contains($file, 'NonPersistentExecutor.php')
             ) {

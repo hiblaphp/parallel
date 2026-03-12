@@ -6,9 +6,9 @@ namespace Tests\Feature;
 
 use function Hibla\await;
 
-use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Interfaces\NonPersistentExecutorInterface;
 use Hibla\Parallel\Interfaces\PersistentPoolExecutorInterface;
+use Hibla\Parallel\Internals\BackgroundProcess;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\ParallelExecutor;
 use Hibla\Promise\Promise;

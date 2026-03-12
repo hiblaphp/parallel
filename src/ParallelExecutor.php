@@ -6,6 +6,8 @@ namespace Hibla\Parallel;
 
 use Hibla\Parallel\Interfaces\NonPersistentExecutorInterface;
 use Hibla\Parallel\Interfaces\PersistentPoolExecutorInterface;
+use Hibla\Parallel\Internals\NonPersistentExecutor;
+use Hibla\Parallel\Internals\PersistentPoolExecutor;
 
 /**
  * Static facade and entry point for all parallel execution strategies.
@@ -41,7 +43,7 @@ final class ParallelExecutor
      */
     public static function create(): NonPersistentExecutorInterface
     {
-        return NonPersistentExecutor::new();
+        return new NonPersistentExecutor();
     }
 
     /**
@@ -57,6 +59,6 @@ final class ParallelExecutor
             throw new \InvalidArgumentException('Pool size must be at least 1.');
         }
 
-        return PersistentPoolExecutor::new($size);
+        return new PersistentPoolExecutor($size);
     }
 }

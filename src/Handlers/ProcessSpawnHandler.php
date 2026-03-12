@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Handlers;
 
-use Hibla\Parallel\BackgroundProcess;
-use Hibla\Parallel\PersistentProcess;
-use Hibla\Parallel\Process;
+use Hibla\Parallel\Internals\BackgroundProcess;
+use Hibla\Parallel\Internals\PersistentProcess;
+use Hibla\Parallel\Internals\Process;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Stream\PromiseReadableStream;
 use Hibla\Stream\PromiseWritableStream;

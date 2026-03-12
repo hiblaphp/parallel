@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use Hibla\Parallel\BackgroundProcess;
+use Hibla\Parallel\Internals\BackgroundProcess;
 
 describe('BackgroundProcess', function () {
 

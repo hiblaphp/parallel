@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Hibla\Parallel;
+namespace Hibla\Parallel\Internals;
 
 use Hibla\Parallel\Interfaces\PersistentPoolExecutorInterface;
 use Hibla\Parallel\Managers\ProcessManager;
@@ -32,14 +32,8 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
      */
     private ?array $bootstrap = null;
 
-    private function __construct(private readonly int $size)
+    public function __construct(private readonly int $size)
     {
-    }
-
-    /** @internal */
-    public static function new(int $size): self
-    {
-        return new self($size);
     }
 
     public function withTimeout(int $seconds): static

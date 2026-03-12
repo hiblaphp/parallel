@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Hibla\Parallel;
+namespace Hibla\Parallel\Internals;
 
 use Hibla\Cancellation\CancellationTokenSource;
 use Hibla\Parallel\Interfaces\NonPersistentExecutorInterface;
@@ -28,13 +28,8 @@ final class NonPersistentExecutor implements NonPersistentExecutorInterface
 
     private bool $unlimitedTimeout = false;
 
-    private function __construct()
+    public function __construct()
     {
-    }
-
-    public static function new(): self
-    {
-        return new self();
     }
 
     public function withTimeout(int $seconds): static

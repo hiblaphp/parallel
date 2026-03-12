@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 use function Hibla\await;
 
-use Hibla\Parallel\BackgroundProcess;
+use Hibla\Parallel\Internals\BackgroundProcess;
+use Hibla\Parallel\Internals\Process;
 use Hibla\Parallel\Managers\ProcessManager;
-use Hibla\Parallel\Process;
 
 use Rcalicdan\ConfigLoader\Config;
 

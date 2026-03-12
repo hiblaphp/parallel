@@ -7,7 +7,7 @@
             "Hibla\\Parallel\\": "src/"
         },
         "files": [
-            "src/Helpers/namespace_function.php"
+            "src/functions.php"
         ]
     },
     "autoload-dev": {
