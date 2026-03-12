@@ -6,9 +6,7 @@ namespace Hibla\Parallel\Managers;
 
 use Hibla\Parallel\BackgroundProcess;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
-use Hibla\Parallel\Handlers\TaskStatusHandler;
 use Hibla\Parallel\Process;
-use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Rcalicdan\ConfigLoader\Config;
 use Rcalicdan\Serializer\CallbackSerializationManager;
@@ -40,10 +38,6 @@ class ProcessManager
     private static ?self $instance = null;
 
     private ProcessSpawnHandler $spawnHandler;
-
-    private TaskStatusHandler $statusHandler;
-
-    private BackgroundLogger $logger;
 
     private SystemUtilities $systemUtils;
 
@@ -80,7 +74,7 @@ class ProcessManager
     }
 
     /**
-     * Reset the global instance (Useful for testing).
+     * Reset the global instance (useful for testing).
      *
      * @param self|null $instance
      */
@@ -90,23 +84,20 @@ class ProcessManager
     }
 
     /**
-     * Allow public instantiation for Dependency Injection or Testing.
+     * Allow public instantiation for dependency injection or testing.
      *
      * @param SystemUtilities|null $systemUtils Optional dependency injection for system utilities
-     * @param BackgroundLogger|null $logger Optional dependency injection for logging
      * @param CallbackSerializationManager|null $serializer Optional dependency injection for serialization
      * @param int|null $maxSpawnsPerSecond Optional safety limit for background spawns/sec. If null, loads from config or uses default.
      * @param int|null $maxNestingLevel Optional maximum nesting level for parallel processes. If null, loads from config or uses default.
      */
     public function __construct(
         ?SystemUtilities $systemUtils = null,
-        ?BackgroundLogger $logger = null,
         ?CallbackSerializationManager $serializer = null,
         ?int $maxSpawnsPerSecond = null,
         ?int $maxNestingLevel = null
     ) {
         $this->systemUtils = $systemUtils ?? new SystemUtilities();
-        $this->logger = $logger ?? new BackgroundLogger();
         $this->serializer = $serializer ?? new CallbackSerializationManager();
 
         if ($maxSpawnsPerSecond !== null) {
@@ -150,12 +141,7 @@ class ProcessManager
         $_ENV['HIBLA_MAX_NESTING_LEVEL'] = (string) $this->maxNestingLevel;
         $_SERVER['HIBLA_MAX_NESTING_LEVEL'] = (string) $this->maxNestingLevel;
 
-        $this->statusHandler = new TaskStatusHandler(
-            $this->logger->getLogDirectory(),
-            $this->logger->isDetailedLoggingEnabled()
-        );
-
-        $this->spawnHandler = new ProcessSpawnHandler($this->systemUtils, $this->logger);
+        $this->spawnHandler = new ProcessSpawnHandler($this->systemUtils);
         $this->frameworkInfo = $this->systemUtils->getFrameworkBootstrap();
     }
 
@@ -167,7 +153,6 @@ class ProcessManager
      * @param callable(): TResult $callback The callback function to execute in the worker process
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @param string|null $memoryLimit Optional memory limit override
-     * @param bool|null $loggingEnabled Optional logging override
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null $customBootstrap Optional bootstrap override
      * @param int|null $maxNestingLevel Optional max nesting level override
      * @return Process<TResult> The spawned process instance with communication streams
@@ -176,48 +161,41 @@ class ProcessManager
         callable $callback,
         int $timeoutSeconds = 60,
         ?string $memoryLimit = null,
-        ?bool $loggingEnabled = null,
         ?array $customBootstrap = null,
         ?int $maxNestingLevel = null
     ): Process {
         $finalMaxNestingLevel = $maxNestingLevel ?? $this->maxNestingLevel;
         $this->validate($callback, $finalMaxNestingLevel);
 
-        $taskId = $this->systemUtils->generateTaskId();
-
         $sourceLocation = 'unknown';
         $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 4);
 
         foreach ($trace as $frame) {
             $file = $frame['file'] ?? '';
-            // Make sure we skip ParallelExecutor so we capture the actual user code
-            if ($file !== '' && ! str_contains($file, 'ProcessManager.php') && ! str_contains($file, 'namespace_function.php') && ! str_contains($file, 'ParallelExecutor.php')) {
+            // Skip internal library files to capture the actual user call site
+            if ($file !== ''
+                && ! str_contains($file, 'ProcessManager.php')
+                && ! str_contains($file, 'namespace_function.php')
+                && ! str_contains($file, 'ParallelExecutor.php')
+                && ! str_contains($file, 'NonPersistentExecutor.php')
+            ) {
                 $sourceLocation = $file . ':' . ($frame['line'] ?? '?');
 
                 break;
             }
         }
 
-        $logging = $loggingEnabled ?? $this->logger->isDetailedLoggingEnabled();
         $frameworkInfo = $customBootstrap ?? $this->frameworkInfo;
 
-        $this->statusHandler->createInitialStatus($taskId, $callback, $logging);
-
         $process = $this->spawnHandler->spawnStreamedTask(
-            $taskId,
             $callback,
             $frameworkInfo,
             $this->serializer,
-            $logging,
             $timeoutSeconds,
             $sourceLocation,
             $memoryLimit,
             $finalMaxNestingLevel
         );
-
-        if ($logging) {
-            $this->logger->logTaskEvent($taskId, 'SPAWNED', 'Streamed task PID: ' . $process->getPid());
-        }
 
         /** @var Process<TResult> */
         return $process;
@@ -228,13 +206,11 @@ class ProcessManager
      *
      * Creates a detached background process that runs independently without
      * maintaining communication channels. Suitable for tasks that don't require
-     * real-time output monitoring. Task registration and logging are conditional
-     * based on logging configuration.
+     * real-time output monitoring.
      *
      * @param callable $callback The callback function to execute in the worker process
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @param string|null $memoryLimit Optional memory limit override
-     * @param bool|null $loggingEnabled Optional logging override
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null $customBootstrap Optional bootstrap override
      * @param int|null $maxNestingLevel Optional max nesting level override
      * @return BackgroundProcess The spawned background process instance
@@ -245,7 +221,6 @@ class ProcessManager
         callable $callback,
         int $timeoutSeconds = 600,
         ?string $memoryLimit = null,
-        ?bool $loggingEnabled = null,
         ?array $customBootstrap = null,
         ?int $maxNestingLevel = null
     ): BackgroundProcess {
@@ -265,35 +240,20 @@ class ProcessManager
         $finalMaxNestingLevel = $maxNestingLevel ?? $this->maxNestingLevel;
         $this->validate($callback, $finalMaxNestingLevel);
 
-        $taskId = $this->systemUtils->generateTaskId();
-
-        $logging = $loggingEnabled ?? $this->logger->isDetailedLoggingEnabled();
         $frameworkInfo = $customBootstrap ?? $this->frameworkInfo;
 
-        if ($logging) {
-            $this->statusHandler->createInitialStatus($taskId, $callback, $logging);
-        }
-
-        $process = $this->spawnHandler->spawnBackgroundTask(
-            $taskId,
+        return $this->spawnHandler->spawnBackgroundTask(
             $callback,
             $frameworkInfo,
             $this->serializer,
-            $logging,
             $timeoutSeconds,
             $memoryLimit,
             $finalMaxNestingLevel
         );
-
-        if ($logging) {
-            $this->logger->logTaskEvent($taskId, 'SPAWNED_FF', 'Fire&Forget PID: ' . $process->getPid());
-        }
-
-        return $process;
     }
 
     /**
-     * Get the current nesting level
+     * Get the current nesting level.
      *
      * @return int Current nesting level (0 = main process, 1+ = nested)
      */
@@ -305,7 +265,7 @@ class ProcessManager
     }
 
     /**
-     * Get the maximum allowed nesting level
+     * Get the maximum allowed nesting level.
      *
      * @return int Maximum nesting level
      */
@@ -315,6 +275,42 @@ class ProcessManager
     }
 
     /**
+     * Get the instance of spawn handler.
+     */
+    public function getSpawnHandler(): ProcessSpawnHandler
+    {
+        return $this->spawnHandler;
+    }
+
+    /**
+     * Get the callback payload serializer.
+     */
+    public function getSerializer(): CallbackSerializationManager
+    {
+        return $this->serializer;
+    }
+
+    /**
+     * Get the system utilities instance.
+     */
+    public function getSystemUtils(): SystemUtilities
+    {
+        return $this->systemUtils;
+    }
+
+    /**
+     * Get the framework bootstrap configuration.
+     *
+     * @return array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}
+     */
+    public function getFrameworkBootstrap(): array
+    {
+        return $this->frameworkInfo;
+    }
+
+    /**
+     * Validates the callback and nesting level before spawning.
+     *
      * @param callable $callback The callback to validate
      * @param int $maxNestingLevel The explicit max nesting level for this task
      * @return void
@@ -328,10 +324,10 @@ class ProcessManager
         if ($currentLevel >= $maxNestingLevel) {
             throw new \RuntimeException(
                 'Cannot spawn parallel task: Already at maximum nesting level ' .
-                "{$currentLevel}/{$maxNestingLevel}. " .
-                "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file, " .
-                'or use ->withMaxNestingLevel() on the ParallelExecutor. ' .
-                'Maximum safe limit is 10 levels.'
+                    "{$currentLevel}/{$maxNestingLevel}. " .
+                    "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file, " .
+                    'or use ->withMaxNestingLevel() on the ParallelExecutor. ' .
+                    'Maximum safe limit is 10 levels.'
             );
         }
     }

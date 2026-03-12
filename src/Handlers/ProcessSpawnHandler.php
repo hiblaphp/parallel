@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace Hibla\Parallel\Handlers;
 
 use Hibla\Parallel\BackgroundProcess;
+use Hibla\Parallel\PersistentProcess;
 use Hibla\Parallel\Process;
-use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Stream\PromiseReadableStream;
 use Hibla\Stream\PromiseWritableStream;
@@ -31,7 +31,6 @@ class ProcessSpawnHandler
 
     public function __construct(
         private SystemUtilities $systemUtils,
-        private BackgroundLogger $logger
     ) {
         $requiredFunctions = PHP_OS_FAMILY !== 'Windows'
             ? ['proc_open', 'exec', 'shell_exec', 'posix_kill']
@@ -66,11 +65,9 @@ class ProcessSpawnHandler
      * Windows, where anonymous pipes do not support non-blocking mode.
      *
      * @template TResult
-     * @param string $taskId Unique identifier for the task
      * @param callable(): TResult $callback The callback function to execute in the worker
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
-     * @param bool $loggingEnabled Whether logging is enabled for this task
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @param string $sourceLocation Source file and line triggering the process
      * @param string|null $memoryLimit Custom memory limit for this specific process
@@ -79,11 +76,9 @@ class ProcessSpawnHandler
      * @throws \RuntimeException If process spawning fails
      */
     public function spawnStreamedTask(
-        string $taskId,
         callable $callback,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
-        bool $loggingEnabled,
         int $timeoutSeconds = 60,
         string $sourceLocation = 'unknown',
         ?string $memoryLimit = null,
@@ -130,16 +125,12 @@ class ProcessSpawnHandler
 
         $status = proc_get_status($processResource);
         $pid = $status['pid'];
-        $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.json';
 
         try {
             $payload = $this->createTaskPayload(
-                $taskId,
-                $statusFile,
                 $callback,
                 $frameworkInfo,
                 $serializationManager,
-                $loggingEnabled,
                 $timeoutSeconds,
                 $memoryLimit
             );
@@ -153,14 +144,11 @@ class ProcessSpawnHandler
 
         /** @var Process<TResult> */
         return new Process(
-            $taskId,
             $pid,
             $processResource,
             $stdin,
             $stdout,
             $stderr,
-            $statusFile,
-            $loggingEnabled,
             $sourceLocation
         );
     }
@@ -174,11 +162,9 @@ class ProcessSpawnHandler
      * single write is needed to deliver the payload — no non-blocking reads are
      * ever performed on these descriptors by the parent.
      *
-     * @param string $taskId Unique identifier for the task
      * @param callable $callback The callback function to execute in the worker
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
-     * @param bool $loggingEnabled Whether logging is enabled for this task
      * @param int $timeoutSeconds The maximum execution time in seconds. Use 0 for no limit.
      * @param string|null $memoryLimit Custom memory limit for this specific process
      * @param int $maxNestingLevel Maximum nesting level for this process
@@ -186,11 +172,9 @@ class ProcessSpawnHandler
      * @throws \RuntimeException If process spawning fails
      */
     public function spawnBackgroundTask(
-        string $taskId,
         callable $callback,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
-        bool $loggingEnabled,
         int $timeoutSeconds = 600,
         ?string $memoryLimit = null,
         int $maxNestingLevel = 5
@@ -221,16 +205,11 @@ class ProcessSpawnHandler
         $status = proc_get_status($processResource);
         $pid = $status['pid'];
 
-        $statusFile = $this->logger->getLogDirectory() . DIRECTORY_SEPARATOR . $taskId . '.json';
-
         try {
             $payload = $this->createTaskPayload(
-                $taskId,
-                $statusFile,
                 $callback,
                 $frameworkInfo,
                 $serializationManager,
-                $loggingEnabled,
                 $timeoutSeconds,
                 $memoryLimit
             );
@@ -241,30 +220,24 @@ class ProcessSpawnHandler
             fclose($pipes[0]);
         }
 
-        return new BackgroundProcess($taskId, $pid, $statusFile, $loggingEnabled);
+        return new BackgroundProcess($pid);
     }
 
     /**
      * Creates a JSON-encoded task payload for the worker process.
      *
-     * @param string $taskId Unique identifier for the task
-     * @param string $statusFile Path to the status file for tracking
      * @param callable $callback The callback function to serialize
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
-     * @param bool $loggingEnabled Whether logging is enabled for this task
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @param string|null $memoryLimit Custom memory limit for this specific process
      * @return string JSON-encoded payload string
      * @throws \RuntimeException If serialization fails
      */
     private function createTaskPayload(
-        string $taskId,
-        string $statusFile,
         callable $callback,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
-        bool $loggingEnabled,
         int $timeoutSeconds = 60,
         ?string $memoryLimit = null
     ): string {
@@ -278,13 +251,10 @@ class ProcessSpawnHandler
 
         /** @var array<string, mixed> $payloadData */
         $payloadData = [
-            'task_id' => $taskId,
-            'status_file' => $statusFile,
             'serialized_callback' => $serializedCallback,
             'autoload_path' => $this->systemUtils->findAutoloadPath(),
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
             'framework_bootstrap_callback' => $serializedBootstrapCallback,
-            'logging_enabled' => $loggingEnabled,
             'timeout_seconds' => $timeoutSeconds,
             'memory_limit' => $memoryLimit ?? $this->defaultMemoryLimit,
         ];
@@ -293,6 +263,101 @@ class ProcessSpawnHandler
 
         if ($json === false) {
             throw new \RuntimeException('Failed to encode task payload: ' . json_last_error_msg());
+        }
+
+        return $json;
+    }
+
+    /**
+     * Spawns a persistent worker process for long-running tasks.
+     *
+     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
+     * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
+     * @param string|null $memoryLimit Custom memory limit for this specific process
+     * @param int $maxNestingLevel Maximum allowed function nesting level
+     * @return PersistentProcess Instance of the spawned persistent process
+     * @throws \RuntimeException If spawning fails
+     */
+    public function spawnPersistentWorker(
+        array $frameworkInfo,
+        CallbackSerializationManager $serializationManager,
+        ?string $memoryLimit = null,
+        int $maxNestingLevel = 5
+    ): PersistentProcess {
+        $phpBinary = $this->systemUtils->getPhpBinary();
+        $workerScript = $this->getWorkerPath('worker_persistent.php');
+
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript);
+
+        $descriptorSpec = PHP_OS_FAMILY === 'Windows'
+            ? [
+                0 => ['socket'],
+                1 => ['socket'],
+                2 => ['socket'],
+            ]
+            : [
+                0 => ['pipe', 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ];
+
+        $pipes = [];
+        $processResource = @proc_open($command, $descriptorSpec, $pipes);
+        if (! \is_resource($processResource)) {
+            throw new \RuntimeException('Failed to spawn persistent worker process.');
+        }
+
+        stream_set_blocking($pipes[0], false);
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $stdin = new PromiseWritableStream($pipes[0]);
+        $stdout = new PromiseReadableStream($pipes[1]);
+        $stderr = new PromiseReadableStream($pipes[2]);
+
+        // Send the one-time boot payload
+        $bootPayload = $this->createBootPayload($frameworkInfo, $serializationManager, $memoryLimit);
+        $stdin->writeAsync($bootPayload . PHP_EOL);
+
+        $status = proc_get_status($processResource);
+
+        return new PersistentProcess(
+            $status['pid'],
+            $processResource,
+            $stdin,
+            $stdout,
+            $stderr
+        );
+    }
+
+    /**
+     * Creates a JSON payload for initializing a persistent worker process.
+     *
+     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
+     * @param CallbackSerializationManager $serializationManager
+     * @param string|null $memoryLimit
+     * @throws \RuntimeException
+     */
+    private function createBootPayload(
+        array $frameworkInfo,
+        CallbackSerializationManager $serializationManager,
+        ?string $memoryLimit = null
+    ): string {
+        $serializedBootstrapCallback = null;
+        if (isset($frameworkInfo['bootstrap_callback']) && is_callable($frameworkInfo['bootstrap_callback'])) {
+            $serializedBootstrapCallback = $serializationManager->serializeCallback($frameworkInfo['bootstrap_callback']);
+        }
+
+        $payloadData = [
+            'autoload_path' => $this->systemUtils->findAutoloadPath(),
+            'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
+            'framework_bootstrap_callback' => $serializedBootstrapCallback,
+            'memory_limit' => $memoryLimit ?? $this->defaultMemoryLimit,
+        ];
+
+        $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);
+        if ($json === false) {
+            throw new \RuntimeException('Failed to encode boot payload.');
         }
 
         return $json;
