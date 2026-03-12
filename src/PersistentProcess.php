@@ -4,31 +4,38 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel;
 
+use function Hibla\async;
+use function Hibla\await;
+
 use Hibla\Parallel\Handlers\ExceptionHandler;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
-use function Hibla\async;
-use function Hibla\await;
 
 /**
  * @internal Represents a single, long-running persistent worker process.
  */
 final class PersistentProcess
 {
-    private bool $isAlive = true;
-    private bool $isBusy = true;
-
     /**
-     *  @var array<string, Promise> A map of task IDs to their pending promises. 
+     * @var array<string, Promise<mixed>>
      */
     private array $pendingTasks = [];
 
     /**
-     *  @var callable(self): void 
+     *  @var callable(self): void
      */
     private $onReadyCallback;
+
+    /**
+     *  @var callable(self): void
+     */
+    private $onCrashCallback;
+
+    private bool $isAlive = true;
+
+    private bool $isBusy = true;
 
     public function __construct(
         private readonly int $pid,
@@ -36,71 +43,103 @@ final class PersistentProcess
         private readonly PromiseWritableStreamInterface $stdin,
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr
-    ) {}
+    ) {
+    }
 
     /**
-     * Starts the continuous stream reading loop.
+     * @param callable(self): void $onReadyCallback
+     * @param callable(self): void $onCrashCallback
      */
-    public function startReadLoop(callable $onReadyCallback): void
+    public function startReadLoop(callable $onReadyCallback, callable $onCrashCallback): void
     {
         $this->onReadyCallback = $onReadyCallback;
+        $this->onCrashCallback = $onCrashCallback;
 
         async(function () {
             try {
                 while (null !== ($line = await($this->stdout->readLineAsync()))) {
-                    if (trim($line) === '') continue;
+                    if (trim($line) === '') {
+                        continue;
+                    }
 
                     $data = @json_decode($line, true);
-                    if (!\is_array($data)) continue;
+                    if (! \is_array($data)) {
+                        continue;
+                    }
 
-                    $status = $data['status'] ?? '';
+                    /** @var array<string, mixed> $data */
+                    $status = isset($data['status']) && is_string($data['status'])
+                        ? $data['status']
+                        : '';
+
+                    if ($status === 'CRASHED') {
+                        $this->terminate();
+                        ($this->onCrashCallback)($this);
+
+                        break;
+                    }
 
                     if ($status === 'READY') {
                         $this->isBusy = false;
                         ($this->onReadyCallback)($this);
+
                         continue;
                     }
 
-                    $taskId = $data['task_id'] ?? null;
-                    if (!$taskId || !isset($this->pendingTasks[$taskId])) continue;
+                    $taskId = isset($data['task_id']) && is_string($data['task_id'])
+                        ? $data['task_id']
+                        : null;
+
+                    if ($taskId === null || ! isset($this->pendingTasks[$taskId])) {
+                        continue;
+                    }
 
                     $promise = $this->pendingTasks[$taskId];
 
                     if ($status === 'OUTPUT') {
-                        echo $data['output'] ?? '';
+                        $output = $data['output'] ?? '';
+                        echo \is_string($output) ? $output : '';
                     } elseif ($status === 'COMPLETED') {
                         $result = $data['result'] ?? null;
-                        if (($data['result_serialized'] ?? false) && is_string($result)) {
-                            $result = unserialize(base64_decode($result));
+
+                        if (($data['result_serialized'] ?? false) === true && \is_string($result)) {
+                            $decoded = base64_decode($result, true);
+                            if ($decoded !== false) {
+                                $result = unserialize($decoded);
+                            }
                         }
 
                         unset($this->pendingTasks[$taskId]);
                         $promise->resolve($result);
                     } elseif ($status === 'ERROR') {
+                        /** @var array<string, mixed> $data */
                         $exception = ExceptionHandler::createFromWorkerError($data, 'unknown');
                         unset($this->pendingTasks[$taskId]);
                         $promise->reject($exception);
                     }
                 }
             } catch (\Throwable $e) {
-                // Stream closed or crashed
+                // Stream closed unexpectedly — treat as a crash
+                $this->terminate();
+                ($this->onCrashCallback)($this);
             } finally {
-                $this->handleCrash();
+                $this->terminate();
             }
         });
     }
 
     /**
-     * Submits a new task payload to this worker and returns a promise for its result.
+     * @return PromiseInterface<mixed>
      */
     public function submitTask(string $taskId, string $payload): PromiseInterface
     {
         $this->isBusy = true;
 
+        /** @var Promise<mixed> $promise */
         $promise = new Promise();
         $this->pendingTasks[$taskId] = $promise;
 
-        async(fn() => await($this->stdin->writeAsync($payload . PHP_EOL)));
+        async(fn () => await($this->stdin->writeAsync($payload . PHP_EOL)));
 
         return $promise;
     }
@@ -117,33 +156,37 @@ final class PersistentProcess
 
     public function terminate(): void
     {
-        if (!$this->isAlive) return;
+        if (! $this->isAlive) {
+            return;
+        }
 
-        $this->isAlive = false;
+        $this->handleCrash();
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            exec("taskkill /F /T /PID {$this->pid} 2>nul");
+        } else {
+            exec("pkill -9 -P {$this->pid} 2>/dev/null; kill -9 {$this->pid} 2>/dev/null");
+        }
+
         $this->stdin->close();
         $this->stdout->close();
         $this->stderr->close();
 
         if (\is_resource($this->processResource)) {
-            proc_terminate($this->processResource);
-            proc_close($this->processResource);
+            @proc_terminate($this->processResource);
+            @proc_close($this->processResource);
         }
-
-        $this->handleCrash();
     }
 
-    /**
-     * Rejects all pending tasks when the worker process dies unexpectedly.
-     */
     private function handleCrash(): void
     {
-        if (!$this->isAlive) return;
-
         $this->isAlive = false;
         $this->isBusy = false;
 
         foreach ($this->pendingTasks as $taskId => $promise) {
-            $promise->reject(new \RuntimeException("Persistent worker PID {$this->pid} crashed or stream closed while executing task {$taskId}."));
+            $promise->reject(new \RuntimeException(
+                "Persistent worker PID {$this->pid} crashed or stream closed while executing task {$taskId}."
+            ));
         }
 
         $this->pendingTasks = [];

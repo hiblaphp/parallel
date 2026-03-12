@@ -16,6 +16,8 @@ final class PersistentPoolExecutor
 
     /**
      * @internal This should be instantiated via ParallelExecutor::withPersistentPool()
+     *
+     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(): mixed)|null} $frameworkInfo
      */
     public function __construct(
         int $size,
@@ -27,8 +29,8 @@ final class PersistentPoolExecutor
         $this->pool = new ProcessPool(
             $size,
             $manager->getSpawnHandler(),
-            $manager->getSerializer(), 
-            $manager->getSystemUtils(),  
+            $manager->getSerializer(),
+            $manager->getSystemUtils(),
             $frameworkInfo,
             $memoryLimit,
             $maxNestingLevel
@@ -43,6 +45,7 @@ final class PersistentPoolExecutor
         $clone = clone $this;
         $clone->timeoutSeconds = $seconds;
         $clone->unlimitedTimeout = false;
+
         return $clone;
     }
 
@@ -53,6 +56,7 @@ final class PersistentPoolExecutor
     {
         $clone = clone $this;
         $clone->unlimitedTimeout = true;
+
         return $clone;
     }
 
@@ -66,7 +70,7 @@ final class PersistentPoolExecutor
     public function run(callable $task): PromiseInterface
     {
         $finalTimeout = $this->unlimitedTimeout ? 0 : $this->timeoutSeconds;
-        /** @var PromiseInterface<TResult> */
+
         return $this->pool->submit($task, $finalTimeout);
     }
 
@@ -77,7 +81,7 @@ final class PersistentPoolExecutor
     {
         $this->pool->shutdown();
     }
-    
+
     public function __destruct()
     {
         $this->shutdown();

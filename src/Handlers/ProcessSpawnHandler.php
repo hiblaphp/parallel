@@ -299,6 +299,16 @@ class ProcessSpawnHandler
         return $json;
     }
 
+    /**
+     * Spawns a persistent worker process for long-running tasks.
+     *
+     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
+     * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
+     * @param string|null $memoryLimit Custom memory limit for this specific process
+     * @param int $maxNestingLevel Maximum allowed function nesting level
+     * @return PersistentProcess Instance of the spawned persistent process
+     * @throws \RuntimeException If spawning fails
+     */
     public function spawnPersistentWorker(
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
@@ -306,16 +316,21 @@ class ProcessSpawnHandler
         int $maxNestingLevel = 5
     ): PersistentProcess {
         $phpBinary = $this->systemUtils->getPhpBinary();
-        $workerScript = $this->getWorkerPath('worker_persistent.php'); 
+        $workerScript = $this->getWorkerPath('worker_persistent.php');
 
         $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript);
 
-        // Persistent workers need reliable, non-blocking streams. Sockets are best.
-        $descriptorSpec = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-
-        if (PHP_OS_FAMILY === 'Windows') {
-            $descriptorSpec = [0 => ['socket'], 1 => ['socket'], 2 => ['socket']];
-        }
+        $descriptorSpec = PHP_OS_FAMILY === 'Windows'
+            ? [
+                0 => ['socket'],
+                1 => ['socket'],
+                2 => ['socket'],
+            ]
+            : [
+                0 => ['pipe', 'r'],
+                1 => ['pipe', 'w'],
+                2 => ['pipe', 'w'],
+            ];
 
         $pipes = [];
         $processResource = @proc_open($command, $descriptorSpec, $pipes);
@@ -346,6 +361,14 @@ class ProcessSpawnHandler
         );
     }
 
+    /**
+     * Creates a JSON payload for initializing a persistent worker process.
+     *
+     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
+     * @param CallbackSerializationManager $serializationManager
+     * @param string|null $memoryLimit
+     * @throws \RuntimeException
+     */
     private function createBootPayload(
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
@@ -367,6 +390,7 @@ class ProcessSpawnHandler
         if ($json === false) {
             throw new \RuntimeException('Failed to encode boot payload.');
         }
+
         return $json;
     }
 

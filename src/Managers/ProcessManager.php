@@ -314,21 +314,35 @@ class ProcessManager
         return $this->maxNestingLevel;
     }
 
+    /**
+     * Get the instance of spawn handler
+     */
     public function getSpawnHandler(): ProcessSpawnHandler
     {
         return $this->spawnHandler;
     }
 
+    /**
+     * Get the callaback payload serializer
+     */
     public function getSerializer(): CallbackSerializationManager
     {
         return $this->serializer;
     }
 
+    /**
+     * Get the system utilities instance
+     */
     public function getSystemUtils(): SystemUtilities
     {
         return $this->systemUtils;
     }
 
+    /**
+     * Get the framework bootstrap configuration
+     *
+     * @return array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}
+     */
     public function getFrameworkBootstrap(): array
     {
         return $this->frameworkInfo;

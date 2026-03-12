@@ -23,38 +23,54 @@ if ($nestingLevel > $maxNestingLevel) {
 }
 // ==========================================
 
-register_shutdown_function(function () {
-    $error = error_get_last();
+// ===== CRASH DETECTION =====
+$isProcessing = false;
+$terminalFrameWritten = false;
 
-    if ($error === null) {
+register_shutdown_function(function () {
+    global $isProcessing, $terminalFrameWritten, $taskId;
+
+    // Only act if we died mid-task before a terminal frame was sent.
+    // Covers: exit(N), silent OOM kills, unhandled signals, and fatal errors.
+    if (! $isProcessing || $terminalFrameWritten) {
         return;
     }
 
-    if (in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
-        $errorMessage = $error['message'];
-        $isTimeout = stripos($errorMessage, 'Maximum execution time') !== false;
+    $error = error_get_last();
+    $message = 'Worker process exited or crashed unexpectedly.';
+
+    if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        $isTimeout = stripos($error['message'], 'Maximum execution time') !== false;
+        $message = $isTimeout
+            ? 'Task exceeded maximum execution time: ' . $error['message']
+            : 'Fatal Error: ' . $error['message'];
 
         write_status_to_stdout([
             'status' => $isTimeout ? 'TIMEOUT' : 'ERROR',
-            'message' => $isTimeout
-                ? 'Task exceeded maximum execution time: ' . $errorMessage
-                : 'Fatal Error: ' . $errorMessage,
-            'error' => $error,
+            'class' => 'RuntimeException',
+            'message' => $message,
+            'code' => 0,
+            'file' => $error['file'] ?? 'unknown',
+            'line' => $error['line'] ?? 0,
+            'stack_trace' => 'Worker crashed during execution.',
         ]);
-
-        update_status_file(
-            $isTimeout ? 'TIMEOUT' : 'ERROR',
-            $isTimeout
-                ? 'Task exceeded maximum execution time: ' . $errorMessage
-                : 'Fatal Error: ' . $errorMessage,
-            ['error' => $error]
-        );
-
-        drain_and_wait();
+    } else {
+        write_status_to_stdout([
+            'status' => 'ERROR',
+            'class' => 'RuntimeException',
+            'message' => $message,
+            'code' => 0,
+            'file' => 'unknown',
+            'line' => 0,
+            'stack_trace' => 'Worker crashed during execution.',
+        ]);
     }
-});
 
-$stdin = fopen('php://stdin', 'r');
+    drain_and_wait();
+});
+// ===========================
+
+$stdin = fopen('php://stdin',  'r');
 $stdout = fopen('php://stdout', 'w');
 $stderr = fopen('php://stderr', 'w');
 
@@ -180,26 +196,17 @@ function drain_and_wait(): void
  */
 function stream_output_handler(string $buffer, int $phase): string
 {
-    global $taskData;
-
     if ($buffer === '') {
         return '';
     }
 
     if (stripos($buffer, 'Maximum execution time') !== false) {
-        preg_match('/Maximum execution time of (\d+) seconds/', $buffer, $matches);
-
         write_status_to_stdout([
             'status' => 'TIMEOUT',
             'message' => 'Task exceeded maximum execution time (detected in output stream)',
             'output' => $buffer,
         ]);
-
-        update_status_file(
-            'TIMEOUT',
-            'Task exceeded maximum execution time (detected in output stream)'
-        );
-
+        update_status_file('TIMEOUT', 'Task exceeded maximum execution time (detected in output stream)');
         drain_and_wait();
 
         return '';
@@ -213,16 +220,11 @@ function stream_output_handler(string $buffer, int $phase): string
     return '';
 }
 
-/**
- * Recursively checks whether a value contains any objects, which require
- * serialization before being JSON-encoded for transport to the parent.
- */
 function containsObjects(mixed $value): bool
 {
     if (is_object($value)) {
         return true;
     }
-
     if (! is_array($value)) {
         return false;
     }
@@ -236,7 +238,7 @@ function containsObjects(mixed $value): bool
     return false;
 }
 
-// --- Main Worker Loop (Single Task) ---
+// --- Main Worker Loop ---
 
 $taskProcessed = false;
 $maxWaitTime = 5;
@@ -251,11 +253,15 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
 
             break;
         }
-
         usleep(10000);
 
         continue;
     }
+
+    // ── Mark task as in-flight so the shutdown function knows to send an
+    //    ERROR frame if the process dies before it can write a terminal frame.
+    $isProcessing = true;
+    $terminalFrameWritten = false;
 
     ob_start('stream_output_handler', 1);
 
@@ -284,19 +290,17 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
             }
 
             pcntl_signal(SIGALRM, function () {
+                global $terminalFrameWritten;
                 $message = 'Task exceeded maximum execution time (wall-clock timeout)';
 
-                write_status_to_stdout([
-                    'status' => 'TIMEOUT',
-                    'message' => $message,
-                ]);
-
+                write_status_to_stdout(['status' => 'TIMEOUT', 'message' => $message]);
                 update_status_file('TIMEOUT', $message);
+
+                $terminalFrameWritten = true; // prevent double-write in shutdown
 
                 if (ob_get_level() > 0) {
                     ob_end_clean();
                 }
-
                 drain_and_wait();
                 exit(124);
             });
@@ -350,22 +354,18 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
 
         $finalStatus = $needsSerialization
             ? ['status' => 'COMPLETED', 'result' => base64_encode(serialize($result)), 'result_serialized' => true]
-            : ['status' => 'COMPLETED', 'result' => $result, 'result_serialized' => false];
+            : ['status' => 'COMPLETED', 'result' => $result,                           'result_serialized' => false];
 
         write_status_to_stdout($finalStatus);
-        update_status_file('COMPLETED', 'Task completed successfully.', $finalStatus);
+        $terminalFrameWritten = true; // ← clean exit, shutdown function should no-op
 
-        // Keep socket alive until parent signals it has read the result.
-        // Without this drain the process exits immediately after writing,
-        // closing the socket and potentially truncating the COMPLETED frame
-        // before the parent's readLineAsync() has consumed it.
+        update_status_file('COMPLETED', 'Task completed successfully.', $finalStatus);
         drain_and_wait();
 
     } catch (Throwable $e) {
         if (ob_get_level() > 0) {
             ob_end_clean();
         }
-
         if (function_exists('pcntl_alarm')) {
             pcntl_alarm(0);
         }
@@ -381,8 +381,9 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
         ];
 
         write_status_to_stdout($errorStatus);
-        update_status_file('ERROR', $e->getMessage(), $errorStatus);
+        $terminalFrameWritten = true; // ← handled error, shutdown function should no-op
 
+        update_status_file('ERROR', $e->getMessage(), $errorStatus);
         drain_and_wait();
 
     } finally {

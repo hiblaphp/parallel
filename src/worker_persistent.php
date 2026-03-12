@@ -21,16 +21,16 @@ if ($nestingLevel > $maxNestingLevel) {
 }
 // ==========================================
 
-$stdin = fopen('php://stdin', 'r');
+$stdin = fopen('php://stdin',  'r');
 $stdout = fopen('php://stdout', 'w');
 $stderr = fopen('php://stderr', 'w');
 
-// Persistent workers MUST block on read so they don't consume 100% CPU while idle
-stream_set_blocking($stdin, true);
+stream_set_blocking($stdin,  false);
 stream_set_blocking($stdout, false);
 stream_set_blocking($stderr, false);
 
-function write_frame(array $data): void {
+function write_frame(array $data): void
+{
     global $stdout;
     if (is_resource($stdout)) {
         @fwrite($stdout, json_encode($data, JSON_UNESCAPED_SLASHES) . PHP_EOL);
@@ -38,21 +38,57 @@ function write_frame(array $data): void {
     }
 }
 
+// ===== CRASH DETECTION =====
+$currentTaskId = null;
+$isProcessing = false;
+
+register_shutdown_function(function () {
+    global $currentTaskId, $isProcessing;
+
+    // Only signal a crash if this worker died mid-task; idle crashes need no ERROR frame
+    if ($isProcessing && $currentTaskId !== null) {
+        $error = error_get_last();
+        $message = 'Worker process exited or crashed unexpectedly.';
+
+        if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+            $message = 'Fatal Error: ' . $error['message'];
+        }
+
+        // Reject the in-flight task promise on the parent side
+        write_frame([
+            'status' => 'ERROR',
+            'task_id' => $currentTaskId,
+            'class' => 'RuntimeException',
+            'message' => $message,
+            'code' => 0,
+            'file' => $error['file'] ?? 'unknown',
+            'line' => $error['line'] ?? 0,
+            'stack_trace' => 'Worker crashed during execution.',
+        ]);
+
+        // Signal the parent to terminate this worker and respawn a replacement
+        write_frame(['status' => 'CRASHED']);
+    }
+});
+// ===========================
+
 // 1. Read Boot Payload (Autoloader, Bootstrap, Limits)
 $bootPayload = fgets($stdin);
-if (!$bootPayload) exit(1);
+if (! $bootPayload) {
+    exit(1);
+}
 
 $bootData = json_decode($bootPayload, true);
 ini_set('memory_limit', $bootData['memory_limit'] ?? '512M');
 
-if (!empty($bootData['autoload_path']) && file_exists($bootData['autoload_path'])) {
+if (! empty($bootData['autoload_path']) && file_exists($bootData['autoload_path'])) {
     require_once $bootData['autoload_path'];
 }
 
 $serializationManager = new Rcalicdan\Serializer\CallbackSerializationManager();
 
-if (!empty($bootData['framework_bootstrap']) && file_exists($bootData['framework_bootstrap'])) {
-    if (!empty($bootData['framework_bootstrap_callback'])) {
+if (! empty($bootData['framework_bootstrap']) && file_exists($bootData['framework_bootstrap'])) {
+    if (! empty($bootData['framework_bootstrap_callback'])) {
         $bootstrapCallback = $serializationManager->unserializeCallback($bootData['framework_bootstrap_callback']);
         $bootstrapCallback($bootData['framework_bootstrap']);
     } else {
@@ -60,49 +96,52 @@ if (!empty($bootData['framework_bootstrap']) && file_exists($bootData['framework
     }
 }
 
-// 2. Tell the parent the worker is ready to accept tasks
+//Tell the parent the worker is ready to accept tasks
 write_frame(['status' => 'READY']);
 
-// 3. The Persistent Event Loop
 while (($payload = fgets($stdin)) !== false) {
-    if (trim($payload) === '') continue;
+    if (trim($payload) === '') {
+        continue;
+    }
 
     $taskData = json_decode($payload, true);
-    if (!$taskData || !isset($taskData['task_id'])) continue;
+    if (! $taskData || ! isset($taskData['task_id'])) {
+        continue;
+    }
 
-    $taskId = $taskData['task_id'];
-    
-    // Setup Output Buffering to capture echo/print and route it to the specific task_id
-    ob_start(function (string $buffer) use ($taskId) {
+    $currentTaskId = $taskData['task_id'];
+    $isProcessing = true;
+
+    ob_start(function (string $buffer) use ($currentTaskId) {
         if ($buffer !== '') {
-            write_frame(['status' => 'OUTPUT', 'task_id' => $taskId, 'output' => $buffer]);
+            write_frame(['status' => 'OUTPUT', 'task_id' => $currentTaskId, 'output' => $buffer]);
         }
+
         return '';
     }, 1);
 
     try {
         $callback = $serializationManager->unserializeCallback($taskData['serialized_callback']);
-        
-        // Execute the task
         $result = Hibla\await(Hibla\async($callback));
-        ob_end_flush(); // Flush any remaining output
+        ob_end_flush();
 
-        // Serialize and send result
         $needsSerialization = is_object($result) || is_resource($result) || is_array($result);
-        
+
         write_frame([
             'status' => 'COMPLETED',
-            'task_id' => $taskId,
+            'task_id' => $currentTaskId,
             'result' => $needsSerialization ? base64_encode(serialize($result)) : $result,
-            'result_serialized' => $needsSerialization
+            'result_serialized' => $needsSerialization,
         ]);
 
     } catch (Throwable $e) {
-        if (ob_get_level() > 0) ob_end_clean();
-        
+        if (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+
         write_frame([
             'status' => 'ERROR',
-            'task_id' => $taskId,
+            'task_id' => $currentTaskId,
             'class' => get_class($e),
             'message' => $e->getMessage(),
             'code' => $e->getCode(),
@@ -112,12 +151,12 @@ while (($payload = fgets($stdin)) !== false) {
         ]);
     }
 
-    // Clean up memory after every task to prevent persistent memory leaks
+    // Task finished cleanly — clear crash context
+    $isProcessing = false;
+    $currentTaskId = null;
+
     gc_collect_cycles();
-    
-    // Signal that this worker is available for the next task
     write_frame(['status' => 'READY']);
 }
 
-// Clean exit when STDIN is closed by the parent
 exit(0);

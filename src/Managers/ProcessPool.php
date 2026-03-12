@@ -16,13 +16,26 @@ use SplQueue;
  */
 final class ProcessPool
 {
+    /**
+     * @var SplQueue<PersistentProcess>
+     */
     private SplQueue $idleWorkers;
-    private SplQueue $taskQueue;
-    private bool $isShutdown = false;
 
-    /** @var array<int, PersistentProcess> */
+    /**
+     * @var SplQueue<array{0: callable(): mixed, 1: Promise<mixed>, 2: int}>
+     */
+    private SplQueue $taskQueue;
+
+    /**
+     * @var array<int, PersistentProcess>
+     */
     private array $allWorkers = [];
 
+    private bool $isShutdown = false;
+
+    /**
+     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(): mixed)|null} $frameworkInfo
+     */
     public function __construct(
         private readonly int $size,
         private readonly ProcessSpawnHandler $spawnHandler,
@@ -44,20 +57,28 @@ final class ProcessPool
         }
     }
 
+    /**
+     * @template TValue
+     * @param callable(): TValue $task
+     * @return Promise<TValue>
+     */
     public function submit(callable $task, int $timeoutSeconds): Promise
     {
         if ($this->isShutdown) {
-            return Promise::rejected(new \RuntimeException('Cannot submit task to a shutdown pool.'));
+            /** @var Promise<TValue> $promise */
+            $promise = new Promise();
+            $promise->reject(new \RuntimeException('Cannot submit task to a shutdown pool.'));
+
+            return $promise;
         }
 
+        /** @var Promise<TValue> $promise */
         $promise = new Promise();
 
-        // If a worker is free, dispatch immediately.
-        if (!$this->idleWorkers->isEmpty()) {
+        if (! $this->idleWorkers->isEmpty()) {
             $worker = $this->idleWorkers->dequeue();
             $this->dispatch($worker, $task, $promise, $timeoutSeconds);
         } else {
-            // Otherwise, add the task to the queue.
             $this->taskQueue->enqueue([$task, $promise, $timeoutSeconds]);
         }
 
@@ -75,10 +96,9 @@ final class ProcessPool
             $worker->terminate();
         }
 
-        // Reject any tasks that were still in the queue
-        while (!$this->taskQueue->isEmpty()) {
+        while (! $this->taskQueue->isEmpty()) {
             [, $promise] = $this->taskQueue->dequeue();
-            /** @var Promise $promise */
+            /** @var Promise<mixed> $promise */
             $promise->reject(new \RuntimeException('Pool was shut down before the task could be processed.'));
         }
 
@@ -96,36 +116,60 @@ final class ProcessPool
 
         $this->allWorkers[spl_object_id($process)] = $process;
 
-        $onReady = function (PersistentProcess $worker) {
+        $onReady = function (PersistentProcess $worker): void {
             if ($this->isShutdown) {
                 $worker->terminate();
                 unset($this->allWorkers[spl_object_id($worker)]);
+
                 return;
             }
 
-            // If there's a task waiting, give it to this worker
-            if (!$this->taskQueue->isEmpty()) {
-                [$task, $promise, $timeout] = $this->taskQueue->dequeue();
+            if (! $this->taskQueue->isEmpty()) {
+                /** @var array{0: callable(): mixed, 1: Promise<mixed>, 2: int} $queued */
+                $queued = $this->taskQueue->dequeue();
+                [$task, $promise, $timeout] = $queued;
                 $this->dispatch($worker, $task, $promise, $timeout);
             } else {
-                // Otherwise, add it to the idle queue
                 $this->idleWorkers->enqueue($worker);
             }
         };
 
-        $process->startReadLoop($onReady);
+        $onCrash = function (PersistentProcess $worker): void {
+            unset($this->allWorkers[spl_object_id($worker)]);
+
+            if ($this->isShutdown) {
+                return;
+            }
+
+            if (\count($this->allWorkers) < $this->size) {
+                $this->spawnWorker();
+            }
+        };
+
+        $process->startReadLoop($onReady, $onCrash);
     }
 
+    /**
+     * @template TValue
+     * @param callable(): TValue $task
+     * @param Promise<TValue> $promise
+     */
     private function dispatch(PersistentProcess $worker, callable $task, Promise $promise, int $timeoutSeconds): void
     {
         $taskId = $this->systemUtils->generateTaskId();
 
         $payload = [
             'task_id' => $taskId,
-            'serialized_callback' => $this->serializer->serializeCallback($task)
+            'serialized_callback' => $this->serializer->serializeCallback($task),
         ];
 
         $jsonPayload = json_encode($payload, JSON_UNESCAPED_SLASHES);
+
+        if ($jsonPayload === false) {
+            $promise->reject(new \RuntimeException('Failed to encode task payload: ' . json_last_error_msg()));
+
+            return;
+        }
 
         $executionPromise = $worker->submitTask($taskId, $jsonPayload);
 
