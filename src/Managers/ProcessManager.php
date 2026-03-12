@@ -190,10 +190,15 @@ class ProcessManager
 
         foreach ($trace as $frame) {
             $file = $frame['file'] ?? '';
-            // Make sure we skip ParallelExecutor so we capture the actual user code
-            if ($file !== '' && ! str_contains($file, 'ProcessManager.php') && ! str_contains($file, 'namespace_function.php') && ! str_contains($file, 'ParallelExecutor.php')) {
+            if (
+                $file !== ''
+                && !str_contains($file, 'ProcessManager.php')
+                && !str_contains($file, 'namespace_function.php')
+                && !str_contains($file, 'ParallelExecutor.php')
+                && !str_contains($file, 'NonPersistentExecutor.php') 
+            ) {
                 $sourceLocation = $file . ':' . ($frame['line'] ?? '?');
-
+                
                 break;
             }
         }
