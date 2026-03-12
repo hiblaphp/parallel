@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hibla\Parallel\Handlers;
 
 use Hibla\Parallel\BackgroundProcess;
+use Hibla\Parallel\PersistentProcess;
 use Hibla\Parallel\Process;
 use Hibla\Parallel\Utilities\BackgroundLogger;
 use Hibla\Parallel\Utilities\SystemUtilities;
@@ -295,6 +296,77 @@ class ProcessSpawnHandler
             throw new \RuntimeException('Failed to encode task payload: ' . json_last_error_msg());
         }
 
+        return $json;
+    }
+
+    public function spawnPersistentWorker(
+        array $frameworkInfo,
+        CallbackSerializationManager $serializationManager,
+        ?string $memoryLimit = null,
+        int $maxNestingLevel = 5
+    ): PersistentProcess {
+        $phpBinary = $this->systemUtils->getPhpBinary();
+        $workerScript = $this->getWorkerPath('worker_persistent.php'); 
+
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript);
+
+        // Persistent workers need reliable, non-blocking streams. Sockets are best.
+        $descriptorSpec = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $descriptorSpec = [0 => ['socket'], 1 => ['socket'], 2 => ['socket']];
+        }
+
+        $pipes = [];
+        $processResource = @proc_open($command, $descriptorSpec, $pipes);
+        if (! \is_resource($processResource)) {
+            throw new \RuntimeException('Failed to spawn persistent worker process.');
+        }
+
+        stream_set_blocking($pipes[0], false);
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $stdin = new PromiseWritableStream($pipes[0]);
+        $stdout = new PromiseReadableStream($pipes[1]);
+        $stderr = new PromiseReadableStream($pipes[2]);
+
+        // Send the one-time boot payload
+        $bootPayload = $this->createBootPayload($frameworkInfo, $serializationManager, $memoryLimit);
+        $stdin->writeAsync($bootPayload . PHP_EOL);
+
+        $status = proc_get_status($processResource);
+
+        return new PersistentProcess(
+            $status['pid'],
+            $processResource,
+            $stdin,
+            $stdout,
+            $stderr
+        );
+    }
+
+    private function createBootPayload(
+        array $frameworkInfo,
+        CallbackSerializationManager $serializationManager,
+        ?string $memoryLimit = null
+    ): string {
+        $serializedBootstrapCallback = null;
+        if (isset($frameworkInfo['bootstrap_callback']) && is_callable($frameworkInfo['bootstrap_callback'])) {
+            $serializedBootstrapCallback = $serializationManager->serializeCallback($frameworkInfo['bootstrap_callback']);
+        }
+
+        $payloadData = [
+            'autoload_path' => $this->systemUtils->findAutoloadPath(),
+            'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
+            'framework_bootstrap_callback' => $serializedBootstrapCallback,
+            'memory_limit' => $memoryLimit ?? $this->defaultMemoryLimit,
+        ];
+
+        $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);
+        if ($json === false) {
+            throw new \RuntimeException('Failed to encode boot payload.');
+        }
         return $json;
     }
 

@@ -32,9 +32,7 @@ final class ParallelExecutor
 
     private ?int $maxNestingLevel = null;
 
-    public function __construct()
-    {
-    }
+    public function __construct() {}
 
     /**
      * Create a new instance of the ParallelExecutor.
@@ -215,6 +213,20 @@ final class ParallelExecutor
                 $this->bootstrap,
                 $this->maxNestingLevel
             )
+        );
+    }
+
+    public function withPersistentPool(int $size): PersistentPoolExecutor
+    {
+        if ($size < 1) {
+            throw new \InvalidArgumentException('Pool size must be at least 1.');
+        }
+
+        return new PersistentPoolExecutor(
+            $size,
+            $this->bootstrap ?? ProcessManager::getGlobal()->getFrameworkBootstrap(), 
+            $this->memoryLimit,
+            $this->maxNestingLevel ?? ProcessManager::getGlobal()->getMaxNestingLevel()
         );
     }
 }

@@ -96,11 +96,12 @@ final class BackgroundProcess
             $statusData = ['task_id' => $this->taskId];
         }
 
-        $statusData = array_merge($statusData, [
+        $statusData = [
+            ...$statusData,
             'status' => 'CANCELLED',
             'message' => 'Task terminated by parent process',
             'updated_at' => date('Y-m-d H:i:s'),
-        ]);
+        ];
 
         @file_put_contents(
             $this->statusFilePath,
