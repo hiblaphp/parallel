@@ -6,6 +6,7 @@ namespace Hibla\Parallel\Managers;
 
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Internals\PersistentProcess;
+use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 use SplQueue;
@@ -21,7 +22,7 @@ final class ProcessPoolManager
     private SplQueue $idleWorkers;
 
     /**
-     * @var SplQueue<array{0: callable(): mixed, 1: Promise<mixed>, 2: int}>
+     * @var SplQueue<array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string}>
      */
     private SplQueue $taskQueue;
 
@@ -36,6 +37,13 @@ final class ProcessPoolManager
     private array $activeTasks = [];
 
     private bool $isShutdown = false;
+
+    private bool $isShuttingDownGracefully = false;
+
+    /**
+     * @var Promise<void>|null
+     */
+    private ?Promise $shutdownPromise = null;
 
     /**
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(): mixed)|null} $frameworkInfo
@@ -75,9 +83,9 @@ final class ProcessPoolManager
     /**
      * @template TValue
      * @param callable(): TValue $task
-     * @return Promise<TValue>
+     * @return PromiseInterface<TValue>
      */
-    public function submit(callable $task, int $timeoutSeconds): Promise
+    public function submit(callable $task, int $timeoutSeconds, string $sourceLocation = 'unknown'): PromiseInterface
     {
         if ($this->isShutdown) {
             /** @var Promise<TValue> $promise */
@@ -92,28 +100,58 @@ final class ProcessPoolManager
 
         if (! $this->idleWorkers->isEmpty()) {
             $worker = $this->idleWorkers->dequeue();
-            $this->dispatch($worker, $task, $promise, $timeoutSeconds);
+            $this->dispatch($worker, $task, $promise, $timeoutSeconds, $sourceLocation);
         } else {
-            $this->taskQueue->enqueue([$task, $promise, $timeoutSeconds]);
+            $this->taskQueue->enqueue([$task, $promise, $timeoutSeconds, $sourceLocation]);
         }
 
         return $promise;
     }
 
+    /**
+     * Gracefully shuts down the pool.
+     *
+     * Stops accepting new tasks and waits for the queue and active tasks to empty.
+     *
+     * @return PromiseInterface<void>
+     */
+    public function shutdownAsync(): PromiseInterface
+    {
+        if ($this->shutdownPromise !== null) {
+            return $this->shutdownPromise;
+        }
+
+        /** @var Promise<void> $promise */
+        $promise = new Promise();
+        $this->shutdownPromise = $promise;
+        $this->isShutdown = true;
+        $this->isShuttingDownGracefully = true;
+
+        $this->checkGracefulShutdownCompletion();
+
+        return $promise;
+    }
+
+    /**
+     * Forcefully shuts down the pool.
+     */
     public function shutdown(): void
     {
-        if ($this->isShutdown) {
+        if ($this->isShutdown && ! $this->isShuttingDownGracefully) {
             return;
         }
+
         $this->isShutdown = true;
+        $this->isShuttingDownGracefully = false; // Override graceful state
 
         foreach ($this->allWorkers as $worker) {
             $worker->terminate();
         }
 
         while (! $this->taskQueue->isEmpty()) {
-            [, $promise] = $this->taskQueue->dequeue();
+            $taskData = $this->taskQueue->dequeue();
             /** @var Promise<mixed> $promise */
+            $promise = $taskData[1];
             $promise->reject(new \RuntimeException('Pool was shut down before the task could be processed.'));
         }
 
@@ -125,14 +163,49 @@ final class ProcessPoolManager
 
         $this->allWorkers = [];
         $this->activeTasks = [];
+        $this->idleWorkers = new SplQueue();
+
+        if ($this->shutdownPromise !== null && ! $this->shutdownPromise->isFulfilled() && ! $this->shutdownPromise->isRejected()) {
+            $this->shutdownPromise->resolve(null);
+        }
     }
 
-    /**
-     * Halts the pool entirely if a worker fails to boot (e.g. syntax error, nesting limit).
-     */
+    private function checkGracefulShutdownCompletion(): void
+    {
+        if (! $this->isShuttingDownGracefully) {
+            return;
+        }
+
+        // Wait for all queued tasks to be dispatched
+        if (! $this->taskQueue->isEmpty()) {
+            return;
+        }
+
+        // Wait for all active tasks to complete
+        foreach ($this->activeTasks as $tasks) {
+            if (\count($tasks) > 0) {
+                return;
+            }
+        }
+
+        // All done! Terminate workers and finalize shutdown.
+        foreach ($this->allWorkers as $worker) {
+            $worker->terminate();
+        }
+
+        $this->allWorkers = [];
+        $this->activeTasks = [];
+        $this->idleWorkers = new SplQueue();
+
+        if ($this->shutdownPromise !== null && ! $this->shutdownPromise->isFulfilled() && ! $this->shutdownPromise->isRejected()) {
+            $this->shutdownPromise->resolve(null);
+        }
+    }
+
     private function shutdownDueToFatalError(\Throwable $e): void
     {
         $this->isShutdown = true;
+        $this->isShuttingDownGracefully = false;
 
         foreach ($this->allWorkers as $worker) {
             $worker->terminate();
@@ -140,8 +213,9 @@ final class ProcessPoolManager
         $this->allWorkers = [];
 
         while (! $this->taskQueue->isEmpty()) {
-            [, $promise] = $this->taskQueue->dequeue();
+            $taskData = $this->taskQueue->dequeue();
             /** @var Promise<mixed> $promise */
+            $promise = $taskData[1];
             $promise->reject($e);
         }
 
@@ -151,6 +225,11 @@ final class ProcessPoolManager
             }
         }
         $this->activeTasks = [];
+        $this->idleWorkers = new SplQueue();
+
+        if ($this->shutdownPromise !== null && ! $this->shutdownPromise->isFulfilled() && ! $this->shutdownPromise->isRejected()) {
+            $this->shutdownPromise->reject($e);
+        }
     }
 
     private function spawnWorker(): void
@@ -170,7 +249,7 @@ final class ProcessPoolManager
         $onReady = function (PersistentProcess $worker) use (&$workerIsReady): void {
             $workerIsReady = true;
 
-            if ($this->isShutdown) {
+            if ($this->isShutdown && ! $this->isShuttingDownGracefully) {
                 $worker->terminate();
                 unset($this->allWorkers[spl_object_id($worker)]);
 
@@ -178,12 +257,19 @@ final class ProcessPoolManager
             }
 
             if (! $this->taskQueue->isEmpty()) {
-                /** @var array{0: callable(): mixed, 1: Promise<mixed>, 2: int} $queued */
+                /** @var array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string} $queued */
                 $queued = $this->taskQueue->dequeue();
-                [$task, $promise, $timeout] = $queued;
-                $this->dispatch($worker, $task, $promise, $timeout);
+                [$task, $promise, $timeout, $sourceLocation] = $queued;
+                $this->dispatch($worker, $task, $promise, $timeout, $sourceLocation);
             } else {
-                $this->idleWorkers->enqueue($worker);
+                if ($this->isShuttingDownGracefully) {
+                    // Graceful shutdown: No tasks left in queue. kill this worker early.
+                    $worker->terminate();
+                    unset($this->allWorkers[spl_object_id($worker)]);
+                    $this->checkGracefulShutdownCompletion();
+                } else {
+                    $this->idleWorkers->enqueue($worker);
+                }
             }
         };
 
@@ -201,6 +287,10 @@ final class ProcessPoolManager
             unset($this->activeTasks[$wId]);
 
             if ($this->isShutdown) {
+                if ($this->isShuttingDownGracefully) {
+                    $this->checkGracefulShutdownCompletion();
+                }
+
                 return;
             }
 
@@ -225,7 +315,7 @@ final class ProcessPoolManager
      * @param callable(): TValue $task
      * @param Promise<TValue> $promise
      */
-    private function dispatch(PersistentProcess $worker, callable $task, Promise $promise, int $timeoutSeconds): void
+    private function dispatch(PersistentProcess $worker, callable $task, Promise $promise, int $timeoutSeconds, string $sourceLocation): void
     {
         $taskId = bin2hex(random_bytes(16));
 
@@ -256,7 +346,7 @@ final class ProcessPoolManager
         $workerId = spl_object_id($worker);
         $this->activeTasks[$workerId][$taskId] = $promise;
 
-        $executionPromise = $worker->submitTask($taskId, $jsonPayload);
+        $executionPromise = $worker->submitTask($taskId, $jsonPayload, $sourceLocation);
 
         if ($timeoutSeconds > 0) {
             $executionPromise = Promise::timeout($executionPromise, $timeoutSeconds);
@@ -266,11 +356,23 @@ final class ProcessPoolManager
             function ($value) use ($workerId, $taskId, $promise) {
                 unset($this->activeTasks[$workerId][$taskId]);
                 $promise->resolve($value);
+                $this->checkGracefulShutdownCompletion();
             },
             function ($reason) use ($workerId, $taskId, $promise) {
                 unset($this->activeTasks[$workerId][$taskId]);
                 $promise->reject($reason);
+                $this->checkGracefulShutdownCompletion();
             }
         );
+    }
+
+    /**
+     * Automatically shut down the pool manager and release resources when garbage collected.
+     */
+    public function __destruct()
+    {
+        if (! $this->isShutdown) {
+            $this->shutdown();
+        }
     }
 }

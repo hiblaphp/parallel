@@ -2,18 +2,18 @@
 
 declare(strict_types=1);
 
-namespace Hibla\Parallel\Internals;
+namespace Hibla\Parallel;
 
-use Hibla\Parallel\Interfaces\PersistentPoolExecutorInterface;
+use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\Managers\ProcessPoolManager;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 
 /**
- * @internal Concrete implementation — use ParallelExecutor::createPersistentPool()
+ * Class for managing a pool of persistent worker processes.
  */
-final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
+final class ProcessPool implements ProcessPoolInterface
 {
     private int $timeoutSeconds = 60;
 
@@ -28,7 +28,7 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
     private bool $isShutdown = false;
 
     /**
-     * @var array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(): mixed)|null}|null
+     * @var array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(string): mixed)|null}|null
      */
     private ?array $bootstrap = null;
 
@@ -45,6 +45,9 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
         return $clone;
     }
 
+    /**
+     * @inheritdoc
+     */
     public function withoutTimeout(): static
     {
         $clone = clone $this;
@@ -53,6 +56,9 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
         return $clone;
     }
 
+    /**
+     * @inheritdoc
+     */
     public function withMemoryLimit(string $limit): static
     {
         $clone = clone $this;
@@ -61,11 +67,17 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
         return $clone;
     }
 
+    /**
+     * @inheritdoc
+     */
     public function withUnlimitedMemory(): static
     {
         return $this->withMemoryLimit('-1');
     }
 
+    /**
+     * @inheritdoc
+     */
     public function withBootstrap(string $file, ?callable $callback = null): static
     {
         $clone = clone $this;
@@ -78,6 +90,9 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
         return $clone;
     }
 
+    /**
+     * @inheritdoc
+     */
     public function withMaxNestingLevel(int $level): static
     {
         if ($level < 1 || $level > 10) {
@@ -92,30 +107,65 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
 
     /**
      * @template TResult
-     * @param callable(): TResult $task
+     * @inheritdoc
      * @return PromiseInterface<TResult>
      */
-    public function run(callable $task): PromiseInterface
+    public function run(callable $callback): PromiseInterface
     {
         if ($this->isShutdown) {
             return Promise::rejected(new \RuntimeException('Cannot submit task to a shutdown pool.'));
         }
 
+        $sourceLocation = 'unknown';
+        $trace = debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS, 4);
+
+        foreach ($trace as $frame) {
+            $file = $frame['file'] ?? '';
+            if (
+                $file !== ''
+                && ! str_contains($file, 'ProcessPool.php')
+                && ! str_contains($file, 'Parallel.php')
+            ) {
+                $sourceLocation = $file . ':' . ($frame['line'] ?? '?');
+
+                break;
+            }
+        }
+
         $finalTimeout = $this->unlimitedTimeout ? 0 : $this->timeoutSeconds;
 
-        return $this->getPool()->submit($task, $finalTimeout);
+        /** @var PromiseInterface<TResult> */
+        return $this->getPool()->submit($callback, $finalTimeout, $sourceLocation);
     }
 
+    /**
+     * @inheritdoc
+     * @return PromiseInterface<void>
+     */
+    public function shutdownAsync(): PromiseInterface
+    {
+        $this->isShutdown = true;
+
+        if ($this->pool !== null) {
+            $promise = $this->pool->shutdownAsync();
+            $promise->finally(function () {
+                $this->pool = null;
+            });
+
+            return $promise;
+        }
+
+        return Promise::resolved();
+    }
+
+    /**
+     * @inheritdoc
+     */
     public function shutdown(): void
     {
         $this->isShutdown = true;
         $this->pool?->shutdown();
         $this->pool = null;
-    }
-
-    public function __destruct()
-    {
-        $this->shutdown();
     }
 
     private function getPool(): ProcessPoolManager
@@ -134,5 +184,15 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
         }
 
         return $this->pool;
+    }
+
+    /**
+     * Automatically shut down the pool and release resources when garbage collected.
+     */
+    public function __destruct()
+    {
+        if (! $this->isShutdown) {
+            $this->shutdown();
+        }
     }
 }

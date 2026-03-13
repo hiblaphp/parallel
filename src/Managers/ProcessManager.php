@@ -13,8 +13,8 @@ use Rcalicdan\Serializer\CallbackSerializationManager;
 use Rcalicdan\Serializer\Exceptions\SerializationException;
 
 /**
- * @internal 
- * 
+ * @internal
+ *
  * Manages the lifecycle of parallel processes and background tasks.
  *
  * This class serves as the central coordinator for spawning, tracking, and managing
@@ -105,25 +105,31 @@ class ProcessManager
         if ($maxSpawnsPerSecond !== null) {
             $this->maxSpawnsPerSecond = $maxSpawnsPerSecond;
         } else {
-            /** @var int $configLimit */
             $configLimit = Config::loadFromRoot(
                 'hibla_parallel',
                 'background_process.spawn_limit_per_second',
                 self::DEFAULT_SPAWN_LIMIT
             );
-            $this->maxSpawnsPerSecond = (int) $configLimit;
+            $this->maxSpawnsPerSecond = is_numeric($configLimit) ? (int) $configLimit : self::DEFAULT_SPAWN_LIMIT;
         }
 
         if ($maxNestingLevel !== null) {
             $this->maxNestingLevel = $maxNestingLevel;
         } else {
-            /** @var int $configNesting */
-            $configNesting = Config::loadFromRoot(
-                'hibla_parallel',
-                'max_nesting_level',
-                self::DEFAULT_MAX_NESTING_LEVEL
-            );
-            $this->maxNestingLevel = (int) $configNesting;
+            // Prioritize the environment variable if it exists (for nested processes)
+            $envNestingLevel = $_SERVER['HIBLA_MAX_NESTING_LEVEL'] ?? $_ENV['HIBLA_MAX_NESTING_LEVEL'] ?? getenv('HIBLA_MAX_NESTING_LEVEL');
+
+            if ($envNestingLevel !== false && $envNestingLevel !== '') {
+                $this->maxNestingLevel = is_numeric($envNestingLevel) ? (int) $envNestingLevel : self::DEFAULT_MAX_NESTING_LEVEL;
+            } else {
+                // Fall back to config file if the env var isn't set (for the main process)
+                $configNesting = Config::loadFromRoot(
+                    'hibla_parallel',
+                    'max_nesting_level',
+                    self::DEFAULT_MAX_NESTING_LEVEL
+                );
+                $this->maxNestingLevel = is_numeric($configNesting) ? (int) $configNesting : self::DEFAULT_MAX_NESTING_LEVEL;
+            }
         }
 
         if ($this->maxNestingLevel < 1) {
@@ -178,8 +184,9 @@ class ProcessManager
                 $file !== ''
                 && ! str_contains($file, 'ProcessManager.php')
                 && ! str_contains($file, 'functions.php')
+                && ! str_contains($file, 'Parallel.php')
                 && ! str_contains($file, 'ParallelExecutor.php')
-                && ! str_contains($file, 'NonPersistentExecutor.php')
+                && ! str_contains($file, 'ProcessPool.php')
             ) {
                 $sourceLocation = $file . ':' . ($frame['line'] ?? '?');
 
@@ -261,9 +268,9 @@ class ProcessManager
      */
     public function getCurrentNestingLevel(): int
     {
-        $nestingLevel = getenv('DEFER_NESTING_LEVEL');
+        $nestingLevel = $_SERVER['DEFER_NESTING_LEVEL'] ?? $_ENV['DEFER_NESTING_LEVEL'] ?? getenv('DEFER_NESTING_LEVEL');
 
-        return (int)($nestingLevel !== false ? $nestingLevel : 0);
+        return is_numeric($nestingLevel) ? (int) $nestingLevel : 0;
     }
 
     /**
@@ -328,7 +335,7 @@ class ProcessManager
                 'Cannot spawn parallel task: Already at maximum nesting level ' .
                     "{$currentLevel}/{$maxNestingLevel}. " .
                     "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file, " .
-                    'or use ->withMaxNestingLevel() on the ParallelExecutor. ' .
+                    'or use ->withMaxNestingLevel() on the Parallel. ' .
                     'Maximum safe limit is 10 levels.'
             );
         }

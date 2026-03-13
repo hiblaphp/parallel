@@ -11,7 +11,6 @@ use Hibla\Promise\Promise;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 
 describe('ProcessPoolManager', function () {
-
     $buildPool = function (int $size) {
         $utils = new SystemUtilities();
         $serializer = new CallbackSerializationManager();
@@ -200,7 +199,6 @@ describe('ProcessPoolManager', function () {
         $queued1 = $pool->submit(fn () => 'queued-1', 5);
         $queued2 = $pool->submit(fn () => 'queued-2', 5);
         $queued3 = $pool->submit(fn () => 'queued-3', 5);
-
         [$crashResult, $r1, $r2, $r3] = await(Promise::allSettled([$crash, $queued1, $queued2, $queued3]));
 
         expect($crashResult->isRejected())->toBeTrue();
@@ -301,5 +299,42 @@ describe('ProcessPoolManager', function () {
         expect(count($uniquePids))->toBeLessThanOrEqual(3);
 
         $pool->shutdown();
+    });
+
+    it('allows active and queued tasks to finish when using shutdownAsync', function () use ($buildPool) {
+        $pool = $buildPool(1);
+
+        $p1 = $pool->submit(function () {
+            usleep(200000);
+
+            return 'task-1';
+        }, 5);
+
+        $p2 = $pool->submit(function () {
+            usleep(200000);
+
+            return 'task-2';
+        }, 5);
+
+        $shutdownPromise = $pool->shutdownAsync();
+
+        $results = await(Promise::all([$p1, $p2, $shutdownPromise]));
+
+        expect($results[0])->toBe('task-1');
+        expect($results[1])->toBe('task-2');
+        expect($results[2])->toBeNull();
+    });
+
+    it('rejects new tasks immediately if shutdownAsync has been called', function () use ($buildPool) {
+        $pool = $buildPool(2);
+
+        $pool->shutdownAsync();
+
+        $result = await(Promise::allSettled([
+            $pool->submit(fn () => 'too late', 5),
+        ]));
+
+        expect($result[0]->isRejected())->toBeTrue();
+        expect($result[0]->reason->getMessage())->toContain('shutdown');
     });
 });

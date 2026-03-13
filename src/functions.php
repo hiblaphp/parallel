@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace Hibla;
 
 use Hibla\Parallel\Internals\BackgroundProcess;
-use Hibla\Parallel\ParallelExecutor;
+use Hibla\Parallel\Parallel;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Rcalicdan\Serializer\Exceptions\SerializationException;
 
@@ -62,7 +62,7 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  */
 function parallel(callable $task, int $timeout = 60): PromiseInterface
 {
-    return ParallelExecutor::create()
+    return Parallel::task()
         ->withTimeout($timeout)
         ->run($task)
     ;
@@ -131,7 +131,7 @@ function parallelFn(callable $task, int $timeout = 60): callable
  */
 function spawn(callable $task, int $timeout = 600): PromiseInterface
 {
-    return ParallelExecutor::create()
+    return Parallel::task()
         ->withTimeout($timeout)
         ->spawn($task)
     ;

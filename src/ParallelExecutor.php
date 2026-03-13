@@ -4,61 +4,151 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel;
 
-use Hibla\Parallel\Interfaces\NonPersistentExecutorInterface;
-use Hibla\Parallel\Interfaces\PersistentPoolExecutorInterface;
-use Hibla\Parallel\Internals\NonPersistentExecutor;
-use Hibla\Parallel\Internals\PersistentPoolExecutor;
+use Hibla\Cancellation\CancellationTokenSource;
+use Hibla\Parallel\Interfaces\ParallelExecutorInterface;
+use Hibla\Parallel\Managers\ProcessManager;
+use Hibla\Promise\Interfaces\PromiseInterface;
+use Hibla\Promise\Promise;
 
 /**
- * Static facade and entry point for all parallel execution strategies.
- *
- * @example
- * ```php
- * // One-off parallel task
- * $result = await(
- *     ParallelExecutor::create()
- *         ->withTimeout(30)
- *         ->withMemoryLimit('256M')
- *         ->run(fn() => heavyWork())
- * );
- *
- * // Persistent worker pool
- * $pool = ParallelExecutor::createPersistentPool(size: 4)
- *     ->withTimeout(30)
- *     ->withMemoryLimit('256M');
- *
- * $result = await($pool->run(fn() => heavyWork()));
- * $pool->shutdown();
- * ```
+ * Class for executing one-off parallel tasks and background processes.
  */
-final class ParallelExecutor
+final class ParallelExecutor implements ParallelExecutorInterface
 {
-    private function __construct()
+    /**
+     * @var array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null
+     */
+    private ?array $bootstrap = null;
+
+    private ?string $memoryLimit = null;
+
+    private ?int $maxNestingLevel = null;
+
+    private int $timeoutSeconds = 60;
+
+    private bool $unlimitedTimeout = false;
+
+    public function __construct()
     {
     }
 
     /**
-     * Create a fluent builder for a one-off parallel task or background process.
-     * Each run() call spawns a fresh worker process.
+     * @inheritdoc
      */
-    public static function create(): NonPersistentExecutorInterface
+    public function withTimeout(int $seconds): static
     {
-        return new NonPersistentExecutor();
+        $clone = clone $this;
+        $clone->timeoutSeconds = $seconds;
+        $clone->unlimitedTimeout = false;
+
+        return $clone;
     }
 
     /**
-     * Create a fluent builder for a persistent worker pool.
-     * Workers are spawned once and reused across multiple task submissions.
-     *
-     * @param int $size Number of persistent worker processes to maintain
-     * @throws \InvalidArgumentException If size is less than 1
+     * @inheritdoc
      */
-    public static function createPersistentPool(int $size): PersistentPoolExecutorInterface
+    public function withoutTimeout(): static
     {
-        if ($size < 1) {
-            throw new \InvalidArgumentException('Pool size must be at least 1.');
+        $clone = clone $this;
+        $clone->unlimitedTimeout = true;
+
+        return $clone;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function withMemoryLimit(string $limit): static
+    {
+        $clone = clone $this;
+        $clone->memoryLimit = $limit;
+
+        return $clone;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function withUnlimitedMemory(): static
+    {
+        return $this->withMemoryLimit('-1');
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function withBootstrap(string $file, ?callable $callback = null): static
+    {
+        $clone = clone $this;
+        $clone->bootstrap = [
+            'name' => 'custom',
+            'bootstrap_file' => $file,
+            'bootstrap_callback' => $callback,
+        ];
+
+        return $clone;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function withMaxNestingLevel(int $level): static
+    {
+        if ($level < 1 || $level > 10) {
+            throw new \InvalidArgumentException('max_nesting_level must be between 1 and 10.');
         }
 
-        return new PersistentPoolExecutor($size);
+        $clone = clone $this;
+        $clone->maxNestingLevel = $level;
+
+        return $clone;
+    }
+
+    /**
+     * @template TResult
+     * @inheritdoc
+     * @return PromiseInterface<TResult>
+     */
+    public function run(callable $callback): PromiseInterface
+    {
+        $source = new CancellationTokenSource();
+        $finalTimeout = $this->unlimitedTimeout ? 0 : $this->timeoutSeconds;
+
+        $process = ProcessManager::getGlobal()->spawnStreamedTask(
+            $callback,
+            $finalTimeout,
+            $this->memoryLimit,
+            $this->bootstrap,
+            $this->maxNestingLevel
+        );
+
+        $source->token->onCancel(static function () use ($process) {
+            $process->terminate();
+        });
+
+        /** @var PromiseInterface<TResult> */
+        return $process->getResult($finalTimeout)
+            ->onCancel(static function () use ($source) {
+                $source->cancel();
+            })
+        ;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function spawn(callable $callback): PromiseInterface
+    {
+        $finalTimeout = $this->unlimitedTimeout ? 0 : $this->timeoutSeconds;
+
+        return Promise::resolved(
+            ProcessManager::getGlobal()->spawnBackgroundTask(
+                $callback,
+                $finalTimeout,
+                $this->memoryLimit,
+                $this->bootstrap,
+                $this->maxNestingLevel
+            )
+        );
     }
 }

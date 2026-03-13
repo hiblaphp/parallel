@@ -11,14 +11,21 @@ putenv('DEFER_BACKGROUND_PROCESS=1');
 $_ENV['DEFER_BACKGROUND_PROCESS'] = '1';
 $_SERVER['DEFER_BACKGROUND_PROCESS'] = '1';
 
-$maxNestingLevel = (int)(getenv('HIBLA_MAX_NESTING_LEVEL') ?: 3);
-$nestingLevel = (int)(getenv('DEFER_NESTING_LEVEL') ?: 0) + 1;
+// Read from $argv[1] primarily, fallback to getenv
+$maxNestingLevel = (int)($argv[1] ?? getenv('HIBLA_MAX_NESTING_LEVEL') ?: 3);
+
+putenv("HIBLA_MAX_NESTING_LEVEL={$maxNestingLevel}");
+$_ENV['HIBLA_MAX_NESTING_LEVEL'] = (string)$maxNestingLevel;
+$_SERVER['HIBLA_MAX_NESTING_LEVEL'] = (string)$maxNestingLevel;
+
+// Increment the current level
+$nestingLevel = (int)($_SERVER['DEFER_NESTING_LEVEL'] ?? $_ENV['DEFER_NESTING_LEVEL'] ?? getenv('DEFER_NESTING_LEVEL') ?: 0) + 1;
 putenv("DEFER_NESTING_LEVEL={$nestingLevel}");
 $_ENV['DEFER_NESTING_LEVEL'] = (string)$nestingLevel;
 $_SERVER['DEFER_NESTING_LEVEL'] = (string)$nestingLevel;
 
 if ($nestingLevel > $maxNestingLevel) {
-    fwrite(STDERR, "FATAL: Nesting level {$nestingLevel} exceeds maximum ({$maxNestingLevel}). Exiting to prevent fork bomb.\n");
+    fwrite(STDERR, "FATAL: Nesting level {$nestingLevel} exceeds maximum.\n");
     exit(1);
 }
 // ==========================================

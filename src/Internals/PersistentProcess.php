@@ -19,7 +19,7 @@ use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
 final class PersistentProcess
 {
     /**
-     * @var array<string, Promise<mixed>>
+     * @var array<string, array{promise: Promise<mixed>, location: string}>
      */
     private array $pendingTasks = [];
 
@@ -94,7 +94,9 @@ final class PersistentProcess
                         continue;
                     }
 
-                    $promise = $this->pendingTasks[$taskId];
+                    $taskMeta = $this->pendingTasks[$taskId];
+                    $promise = $taskMeta['promise'];
+                    $sourceLocation = $taskMeta['location'];
 
                     if ($status === 'OUTPUT') {
                         $output = $data['output'] ?? '';
@@ -113,7 +115,7 @@ final class PersistentProcess
                         $promise->resolve($result);
                     } elseif ($status === 'ERROR') {
                         /** @var array<string, mixed> $data */
-                        $exception = ExceptionHandler::createFromWorkerError($data, 'unknown');
+                        $exception = ExceptionHandler::createFromWorkerError($data, $sourceLocation);
                         unset($this->pendingTasks[$taskId]);
                         $promise->reject($exception);
                     }
@@ -131,13 +133,13 @@ final class PersistentProcess
     /**
      * @return PromiseInterface<mixed>
      */
-    public function submitTask(string $taskId, string $payload): PromiseInterface
+    public function submitTask(string $taskId, string $payload, string $sourceLocation = 'unknown'): PromiseInterface
     {
         $this->isBusy = true;
 
         /** @var Promise<mixed> $promise */
         $promise = new Promise();
-        $this->pendingTasks[$taskId] = $promise;
+        $this->pendingTasks[$taskId] = ['promise' => $promise, 'location' => $sourceLocation];
 
         async(fn () => await($this->stdin->writeAsync($payload . PHP_EOL)));
 
@@ -183,8 +185,8 @@ final class PersistentProcess
         $this->isAlive = false;
         $this->isBusy = false;
 
-        foreach ($this->pendingTasks as $taskId => $promise) {
-            $promise->reject(new \RuntimeException(
+        foreach ($this->pendingTasks as $taskId => $taskMeta) {
+            $taskMeta['promise']->reject(new \RuntimeException(
                 "Persistent worker PID {$this->pid} crashed or stream closed while executing task {$taskId}."
             ));
         }
