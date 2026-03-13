@@ -7,7 +7,6 @@ namespace Hibla\Parallel\Internals;
 use function Hibla\async;
 use function Hibla\await;
 
-use Hibla\Parallel\Exceptions\ParallelException;
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
 use Hibla\Promise\Interfaces\PromiseInterface;

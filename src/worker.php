@@ -54,7 +54,7 @@ register_shutdown_function(function () {
 
         write_status_to_stdout([
             'status' => $isTimeout ? 'TIMEOUT' : 'ERROR',
-            'class' => $isTimeout ? \Hibla\Parallel\Exceptions\TimeoutException::class : \Hibla\Parallel\Exceptions\ProcessCrashedException::class,
+            'class' => $isTimeout ? Hibla\Parallel\Exceptions\TimeoutException::class : Hibla\Parallel\Exceptions\ProcessCrashedException::class,
             'message' => $message,
             'code' => 0,
             'file' => $error['file'] ?? 'unknown',
@@ -64,7 +64,7 @@ register_shutdown_function(function () {
     } else {
         write_status_to_stdout([
             'status' => 'ERROR',
-            'class' => \Hibla\Parallel\Exceptions\ProcessCrashedException::class,
+            'class' => Hibla\Parallel\Exceptions\ProcessCrashedException::class,
             'message' => $message,
             'code' => 0,
             'file' => 'unknown',

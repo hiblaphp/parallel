@@ -120,7 +120,7 @@ describe('Parallel Feature Test', function () {
         $tempFiles[] = $proofFile;
 
         $process = await(
-            Parallel::task()
+            Parallel::background()
                 ->spawn(function () use ($proofFile) {
                     file_put_contents($proofFile, 'spawned');
                 })
@@ -144,13 +144,13 @@ describe('Parallel Feature Test', function () {
         putenv('DEFER_NESTING_LEVEL=2');
 
         expect(
-            fn () => Parallel::task()
+            fn () => Parallel::background()
                 ->withMaxNestingLevel(2)
                 ->spawn(fn () => true)
         )->toThrow(\RuntimeException::class, 'Already at maximum nesting level');
 
         $process = await(
-            Parallel::task()
+            Parallel::background()
                 ->withMaxNestingLevel(3)
                 ->spawn(fn () => true)
         );

@@ -124,7 +124,7 @@ function parallelFn(callable $task, int $timeout = 60): callable
  */
 function spawn(callable $task, int $timeout = 600): PromiseInterface
 {
-    return Parallel::task()
+    return Parallel::background()
         ->withTimeout($timeout)
         ->spawn($task)
     ;

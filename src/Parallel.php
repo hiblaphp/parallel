@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel;
 
+use Hibla\Parallel\Interfaces\BackgroundExecutorInterface;
 use Hibla\Parallel\Interfaces\ParallelExecutorInterface;
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 
@@ -42,6 +43,15 @@ final class Parallel
     public static function task(): ParallelExecutorInterface
     {
         return new ParallelExecutor();
+    }
+
+    /**
+     * Create a fluent builder for a fire-and-forget background process.
+     * The process runs completely detached from the parent.
+     */
+    public static function background(): BackgroundExecutorInterface
+    {
+        return new BackgroundExecutor();
     }
 
     /**

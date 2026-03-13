@@ -11,9 +11,9 @@ use Hibla\Parallel\Exceptions\TaskPayloadException;
 use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Internals\PersistentProcess;
+use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
-use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 use SplQueue;
 

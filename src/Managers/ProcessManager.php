@@ -332,7 +332,7 @@ class ProcessManager
     {
         $currentLevel = $this->getCurrentNestingLevel();
 
-        if (!$this->serializer->canSerializeCallback($callback)) {
+        if (! $this->serializer->canSerializeCallback($callback)) {
             throw new TaskPayloadException(
                 'Callback cannot be serialized. ' .
                 'Please ensure it is a valid PHP callable and does not contain unserializable types.'

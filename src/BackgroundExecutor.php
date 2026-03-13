@@ -4,15 +4,15 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel;
 
-use Hibla\Cancellation\CancellationTokenSource;
-use Hibla\Parallel\Interfaces\ParallelExecutorInterface;
+use Hibla\Parallel\Interfaces\BackgroundExecutorInterface;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Promise\Interfaces\PromiseInterface;
+use Hibla\Promise\Promise;
 
 /**
- * Class for executing one-off parallel tasks and background processes.
+ * Class for spawning fire-and-forget background processes.
  */
-final class ParallelExecutor implements ParallelExecutorInterface
+final class BackgroundExecutor implements BackgroundExecutorInterface
 {
     /**
      * @var array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null
@@ -23,7 +23,7 @@ final class ParallelExecutor implements ParallelExecutorInterface
 
     private ?int $maxNestingLevel = null;
 
-    private int $timeoutSeconds = 60;
+    private int $timeoutSeconds = 600;
 
     private bool $unlimitedTimeout = false;
 
@@ -104,32 +104,20 @@ final class ParallelExecutor implements ParallelExecutorInterface
     }
 
     /**
-     * @template TResult
      * @inheritdoc
-     * @return PromiseInterface<TResult>
      */
-    public function run(callable $callback): PromiseInterface
+    public function spawn(callable $callback): PromiseInterface
     {
-        $source = new CancellationTokenSource();
         $finalTimeout = $this->unlimitedTimeout ? 0 : $this->timeoutSeconds;
 
-        $process = ProcessManager::getGlobal()->spawnStreamedTask(
-            $callback,
-            $finalTimeout,
-            $this->memoryLimit,
-            $this->bootstrap,
-            $this->maxNestingLevel
+        return Promise::resolved(
+            ProcessManager::getGlobal()->spawnBackgroundTask(
+                $callback,
+                $finalTimeout,
+                $this->memoryLimit,
+                $this->bootstrap,
+                $this->maxNestingLevel
+            )
         );
-
-        $source->token->onCancel(static function () use ($process) {
-            $process->terminate();
-        });
-
-        /** @var PromiseInterface<TResult> */
-        return $process->getResult($finalTimeout)
-            ->onCancel(static function () use ($source) {
-                $source->cancel();
-            })
-        ;
     }
 }
