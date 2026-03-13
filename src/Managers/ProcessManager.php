@@ -13,6 +13,8 @@ use Rcalicdan\Serializer\CallbackSerializationManager;
 use Rcalicdan\Serializer\Exceptions\SerializationException;
 
 /**
+ * @internal 
+ * 
  * Manages the lifecycle of parallel processes and background tasks.
  *
  * This class serves as the central coordinator for spawning, tracking, and managing

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace Hibla\Parallel\Internals;
 
 /**
+ * @internal 
+ * 
  * Represents a fire-and-forget background process.
  * Does not support retrieving results or streaming output.
  */

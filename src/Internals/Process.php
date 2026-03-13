@@ -16,6 +16,8 @@ use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
 
 /**
+ * @internal 
+ * 
  * Concrete implementation of a background process that returns a value.
  * Used for parallel() calls.
  *
