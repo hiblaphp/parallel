@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Internals;
 
-use PHPStan\Process\ProcessCrashedException;
 use function Hibla\async;
 use function Hibla\await;
 
+use Hibla\Parallel\Exceptions\ProcessCrashedException;
+use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
-use Hibla\Promise\Exceptions\TimeoutException;
+use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Hibla\Stream\Exceptions\StreamException;
@@ -70,10 +71,10 @@ final class Process
                 }
 
                 return await($resultPromise);
-            } catch (TimeoutException) {
+            } catch (PromiseTimeoutException) {
                 $this->terminate();
 
-                throw new TimeoutException("Process PID {$this->pid} timed out after {$timeoutSeconds} seconds.");
+                throw new TimeoutException("Process timeout after {$timeoutSeconds} seconds");
             } catch (\Throwable $e) {
                 $this->terminate();
 
@@ -175,7 +176,6 @@ final class Process
      * is never reached.
      *
      * @return PromiseInterface<TResult> Promise that resolves with the task result
-     * @throws \RuntimeException If the task fails or the stream ends without a terminal frame
      */
     private function readResultFromStream(): PromiseInterface
     {

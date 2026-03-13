@@ -71,7 +71,7 @@ register_shutdown_function(function () {
         write_frame([
             'status' => 'ERROR',
             'task_id' => $currentTaskId,
-            'class' => 'RuntimeException',
+            'class' => \Hibla\Parallel\Exceptions\ProcessCrashedException::class, 
             'message' => $message,
             'code' => 0,
             'file' => $error['file'] ?? 'unknown',

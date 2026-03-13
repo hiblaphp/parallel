@@ -6,12 +6,14 @@ namespace Hibla\Parallel\Managers;
 
 use Hibla\Parallel\Exceptions\NestingLimitException;
 use Hibla\Parallel\Exceptions\PoolShutdownException;
+use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Exceptions\TaskPayloadException;
+use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Internals\PersistentProcess;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
-use PHPStan\Process\ProcessCrashedException;
+use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 use SplQueue;
 
@@ -362,9 +364,15 @@ final class ProcessPoolManager
                 $promise->resolve($value);
                 $this->checkGracefulShutdownCompletion();
             },
-            function ($reason) use ($workerId, $taskId, $promise) {
+            function ($reason) use ($workerId, $taskId, $promise, $timeoutSeconds) {
                 unset($this->activeTasks[$workerId][$taskId]);
-                $promise->reject($reason);
+
+                if ($reason instanceof PromiseTimeoutException) {
+                    $promise->reject(new TimeoutException("Process timeout after {$timeoutSeconds} seconds"));
+                } else {
+                    $promise->reject($reason);
+                }
+
                 $this->checkGracefulShutdownCompletion();
             }
         );

@@ -6,6 +6,7 @@ namespace Tests\Feature;
 
 use function Hibla\await;
 
+use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Interfaces\ParallelExecutorInterface;
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 use Hibla\Parallel\Internals\BackgroundProcess;
@@ -48,7 +49,7 @@ describe('Parallel Feature Test', function () {
                 ->withTimeout(1)
                 ->run(fn () => sleep(5))
         );
-    })->throws(\RuntimeException::class, 'timed out after 1 seconds');
+    })->throws(TimeoutException::class);
 
     it('runs without a timeout when configured', function () {
         $result = await(
@@ -200,7 +201,7 @@ describe('Parallel Feature Test', function () {
         ;
 
         await($pool->run(fn () => sleep(5)));
-    })->throws(\RuntimeException::class);
+    })->throws(TimeoutException::class);
 
     it('persistent pool respects custom memory limit', function () {
         $pool = Parallel::pool(size: 2)
