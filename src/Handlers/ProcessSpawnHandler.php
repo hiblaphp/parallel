@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Handlers;
 
+use Hibla\Parallel\Exceptions\ParallelException;
+use Hibla\Parallel\Exceptions\ProcessSpawnException;
+use Hibla\Parallel\Exceptions\TaskPayloadException;
 use Hibla\Parallel\Internals\BackgroundProcess;
 use Hibla\Parallel\Internals\PersistentProcess;
 use Hibla\Parallel\Internals\Process;
@@ -42,7 +45,7 @@ class ProcessSpawnHandler
         });
 
         if (\count($missingFunctions) > 0) {
-            throw new \RuntimeException(
+            throw new ProcessSpawnException(
                 \sprintf(
                     'The following required functions are disabled on this environment: "%s". ' .
                         'Hibla Parallel requires these functions to spawn and manage processes. ' .
@@ -112,7 +115,7 @@ class ProcessSpawnHandler
             $error = error_get_last();
             $errorMessage = $error['message'] ?? 'Unknown error';
 
-            throw new \RuntimeException('Failed to spawn process. OS Error: ' . $errorMessage);
+            throw new ProcessSpawnException('Failed to spawn process. OS Error: ' . $errorMessage);
         }
 
         stream_set_blocking($pipes[0], false);
@@ -169,7 +172,6 @@ class ProcessSpawnHandler
      * @param string|null $memoryLimit Custom memory limit for this specific process
      * @param int $maxNestingLevel Maximum nesting level for this process
      * @return BackgroundProcess The spawned background process instance
-     * @throws \RuntimeException If process spawning fails
      */
     public function spawnBackgroundTask(
         callable $callback,
@@ -199,7 +201,7 @@ class ProcessSpawnHandler
             $error = error_get_last();
             $errorMessage = $error['message'] ?? 'Unknown error';
 
-            throw new \RuntimeException('Failed to spawn fire-and-forget process. OS Error: ' . $errorMessage);
+            throw new ProcessSpawnException('Failed to spawn fire-and-forget process. OS Error: ' . $errorMessage);
         }
 
         $status = proc_get_status($processResource);
@@ -232,7 +234,6 @@ class ProcessSpawnHandler
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @param string|null $memoryLimit Custom memory limit for this specific process
      * @return string JSON-encoded payload string
-     * @throws \RuntimeException If serialization fails
      */
     private function createTaskPayload(
         callable $callback,
@@ -262,7 +263,7 @@ class ProcessSpawnHandler
         $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);
 
         if ($json === false) {
-            throw new \RuntimeException('Failed to encode task payload: ' . json_last_error_msg());
+            throw new TaskPayloadException('Failed to encode task payload: ' . json_last_error_msg());
         }
 
         return $json;
@@ -276,7 +277,6 @@ class ProcessSpawnHandler
      * @param string|null $memoryLimit Custom memory limit for this specific process
      * @param int $maxNestingLevel Maximum allowed function nesting level
      * @return PersistentProcess Instance of the spawned persistent process
-     * @throws \RuntimeException If spawning fails
      */
     public function spawnPersistentWorker(
         array $frameworkInfo,
@@ -304,7 +304,7 @@ class ProcessSpawnHandler
         $pipes = [];
         $processResource = @proc_open($command, $descriptorSpec, $pipes);
         if (! \is_resource($processResource)) {
-            throw new \RuntimeException('Failed to spawn persistent worker process.');
+            throw new ProcessSpawnException('Failed to spawn persistent worker process.');
         }
 
         stream_set_blocking($pipes[0], false);
@@ -336,7 +336,6 @@ class ProcessSpawnHandler
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
      * @param CallbackSerializationManager $serializationManager
      * @param string|null $memoryLimit
-     * @throws \RuntimeException
      */
     private function createBootPayload(
         array $frameworkInfo,
@@ -357,7 +356,7 @@ class ProcessSpawnHandler
 
         $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);
         if ($json === false) {
-            throw new \RuntimeException('Failed to encode boot payload.');
+            throw new TaskPayloadException('Failed to encode boot payload.');
         }
 
         return $json;
@@ -371,7 +370,6 @@ class ProcessSpawnHandler
      *
      * @param string $scriptName Name of the worker script file (e.g., 'worker.php')
      * @return string Absolute path to the worker script
-     * @throws \RuntimeException If the worker script cannot be found
      */
     private function getWorkerPath(string $scriptName): string
     {
@@ -416,7 +414,7 @@ class ProcessSpawnHandler
             }
         }
 
-        throw new \RuntimeException("Worker script '$scriptName' not found.");
+        throw new ParallelException("Worker script '$scriptName' not found.");
     }
 
     /**

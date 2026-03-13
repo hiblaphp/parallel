@@ -7,7 +7,6 @@ namespace Hibla;
 use Hibla\Parallel\Internals\BackgroundProcess;
 use Hibla\Parallel\Parallel;
 use Hibla\Promise\Interfaces\PromiseInterface;
-use Rcalicdan\Serializer\Exceptions\SerializationException;
 
 /**
  * Run a task in parallel (separate process) and return a Promise.
@@ -56,9 +55,6 @@ use Rcalicdan\Serializer\Exceptions\SerializationException;
  * @param callable(): TResult $task The task to execute in parallel
  * @param int $timeout Maximum seconds to wait for task completion (default: 60)
  * @return PromiseInterface<TResult> Promise resolving to the task's return value
- *
- * @throws \RuntimeException If fork bomb pattern is detected
- * @throws SerializationException If task cannot be serialized
  */
 function parallel(callable $task, int $timeout = 60): PromiseInterface
 {
@@ -125,9 +121,6 @@ function parallelFn(callable $task, int $timeout = 60): callable
  * @param callable(): TResult $task The task to execute in parallel
  * @param int $timeout Maximum seconds for task completion (default: 600)
  * @return PromiseInterface<BackgroundProcess> Promise resolving to the Process instance
- *
- * @throws \RuntimeException If process spawning fails or fork bomb pattern detected
- * @throws SerializationException If task cannot be serialized
  */
 function spawn(callable $task, int $timeout = 600): PromiseInterface
 {

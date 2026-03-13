@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Internals;
 
+use PHPStan\Process\ProcessCrashedException;
 use function Hibla\async;
 use function Hibla\await;
 
@@ -231,7 +232,7 @@ final class Process
                 // terminal frame was already handled above we never reach this point.
             }
 
-            throw new \RuntimeException("Process stream for PID {$this->pid} ended unexpectedly.");
+            throw new ProcessCrashedException("Process stream for PID {$this->pid} ended unexpectedly.");
         });
     }
 

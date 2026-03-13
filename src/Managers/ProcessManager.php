@@ -4,13 +4,15 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Managers;
 
+use Hibla\Parallel\Exceptions\NestingLimitException;
+use Hibla\Parallel\Exceptions\RateLimitException;
+use Hibla\Parallel\Exceptions\TaskPayloadException;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Internals\BackgroundProcess;
 use Hibla\Parallel\Internals\Process;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Rcalicdan\ConfigLoader\Config;
 use Rcalicdan\Serializer\CallbackSerializationManager;
-use Rcalicdan\Serializer\Exceptions\SerializationException;
 
 /**
  * @internal
@@ -223,8 +225,9 @@ class ProcessManager
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null $customBootstrap Optional bootstrap override
      * @param int|null $maxNestingLevel Optional max nesting level override
      * @return BackgroundProcess The spawned background process instance
-     * @throws \RuntimeException If task nesting limit is exceeded, validation fails, or rate limit is exceeded
-     * @throws SerializationException If the callback cannot be serialized
+     * @throws NestingLimitException If task nesting limit is exceeded
+     * @throws TaskPayloadException If the callback cannot be serialized
+     * @throws RateLimitException If rate limit is exceeded
      */
     public function spawnBackgroundTask(
         callable $callback,
@@ -239,7 +242,7 @@ class ProcessManager
         }
 
         if ($this->spawnCount >= $this->maxSpawnsPerSecond) {
-            throw new \RuntimeException(
+            throw new RateLimitException(
                 message: "Safety Limit: Cannot spawn more than {$this->maxSpawnsPerSecond} background tasks per second."
             );
         }
@@ -323,15 +326,21 @@ class ProcessManager
      * @param callable $callback The callback to validate
      * @param int $maxNestingLevel The explicit max nesting level for this task
      * @return void
-     * @throws \RuntimeException If task nesting limit is exceeded
-     * @throws SerializationException If the callback cannot be serialized
+     * @throws TaskPayloadException If the callback cannot be serialized
      */
     private function validate(callable $callback, int $maxNestingLevel): void
     {
         $currentLevel = $this->getCurrentNestingLevel();
 
+        if (!$this->serializer->canSerializeCallback($callback)) {
+            throw new TaskPayloadException(
+                'Callback cannot be serialized. ' .
+                'Please ensure it is a valid PHP callable and does not contain unserializable types.'
+            );
+        }
+
         if ($currentLevel >= $maxNestingLevel) {
-            throw new \RuntimeException(
+            throw new NestingLimitException(
                 'Cannot spawn parallel task: Already at maximum nesting level ' .
                     "{$currentLevel}/{$maxNestingLevel}. " .
                     "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file, " .

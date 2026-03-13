@@ -7,6 +7,7 @@ namespace Hibla\Parallel\Internals;
 use function Hibla\async;
 use function Hibla\await;
 
+use Hibla\Parallel\Exceptions\ParallelException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
@@ -186,7 +187,7 @@ final class PersistentProcess
         $this->isBusy = false;
 
         foreach ($this->pendingTasks as $taskId => $taskMeta) {
-            $taskMeta['promise']->reject(new \RuntimeException(
+            $taskMeta['promise']->reject(new ParallelException(
                 "Persistent worker PID {$this->pid} crashed or stream closed while executing task {$taskId}."
             ));
         }

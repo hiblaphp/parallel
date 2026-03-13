@@ -4,10 +4,14 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Managers;
 
+use Hibla\Parallel\Exceptions\NestingLimitException;
+use Hibla\Parallel\Exceptions\PoolShutdownException;
+use Hibla\Parallel\Exceptions\TaskPayloadException;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Internals\PersistentProcess;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
+use PHPStan\Process\ProcessCrashedException;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 use SplQueue;
 
@@ -60,7 +64,7 @@ final class ProcessPoolManager
         $currentLevel = (int)((($env = getenv('DEFER_NESTING_LEVEL')) !== false) ? $env : 0);
 
         if ($currentLevel >= $this->maxNestingLevel) {
-            throw new \RuntimeException(
+            throw new NestingLimitException(
                 'Cannot create persistent pool: Already at maximum nesting level ' .
                     "{$currentLevel}/{$this->maxNestingLevel}. " .
                     "To increase this limit, configure 'max_nesting_level' in your hibla_parallel config file. " .
@@ -90,7 +94,7 @@ final class ProcessPoolManager
         if ($this->isShutdown) {
             /** @var Promise<TValue> $promise */
             $promise = new Promise();
-            $promise->reject(new \RuntimeException('Cannot submit task to a shutdown pool.'));
+            $promise->reject(new PoolShutdownException('Cannot submit task to a shutdown pool.'));
 
             return $promise;
         }
@@ -152,12 +156,12 @@ final class ProcessPoolManager
             $taskData = $this->taskQueue->dequeue();
             /** @var Promise<mixed> $promise */
             $promise = $taskData[1];
-            $promise->reject(new \RuntimeException('Pool was shut down before the task could be processed.'));
+            $promise->reject(new PoolShutdownException('Pool was shut down before the task could be processed.'));
         }
 
         foreach ($this->activeTasks as $workerId => $tasks) {
             foreach ($tasks as $promise) {
-                $promise->reject(new \RuntimeException('Pool was shut down before the task completed.'));
+                $promise->reject(new PoolShutdownException('Pool was shut down before the task completed.'));
             }
         }
 
@@ -280,7 +284,7 @@ final class ProcessPoolManager
             // Check if the worker had any active tasks before trying to access them.
             if (isset($this->activeTasks[$wId]) && \count($this->activeTasks[$wId]) > 0) {
                 foreach ($this->activeTasks[$wId] as $pendingPromise) {
-                    $pendingPromise->reject(new \RuntimeException('Worker crashed or was forcefully closed while executing task.'));
+                    $pendingPromise->reject(new ProcessCrashedException('Worker crashed or was forcefully closed while executing task.'));
                 }
             }
 
@@ -296,7 +300,7 @@ final class ProcessPoolManager
 
             if (! $workerIsReady) {
                 $this->shutdownDueToFatalError(
-                    new \RuntimeException('A persistent worker crashed during boot. Check logs for fatal errors (e.g., nesting limits or syntax errors).')
+                    new ProcessCrashedException('A persistent worker crashed during boot. Check logs for fatal errors (e.g., nesting limits or syntax errors).')
                 );
 
                 return;
@@ -323,7 +327,7 @@ final class ProcessPoolManager
             $serializedTask = $this->serializer->serializeCallback($task);
         } catch (\Throwable $e) {
             // Rejects cleanly if the user pass $pool via "use ($pool)" to a nested closure
-            $promise->reject(new \RuntimeException('Failed to serialize task payload: ' . $e->getMessage(), 0, $e));
+            $promise->reject(new TaskPayloadException('Failed to serialize task payload: ' . $e->getMessage(), 0, $e));
             $this->idleWorkers->enqueue($worker);
 
             return;
@@ -337,7 +341,7 @@ final class ProcessPoolManager
         $jsonPayload = json_encode($payload, JSON_UNESCAPED_SLASHES);
 
         if ($jsonPayload === false) {
-            $promise->reject(new \RuntimeException('Failed to encode task payload: ' . json_last_error_msg()));
+            $promise->reject(new TaskPayloadException('Failed to encode task payload: ' . json_last_error_msg()));
             $this->idleWorkers->enqueue($worker);
 
             return;
