@@ -13,7 +13,7 @@ use SplQueue;
 /**
  * @internal Manages a pool of persistent worker processes.
  */
-final class ProcessPool
+final class ProcessPoolManager
 {
     /**
      * @var SplQueue<PersistentProcess>

@@ -6,7 +6,7 @@ namespace Hibla\Parallel\Internals;
 
 use Hibla\Parallel\Interfaces\PersistentPoolExecutorInterface;
 use Hibla\Parallel\Managers\ProcessManager;
-use Hibla\Parallel\Managers\ProcessPool;
+use Hibla\Parallel\Managers\ProcessPoolManager;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 
@@ -23,7 +23,7 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
 
     private ?int $maxNestingLevel = null;
 
-    private ?ProcessPool $pool = null;
+    private ?ProcessPoolManager $pool = null;
 
     private bool $isShutdown = false;
 
@@ -118,12 +118,12 @@ final class PersistentPoolExecutor implements PersistentPoolExecutorInterface
         $this->shutdown();
     }
 
-    private function getPool(): ProcessPool
+    private function getPool(): ProcessPoolManager
     {
         if ($this->pool === null) {
             $manager = ProcessManager::getGlobal();
 
-            $this->pool = new ProcessPool(
+            $this->pool = new ProcessPoolManager(
                 size: $this->size,
                 spawnHandler: $manager->getSpawnHandler(),
                 serializer: $manager->getSerializer(),
