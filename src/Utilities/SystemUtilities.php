@@ -116,4 +116,54 @@ class SystemUtilities
             'bootstrap_callback' => $bootstrapCallback,
         ];
     }
+
+    /**
+     * Get the number of available CPU cores
+     * Handle cross-platform CPU core detection
+     *
+     * @return int Number of CPU cores
+     */
+    public function getCpuCount(): int
+    {
+        if (\function_exists('shell_exec')) {
+            $command = match (PHP_OS_FAMILY) {
+                'Windows' => 'wmic cpu get NumberOfLogicalProcessors /value',
+                'Darwin'  => 'sysctl -n hw.logicalcpu',
+                default   => 'nproc',
+            };
+
+            $output = @shell_exec($command);
+
+            if (\is_string($output) && trim($output) !== '') {
+                if (PHP_OS_FAMILY === 'Windows' && preg_match('/NumberOfLogicalProcessors=(\d+)/', $output, $m)) {
+                    return (int) $m[1];
+                } elseif (($count = (int) trim($output)) > 0) {
+                    return $count;
+                }
+            }
+        }
+
+        if (PHP_OS_FAMILY === 'Linux') {
+            if (is_readable('/sys/devices/system/cpu/present')) {
+                $content = trim((string) file_get_contents('/sys/devices/system/cpu/present'));
+                if (preg_match('/^(\d+)-(\d+)$/', $content, $m)) {
+                    return (int) $m[2] - (int) $m[1] + 1;
+                }
+            }
+
+            if (is_readable('/proc/cpuinfo')) {
+                $count = substr_count((string) file_get_contents('/proc/cpuinfo'), "\nprocessor");
+                return $count > 0 ? $count + 1 : 1;
+            }
+        }
+
+        if (PHP_OS_FAMILY === 'Windows') {
+            $env = getenv('NUMBER_OF_PROCESSORS');
+            if ($env !== false) {
+                return (int) $env;
+            }
+        }
+
+        return 4;
+    }
 }
