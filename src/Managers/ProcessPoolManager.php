@@ -104,8 +104,38 @@ final class ProcessPoolManager
         /** @var Promise<TValue> $promise */
         $promise = new Promise();
 
-        if (! $this->idleWorkers->isEmpty()) {
-            $worker = $this->idleWorkers->dequeue();
+        $promise->onCancel(function () use ($promise) {
+            foreach ($this->activeTasks as $workerId => $tasks) {
+                foreach ($tasks as $activePromise) {
+                    if ($activePromise === $promise) {
+                        if (isset($this->allWorkers[$workerId])) {
+                            // Terminating the worker triggers onCrash, which will natively
+                            // respawn a replacement worker and unset active tasks.
+                            $this->allWorkers[$workerId]->terminate();
+                        }
+
+                        return;
+                    }
+                }
+            }
+
+            if ($this->isShuttingDownGracefully) {
+                $this->checkGracefulShutdownCompletion();
+            }
+        });
+
+        // Safely find an idle worker (skipping any that crashed while idle)
+        $worker = null;
+        while (! $this->idleWorkers->isEmpty()) {
+            $w = $this->idleWorkers->dequeue();
+            if (isset($this->allWorkers[spl_object_id($w)])) {
+                $worker = $w;
+
+                break;
+            }
+        }
+
+        if ($worker !== null) {
             $this->dispatch($worker, $task, $promise, $timeoutSeconds, $sourceLocation);
         } else {
             $this->taskQueue->enqueue([$task, $promise, $timeoutSeconds, $sourceLocation]);
@@ -117,7 +147,7 @@ final class ProcessPoolManager
     /**
      * Gracefully shuts down the pool.
      *
-     * Stops accepting new tasks and waits for the queue and active tasks to empty.
+     * This method will wait for all active tasks to complete before shutting down the pool.
      *
      * @return PromiseInterface<void>
      */
@@ -158,12 +188,16 @@ final class ProcessPoolManager
             $taskData = $this->taskQueue->dequeue();
             /** @var Promise<mixed> $promise */
             $promise = $taskData[1];
-            $promise->reject(new PoolShutdownException('Pool was shut down before the task could be processed.'));
+            if (! $promise->isCancelled()) {
+                $promise->reject(new PoolShutdownException('Pool was shut down before the task could be processed.'));
+            }
         }
 
         foreach ($this->activeTasks as $workerId => $tasks) {
             foreach ($tasks as $promise) {
-                $promise->reject(new PoolShutdownException('Pool was shut down before the task completed.'));
+                if (! $promise->isCancelled()) {
+                    $promise->reject(new PoolShutdownException('Pool was shut down before the task completed.'));
+                }
             }
         }
 
@@ -182,7 +216,17 @@ final class ProcessPoolManager
             return;
         }
 
-        // Wait for all queued tasks to be dispatched
+        /** @var SplQueue<array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string}> $validQueue */
+        $validQueue = new SplQueue();
+
+        while (! $this->taskQueue->isEmpty()) {
+            $item = $this->taskQueue->dequeue();
+            if (! $item[1]->isCancelled()) {
+                $validQueue->enqueue($item);
+            }
+        }
+        $this->taskQueue = $validQueue;
+
         if (! $this->taskQueue->isEmpty()) {
             return;
         }
@@ -222,12 +266,16 @@ final class ProcessPoolManager
             $taskData = $this->taskQueue->dequeue();
             /** @var Promise<mixed> $promise */
             $promise = $taskData[1];
-            $promise->reject($e);
+            if (! $promise->isCancelled()) {
+                $promise->reject($e);
+            }
         }
 
         foreach ($this->activeTasks as $workerId => $tasks) {
             foreach ($tasks as $promise) {
-                $promise->reject($e);
+                if (! $promise->isCancelled()) {
+                    $promise->reject($e);
+                }
             }
         }
         $this->activeTasks = [];
@@ -262,14 +310,24 @@ final class ProcessPoolManager
                 return;
             }
 
-            if (! $this->taskQueue->isEmpty()) {
+            // Loop to skip cancelled queue items
+            $taskToDispatch = null;
+            while (! $this->taskQueue->isEmpty()) {
                 /** @var array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string} $queued */
                 $queued = $this->taskQueue->dequeue();
-                [$task, $promise, $timeout, $sourceLocation] = $queued;
+                if ($queued[1]->isCancelled()) {
+                    continue; // Skip tasks cancelled before dispatch
+                }
+                $taskToDispatch = $queued;
+
+                break;
+            }
+
+            if ($taskToDispatch !== null) {
+                [$task, $promise, $timeout, $sourceLocation] = $taskToDispatch;
                 $this->dispatch($worker, $task, $promise, $timeout, $sourceLocation);
             } else {
                 if ($this->isShuttingDownGracefully) {
-                    // Graceful shutdown: No tasks left in queue. kill this worker early.
                     $worker->terminate();
                     unset($this->allWorkers[spl_object_id($worker)]);
                     $this->checkGracefulShutdownCompletion();
@@ -283,10 +341,11 @@ final class ProcessPoolManager
             $wId = spl_object_id($worker);
             unset($this->allWorkers[$wId]);
 
-            // Check if the worker had any active tasks before trying to access them.
             if (isset($this->activeTasks[$wId]) && \count($this->activeTasks[$wId]) > 0) {
                 foreach ($this->activeTasks[$wId] as $pendingPromise) {
-                    $pendingPromise->reject(new ProcessCrashedException('Worker crashed or was forcefully closed while executing task.'));
+                    if (! $pendingPromise->isCancelled()) {
+                        $pendingPromise->reject(new ProcessCrashedException('Worker crashed or was forcefully closed while executing task.'));
+                    }
                 }
             }
 
@@ -308,6 +367,7 @@ final class ProcessPoolManager
                 return;
             }
 
+            // Always respawn to maintain the pool size
             if (\count($this->allWorkers) < $this->size) {
                 $this->spawnWorker();
             }
@@ -328,8 +388,9 @@ final class ProcessPoolManager
         try {
             $serializedTask = $this->serializer->serializeCallback($task);
         } catch (\Throwable $e) {
-            // Rejects cleanly if the user pass $pool via "use ($pool)" to a nested closure
-            $promise->reject(new TaskPayloadException('Failed to serialize task payload: ' . $e->getMessage(), 0, $e));
+            if (! $promise->isCancelled()) {
+                $promise->reject(new TaskPayloadException('Failed to serialize task payload: ' . $e->getMessage(), 0, $e));
+            }
             $this->idleWorkers->enqueue($worker);
 
             return;
@@ -343,7 +404,9 @@ final class ProcessPoolManager
         $jsonPayload = json_encode($payload, JSON_UNESCAPED_SLASHES);
 
         if ($jsonPayload === false) {
-            $promise->reject(new TaskPayloadException('Failed to encode task payload: ' . json_last_error_msg()));
+            if (! $promise->isCancelled()) {
+                $promise->reject(new TaskPayloadException('Failed to encode task payload: ' . json_last_error_msg()));
+            }
             $this->idleWorkers->enqueue($worker);
 
             return;
@@ -361,16 +424,22 @@ final class ProcessPoolManager
         $executionPromise->then(
             function ($value) use ($workerId, $taskId, $promise) {
                 unset($this->activeTasks[$workerId][$taskId]);
-                $promise->resolve($value);
+
+                if (! $promise->isCancelled()) {
+                    $promise->resolve($value);
+                }
+
                 $this->checkGracefulShutdownCompletion();
             },
             function ($reason) use ($workerId, $taskId, $promise, $timeoutSeconds) {
                 unset($this->activeTasks[$workerId][$taskId]);
 
-                if ($reason instanceof PromiseTimeoutException) {
-                    $promise->reject(new TimeoutException("Process timeout after {$timeoutSeconds} seconds"));
-                } else {
-                    $promise->reject($reason);
+                if (! $promise->isCancelled()) {
+                    if ($reason instanceof PromiseTimeoutException) {
+                        $promise->reject(new TimeoutException("Process timeout after {$timeoutSeconds} seconds"));
+                    } else {
+                        $promise->reject($reason);
+                    }
                 }
 
                 $this->checkGracefulShutdownCompletion();
@@ -378,9 +447,6 @@ final class ProcessPoolManager
         );
     }
 
-    /**
-     * Automatically shut down the pool manager and release resources when garbage collected.
-     */
     public function __destruct()
     {
         if (! $this->isShutdown) {

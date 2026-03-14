@@ -122,7 +122,7 @@ final class PersistentProcess
                     }
                 }
             } catch (\Throwable $e) {
-                // Stream closed unexpectedly — treat as a crash
+                // Stream closed unexpectedly or any other error — treat as a crash
                 $this->terminate();
                 ($this->onCrashCallback)($this);
             } finally {
@@ -142,7 +142,20 @@ final class PersistentProcess
         $promise = new Promise();
         $this->pendingTasks[$taskId] = ['promise' => $promise, 'location' => $sourceLocation];
 
-        async(fn () => await($this->stdin->writeAsync($payload . PHP_EOL)));
+        async(function () use ($payload) {
+            try {
+                // If the process was terminated before the event loop
+                // ran this closure, we skip the write entirely.
+                if (! $this->isAlive) {
+                    return;
+                }
+
+                await($this->stdin->writeAsync($payload . PHP_EOL));
+            } catch (\Hibla\Stream\Exceptions\StreamException) {
+                // Ignore: This happens if the process is killed (via cancellation)
+                // while this asynchronous write is still in the event loop queue.
+            }
+        });
 
         return $promise;
     }
