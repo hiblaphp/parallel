@@ -135,7 +135,7 @@ class SystemUtilities
             $output = @shell_exec($command);
 
             if (\is_string($output) && trim($output) !== '') {
-                if (PHP_OS_FAMILY === 'Windows' && preg_match('/NumberOfLogicalProcessors=(\d+)/', $output, $m)) {
+                if (PHP_OS_FAMILY === 'Windows' && preg_match('/NumberOfLogicalProcessors=(\d+)/', $output, $m) === 1) {
                     return (int) $m[1];
                 } elseif (($count = (int) trim($output)) > 0) {
                     return $count;
@@ -146,7 +146,7 @@ class SystemUtilities
         if (PHP_OS_FAMILY === 'Linux') {
             if (is_readable('/sys/devices/system/cpu/present')) {
                 $content = trim((string) file_get_contents('/sys/devices/system/cpu/present'));
-                if (preg_match('/^(\d+)-(\d+)$/', $content, $m)) {
+                if (preg_match('/^(\d+)-(\d+)$/', $content, $m) === 1) {
                     return (int) $m[2] - (int) $m[1] + 1;
                 }
             }
