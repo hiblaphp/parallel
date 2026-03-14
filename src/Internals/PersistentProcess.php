@@ -45,7 +45,8 @@ final class PersistentProcess
         private readonly PromiseWritableStreamInterface $stdin,
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr
-    ) {}
+    ) {
+    }
 
     /**
      * @param callable(self): void $onReadyCallback
@@ -130,7 +131,7 @@ final class PersistentProcess
 
                             // Track handler fiber under its task ID so the terminal
                             // frame can await all handlers for this specific task.
-                            $pendingHandlers[$taskId][] = async(fn() => $onMessage($message));
+                            $pendingHandlers[$taskId][] = async(fn () => $onMessage($message));
                         }
                     } elseif ($status === 'COMPLETED') {
                         $result = $data['result'] ?? null;

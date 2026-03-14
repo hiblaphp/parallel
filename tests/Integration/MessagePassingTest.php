@@ -137,7 +137,7 @@ describe('Message Passing Test', function () {
 
                     return ['key' => 'value'];
                 },
-                onMessage: fn(WorkerMessage $msg) => null
+                onMessage: fn (WorkerMessage $msg) => null
             )
         );
 
@@ -292,7 +292,7 @@ describe('Message Passing Test', function () {
 
                     return ['key' => 'value'];
                 },
-                onMessage: fn(WorkerMessage $msg) => null
+                onMessage: fn (WorkerMessage $msg) => null
             )
         );
 
@@ -360,6 +360,7 @@ describe('Message Passing Test', function () {
                 })
                 ->run(function () {
                     emit('ping');
+
                     return 'done';
                 })
         );
@@ -383,6 +384,7 @@ describe('Message Passing Test', function () {
                     emit(['step' => 1]);
                     emit(['step' => 2]);
                     emit(['step' => 3]);
+
                     return 'done';
                 })
         );
@@ -404,10 +406,12 @@ describe('Message Passing Test', function () {
             })
             ->onMessage(function (WorkerMessage $msg) use (&$order) {
                 $order[] = 'third';
-            });
+            })
+        ;
 
         await($pool->run(function () {
             emit('ping');
+
             return 'done';
         }));
 
@@ -424,11 +428,13 @@ describe('Message Passing Test', function () {
             })
             ->onMessage(function (WorkerMessage $msg) use (&$order) {
                 $order[] = 'pool-second';
-            });
+            })
+        ;
 
         await($pool->run(
             callback: function () {
                 emit('ping');
+
                 return 'done';
             },
             onMessage: function (WorkerMessage $msg) use (&$order) {
@@ -454,6 +460,7 @@ describe('Message Passing Test', function () {
                 ->run(
                     callback: function () {
                         emit('ping');
+
                         return 'done';
                     },
                     onMessage: function (WorkerMessage $msg) use (&$order) {
@@ -481,6 +488,7 @@ describe('Message Passing Test', function () {
                 })
                 ->run(function () {
                     emit('trigger');
+
                     return 'done';
                 })
         );
@@ -497,13 +505,15 @@ describe('Message Passing Test', function () {
             })
             ->onMessage(function (WorkerMessage $msg) {
                 await(delay(1));
-            });
+            })
+        ;
 
         $startTime = microtime(true);
 
         await($pool->run(
             callback: function () {
                 emit('trigger');
+
                 return 'done';
             },
             onMessage: function (WorkerMessage $msg) {
@@ -529,6 +539,7 @@ describe('Message Passing Test', function () {
                 })
                 ->run(function () {
                     emit('trigger');
+
                     return 'done';
                 })
         );
@@ -547,6 +558,7 @@ describe('Message Passing Test', function () {
 
         await($pool->run(function () {
             emit('trigger');
+
             return 'done';
         }));
 
@@ -556,12 +568,13 @@ describe('Message Passing Test', function () {
 
     test('onMessage chaining is immutable and does not affect original instance', function () {
         $base = Parallel::task();
-        $withOne = $base->onMessage(fn(WorkerMessage $msg) => null);
-        $withTwo = $withOne->onMessage(fn(WorkerMessage $msg) => null);
+        $withOne = $base->onMessage(fn (WorkerMessage $msg) => null);
+        $withTwo = $withOne->onMessage(fn (WorkerMessage $msg) => null);
 
         $getHandlerCount = function (object $executor): int {
             $ref = new \ReflectionObject($executor);
             $prop = $ref->getProperty('onMessageHandlers');
+
             return \count($prop->getValue($executor));
         };
 
@@ -572,12 +585,13 @@ describe('Message Passing Test', function () {
 
     test('pool onMessage chaining is immutable and does not affect original instance', function () {
         $base = Parallel::pool(size: 1);
-        $withOne = $base->onMessage(fn(WorkerMessage $msg) => null);
-        $withTwo = $withOne->onMessage(fn(WorkerMessage $msg) => null);
+        $withOne = $base->onMessage(fn (WorkerMessage $msg) => null);
+        $withTwo = $withOne->onMessage(fn (WorkerMessage $msg) => null);
 
         $getHandlerCount = function (object $pool): int {
             $ref = new \ReflectionObject($pool);
             $prop = $ref->getProperty('onMessageHandlers');
+
             return \count($prop->getValue($pool));
         };
 
