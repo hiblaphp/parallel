@@ -51,6 +51,24 @@ function write_frame(array $data): void
     }
 }
 
+function containsObjects(mixed $value): bool
+{
+    if (is_object($value)) {
+        return true;
+    }
+    if (!is_array($value)) {
+        return false;
+    }
+
+    foreach ($value as $item) {
+        if (is_object($item) || (is_array($item) && containsObjects($item))) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 // ===== CRASH DETECTION =====
 $currentTaskId = null;
 $isProcessing = false;
@@ -138,7 +156,7 @@ while (($payload = fgets($stdin)) !== false) {
         $result = Hibla\await(Hibla\async($callback));
         ob_end_flush();
 
-        $needsSerialization = is_object($result) || is_resource($result) || is_array($result);
+        $needsSerialization = is_resource($result) || containsObjects($result);
 
         write_frame([
             'status' => 'COMPLETED',
@@ -146,7 +164,6 @@ while (($payload = fgets($stdin)) !== false) {
             'result' => $needsSerialization ? base64_encode(serialize($result)) : $result,
             'result_serialized' => $needsSerialization,
         ]);
-
     } catch (Throwable $e) {
         if (ob_get_level() > 0) {
             ob_end_clean();

@@ -12,13 +12,16 @@ namespace Hibla\Parallel\Internals;
  */
 final class BackgroundProcess
 {
+    private bool $closed = false;
+
     /**
      * @param int $pid The process ID
+     * @param mixed $processResource The process resource handle from proc_open
      */
     public function __construct(
         private readonly int $pid,
-    ) {
-    }
+        private readonly mixed $processResource,
+    ) {}
 
     /**
      * Terminate the background process forcefully.
@@ -34,23 +37,43 @@ final class BackgroundProcess
                 exec("pkill -9 -P {$this->pid} 2>/dev/null; kill -9 {$this->pid} 2>/dev/null");
             }
         }
+
+        $this->close();
     }
 
     /**
      * Check if the process is currently running.
      *
+     * On Unix, uses proc_get_status() for an efficient in-process check that
+     * does not require the posix extension, consistent with Process.php.
+     * On Windows, falls back to tasklist since proc_get_status() is unreliable
+     * for processes opened with socket descriptors on that platform.
+     *
      * @return bool True if process is running, false otherwise
      */
     public function isRunning(): bool
     {
-        if (PHP_OS_FAMILY === 'Windows') {
-            $cmd = "tasklist /FI \"PID eq {$this->pid}\" 2>nul";
-            $output = shell_exec($cmd);
-
-            return \is_string($output) && strpos($output, (string)$this->pid) !== false;
+        if ($this->closed) {
+            return false;
         }
 
-        return posix_kill($this->pid, 0);
+        if (PHP_OS_FAMILY === 'Windows') {
+            $output = shell_exec("tasklist /FI \"PID eq {$this->pid}\" 2>nul");
+            $running = \is_string($output) && strpos($output, (string)$this->pid) !== false;
+        } else {
+            if (\is_resource($this->processResource)) {
+                $status = proc_get_status($this->processResource);
+                $running = $status['running'];
+            } else {
+                $running = false;
+            }
+        }
+
+        if (! $running) {
+            $this->close();
+        }
+
+        return $running;
     }
 
     /**
@@ -61,5 +84,38 @@ final class BackgroundProcess
     public function getPid(): int
     {
         return $this->pid;
+    }
+
+    /**
+     * Close the process resource handle and mark this instance as closed.
+     *
+     * Safe to call multiple times — guarded by the closed flag so subsequent
+     * calls are no-ops. proc_close() will not block here because by the time
+     * it is called the child has either been killed or exited naturally, so it
+     * simply reaps the zombie entry from the OS process table.
+     *
+     * @return void
+     */
+    private function close(): void
+    {
+        if ($this->closed) {
+            return;
+        }
+
+        $this->closed = true;
+
+        if (\is_resource($this->processResource)) {
+            @proc_close($this->processResource);
+        }
+    }
+
+    /**
+     * Release the process resource handle if it was never explicitly closed.
+     * This is a safety net for cases where terminate() was never called and
+     * isRunning() never observed the process exit on its own.
+     */
+    public function __destruct()
+    {
+        $this->close();
     }
 }

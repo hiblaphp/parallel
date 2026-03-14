@@ -227,7 +227,7 @@ class ProcessSpawnHandler
             fclose($pipes[0]);
         }
 
-        return new BackgroundProcess($pid);
+        return new BackgroundProcess($pid, $processResource);
     }
 
     /**
