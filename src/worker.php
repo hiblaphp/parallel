@@ -261,6 +261,9 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
             }
             require_once $autoloadPath;
 
+            // Mark this process as a streamed worker so emit() can write MESSAGE frames.
+            Hibla\Parallel\Internals\WorkerContext::markAsWorker();
+
             $serializationManager = new Rcalicdan\Serializer\CallbackSerializationManager();
 
             $frameworkBootstrap = $taskData['framework_bootstrap'] ?? '';
@@ -298,13 +301,12 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
 
         $finalStatus = $needsSerialization
             ? ['status' => 'COMPLETED', 'result' => base64_encode(serialize($result)), 'result_serialized' => true]
-            : ['status' => 'COMPLETED', 'result' => $result,                           'result_serialized' => false];
+            : ['status' => 'COMPLETED', 'result' => $result, 'result_serialized' => false];
 
         write_status_to_stdout($finalStatus);
         $terminalFrameWritten = true; // ← clean exit, shutdown function should no-op
 
         drain_and_wait();
-
     } catch (Throwable $e) {
         if (ob_get_level() > 0) {
             ob_end_clean();
@@ -327,7 +329,6 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
         $terminalFrameWritten = true; // ← handled error, shutdown function should no-op
 
         drain_and_wait();
-
     } finally {
         $taskProcessed = true;
     }

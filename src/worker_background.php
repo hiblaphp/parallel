@@ -68,6 +68,8 @@ try {
 
     if (isset($taskData['autoload_path']) && file_exists($taskData['autoload_path'])) {
         require_once $taskData['autoload_path'];
+
+        Hibla\Parallel\Internals\WorkerContext::markAsBackgroundWorker();
     }
 
     $serializationManager = new Rcalicdan\Serializer\CallbackSerializationManager();
@@ -91,7 +93,6 @@ try {
     if (PHP_OS_FAMILY !== 'Windows' && function_exists('pcntl_alarm')) {
         pcntl_alarm(0);
     }
-
 } catch (Throwable $e) {
     if (PHP_OS_FAMILY !== 'Windows' && function_exists('pcntl_alarm')) {
         pcntl_alarm(0);

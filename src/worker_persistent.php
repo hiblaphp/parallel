@@ -56,7 +56,7 @@ function containsObjects(mixed $value): bool
     if (is_object($value)) {
         return true;
     }
-    if (!is_array($value)) {
+    if (! is_array($value)) {
         return false;
     }
 
@@ -116,6 +116,8 @@ if (! empty($bootData['autoload_path']) && file_exists($bootData['autoload_path'
     require_once $bootData['autoload_path'];
 }
 
+// Mark this process as a worker for emit to properly send message
+Hibla\Parallel\Internals\WorkerContext::markAsWorker();
 $serializationManager = new Rcalicdan\Serializer\CallbackSerializationManager();
 
 if (! empty($bootData['framework_bootstrap']) && file_exists($bootData['framework_bootstrap'])) {
@@ -142,6 +144,8 @@ while (($payload = fgets($stdin)) !== false) {
 
     $currentTaskId = $taskData['task_id'];
     $isProcessing = true;
+
+    Hibla\Parallel\Internals\WorkerContext::setCurrentTaskId($currentTaskId);
 
     ob_start(function (string $buffer) use ($currentTaskId) {
         if ($buffer !== '') {
@@ -184,6 +188,8 @@ while (($payload = fgets($stdin)) !== false) {
     // Task finished cleanly — clear crash context
     $isProcessing = false;
     $currentTaskId = null;
+
+    Hibla\Parallel\Internals\WorkerContext::setCurrentTaskId(null);
 
     gc_collect_cycles();
     write_frame(['status' => 'READY']);

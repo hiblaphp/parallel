@@ -10,6 +10,7 @@ use function Hibla\await;
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
+use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
@@ -57,13 +58,17 @@ final class Process
      * stream_set_blocking(false) at the kernel level.
      *
      * @param int $timeoutSeconds Maximum time to wait for result in seconds. 0 means no limit.
+     * @param callable(WorkerMessage): void|null $onMessage Optional handler invoked for each
+     *        MESSAGE frame emitted by the worker via emit(). The handler promise is tracked
+     *        and awaited before the task promise resolves — callers are never released before
+     *        handlers finish executing.
      * @return PromiseInterface<TResult> Promise that resolves with the task result
      * @throws \RuntimeException If the task times out, fails, or the stream closes unexpectedly
      */
-    public function getResult(int $timeoutSeconds = 60): PromiseInterface
+    public function getResult(int $timeoutSeconds = 60, ?callable $onMessage = null): PromiseInterface
     {
-        return async(function () use ($timeoutSeconds) {
-            $resultPromise = $this->readResultFromStream();
+        return async(function () use ($timeoutSeconds, $onMessage) {
+            $resultPromise = $this->readResultFromStream($onMessage);
 
             try {
                 if ($timeoutSeconds > 0) {
@@ -165,21 +170,30 @@ final class Process
      *
      * Processes structured JSON frames emitted by the worker:
      *   - OUTPUT:    Forwards buffered echo/print output to the parent's stdout.
-     *   - COMPLETED: Deserializes the result and closes stdin to unblock the worker's drain.
-     *   - ERROR:     Reconstructs and rethrows the worker exception.
-     *   - TIMEOUT:   Throws a TimeoutException with the timeout message.
+     *   - MESSAGE:   Constructs a WorkerMessage, schedules the handler as an async()
+     *                fiber, and tracks the promise. All pending handler promises are
+     *                awaited via Promise::all() before the terminal frame resolves —
+     *                ensuring callers are never released before handlers finish.
+     *   - COMPLETED: Awaits pending handlers, deserializes result, closes stdin.
+     *   - ERROR:     Awaits pending handlers, reconstructs and rethrows the exception.
+     *   - TIMEOUT:   Awaits pending handlers, throws a TimeoutException.
      *
      * A StreamException is caught and treated as socket EOF — on Windows the
      * socket closure from the worker side surfaces as a StreamException rather
      * than readLineAsync() returning null as it would on a clean pipe EOF.
-     * If a terminal frame was already processed before the exception this path
-     * is never reached.
      *
+     * @param callable(WorkerMessage): void|null $onMessage Optional message handler
      * @return PromiseInterface<TResult> Promise that resolves with the task result
      */
-    private function readResultFromStream(): PromiseInterface
+    private function readResultFromStream(?callable $onMessage): PromiseInterface
     {
-        return async(function () {
+        return async(function () use ($onMessage) {
+            // Tracks all in-flight handler fibers so we can await them before
+            // resolving the task promise — prevents .wait() from returning before
+            // handlers have finished executing.
+            /** @var list<PromiseInterface<mixed>> $pendingHandlers */
+            $pendingHandlers = [];
+
             try {
                 while (null !== ($line = await($this->stdout->readLineAsync()))) {
                     if (trim($line) === '') {
@@ -198,6 +212,25 @@ final class Process
                         if (\is_scalar($output) || (\is_object($output) && method_exists($output, '__toString'))) {
                             echo $output;
                         }
+                    } elseif ($statusType === 'MESSAGE') {
+                        if ($onMessage !== null) {
+                            $data = $status['data'] ?? null;
+
+                            // Transparently deserialize objects serialized by emit()
+                            // using the base64(serialize()) pattern
+                            if (($status['data_serialized'] ?? false) === true && \is_string($data)) {
+                                $decoded = base64_decode($data, true);
+                                if ($decoded !== false) {
+                                    $data = unserialize($decoded);
+                                }
+                            }
+
+                            $message = new WorkerMessage(
+                                data: $data,
+                                pid: \is_int($status['pid']) ? $status['pid'] : $this->pid,
+                            );
+                            $pendingHandlers[] = async(fn () => $onMessage($message));
+                        }
                     } elseif ($statusType === 'COMPLETED') {
                         $result = $status['result'] ?? null;
 
@@ -211,6 +244,11 @@ final class Process
                         // Close stdin to unblock the worker's drain_and_wait() loop
                         $this->stdin->close();
 
+                        if (\count($pendingHandlers) > 0) {
+                            await(Promise::all($pendingHandlers));
+                            $pendingHandlers = [];
+                        }
+
                         /** @var TResult */
                         return $result;
                     } elseif ($statusType === 'ERROR') {
@@ -218,10 +256,20 @@ final class Process
                         // before rethrowing so the worker doesn't hang on exit.
                         $this->stdin->close();
 
+                        if (\count($pendingHandlers) > 0) {
+                            await(Promise::all($pendingHandlers));
+                            $pendingHandlers = [];
+                        }
+
                         /** @var array<string, mixed> $status */
                         throw $this->createExceptionFromError($status);
                     } elseif ($statusType === 'TIMEOUT') {
                         $this->stdin->close();
+
+                        if (\count($pendingHandlers) > 0) {
+                            await(Promise::all($pendingHandlers));
+                            $pendingHandlers = [];
+                        }
 
                         throw new TimeoutException("Process PID {$this->pid} timed out.");
                     }
@@ -230,6 +278,8 @@ final class Process
                 // The worker closed its socket end before readLineAsync() returned
                 // null — this is normal on Windows when the process exits. If a
                 // terminal frame was already handled above we never reach this point.
+            } finally {
+                $pendingHandlers = [];
             }
 
             throw new ProcessCrashedException("Process stream for PID {$this->pid} ended unexpectedly.");

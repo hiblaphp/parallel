@@ -7,6 +7,7 @@ namespace Hibla\Parallel;
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\Managers\ProcessPoolManager;
+use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Rcalicdan\ConfigLoader\Config;
@@ -29,6 +30,14 @@ final class ProcessPool implements ProcessPoolInterface
     private bool $isShutdown = false;
 
     /**
+     * Registered pool-level message handlers in registration order.
+     * All fire before the per-task handler passed to run().
+     *
+     * @var array<int, callable(WorkerMessage): void>
+     */
+    private array $onMessageHandlers = [];
+
+    /**
      * @var array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(string): mixed)|null}|null
      */
     private ?array $bootstrap = null;
@@ -37,6 +46,9 @@ final class ProcessPool implements ProcessPoolInterface
     {
     }
 
+    /**
+     * @inheritdoc
+     */
     public function withTimeout(int $seconds): static
     {
         $clone = clone $this;
@@ -107,11 +119,24 @@ final class ProcessPool implements ProcessPoolInterface
     }
 
     /**
+     * @inheritdoc
+     */
+    public function onMessage(callable $handler): static
+    {
+        $clone = clone $this;
+        // Append to preserve registration order — handlers fire in the order
+        // they are registered, consistent with the middleware convention.
+        $clone->onMessageHandlers[] = $handler;
+
+        return $clone;
+    }
+
+    /**
      * @template TResult
      * @inheritdoc
      * @return PromiseInterface<TResult>
      */
-    public function run(callable $callback): PromiseInterface
+    public function run(callable $callback, ?callable $onMessage = null): PromiseInterface
     {
         if ($this->isShutdown) {
             return Promise::rejected(new \RuntimeException('Cannot submit task to a shutdown pool.'));
@@ -139,7 +164,7 @@ final class ProcessPool implements ProcessPoolInterface
         $finalTimeout = $this->unlimitedTimeout ? 0 : $timeout;
 
         /** @var PromiseInterface<TResult> */
-        return $this->getPool()->submit($callback, $finalTimeout, $sourceLocation);
+        return $this->getPool()->submit($callback, $finalTimeout, $sourceLocation, $onMessage);
     }
 
     /**
@@ -154,6 +179,10 @@ final class ProcessPool implements ProcessPoolInterface
             $promise = $this->pool->shutdownAsync();
             $promise->finally(function () {
                 $this->pool = null;
+                // Explicitly clear handler references on graceful shutdown so
+                // closures don't hold external object references after the pool
+                // is no longer accepting tasks.
+                $this->onMessageHandlers = [];
             });
 
             return $promise;
@@ -170,6 +199,10 @@ final class ProcessPool implements ProcessPoolInterface
         $this->isShutdown = true;
         $this->pool?->shutdown();
         $this->pool = null;
+
+        // Explicitly clear handler references on shutdown so closures don't
+        // hold external object references after the pool is torn down.
+        $this->onMessageHandlers = [];
     }
 
     private function getPool(): ProcessPoolManager
@@ -184,6 +217,7 @@ final class ProcessPool implements ProcessPoolInterface
                 frameworkInfo: $this->bootstrap ?? $manager->getFrameworkBootstrap(),
                 memoryLimit: $this->memoryLimit,
                 maxNestingLevel: $this->maxNestingLevel ?? $manager->getMaxNestingLevel(),
+                onMessageHandlers: $this->onMessageHandlers,
             );
         }
 
@@ -191,12 +225,18 @@ final class ProcessPool implements ProcessPoolInterface
     }
 
     /**
-     * Automatically shut down the pool and release resources when garbage collected.
+     * Automatically shut down the pool, release resources, and clear handler
+     * references when garbage collected.
      */
     public function __destruct()
     {
         if (! $this->isShutdown) {
             $this->shutdown();
         }
+
+        // Always clear handlers on destruct regardless of shutdown state —
+        // guarantees closures release external references on GC even if
+        // shutdown() already cleared them (assignment to empty array is a no-op).
+        $this->onMessageHandlers = [];
     }
 }

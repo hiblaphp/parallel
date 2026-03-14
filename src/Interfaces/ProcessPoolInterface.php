@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Interfaces;
 
+use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 
 /**
@@ -12,7 +13,7 @@ use Hibla\Promise\Interfaces\PromiseInterface;
  * A pool maintains a set number of active worker processes, distributing tasks
  * among them to reduce the overhead of process creation for frequent, short-lived tasks.
  */
-interface ProcessPoolInterface extends ExecutorConfigInterface
+interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingInterface
 {
     /**
      * Submits a task to the pool for execution.
@@ -64,9 +65,12 @@ interface ProcessPoolInterface extends ExecutorConfigInterface
      *
      * @template TResult
      * @param callable(): TResult $callback The closure or callable to execute.
-     * @return PromiseInterface<TResult> A promise that will be fulfilled with the return value of the task.
+     * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
+     *        Fires before any pool-level handler registered via onMessage().
+     *        Wrapped in async() — safe to use await() inside without blocking.
+     * @return PromiseInterface<TResult>
      */
-    public function run(callable $callback): PromiseInterface;
+    public function run(callable $callback, ?callable $onMessage = null): PromiseInterface;
 
     /**
      * Gracefully shuts down the pool asynchronously.

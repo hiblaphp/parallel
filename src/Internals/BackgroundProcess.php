@@ -21,7 +21,8 @@ final class BackgroundProcess
     public function __construct(
         private readonly int $pid,
         private readonly mixed $processResource,
-    ) {}
+    ) {
+    }
 
     /**
      * Terminate the background process forcefully.

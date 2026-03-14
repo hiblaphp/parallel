@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hibla;
 
 use Hibla\Parallel\Internals\BackgroundProcess;
+use Hibla\Parallel\Internals\WorkerContext;
 use Hibla\Parallel\Parallel;
 use Hibla\Promise\Interfaces\PromiseInterface;
 
@@ -156,4 +157,58 @@ function spawnFn(callable $task, ?int $timeout = null): callable
     return static function (mixed ...$args) use ($task, $timeout): PromiseInterface {
         return spawn(static fn () => $task(...$args), $timeout);
     };
+}
+
+/**
+ * Emit a message from a worker process to the parent.
+ *
+ * Sends a structured MESSAGE frame to the parent process via stdout,
+ * bypassing the output buffer so it is never captured as task output.
+ *
+ * Supports any serializable PHP value — scalars, arrays, and objects
+ * all round-trip correctly across the process boundary. Objects are
+ * transparently serialized using base64(serialize()) and reconstructed
+ * into their original type on the parent side when building WorkerMessage.
+ *
+ * Silently no-ops when called outside a worker context (e.g., in the
+ * parent process or in a fire-and-forget background worker where stdout
+ * is /dev/null and message passing is unavailable).
+ *
+ * @param mixed $data The data to send to the parent process
+ * @return void
+ */
+function emit(mixed $data): void
+{
+    // Silently no-op outside a streamed worker context — safe to call
+    // from shared code that runs in both parent and worker processes
+    if (! WorkerContext::isWorker()) {
+        return;
+    }
+
+    $needsSerialization = \is_object($data) || \is_resource($data);
+
+    $frame = [
+        'status' => 'MESSAGE',
+        'pid' => getmypid(),
+        'data' => $needsSerialization ? base64_encode(serialize($data)) : $data,
+        'data_serialized' => $needsSerialization,
+    ];
+
+    // Include task_id when running inside a persistent worker so the
+    // parent can route the message to the correct per-task handler
+    $taskId = WorkerContext::getCurrentTaskId();
+    if ($taskId !== null) {
+        $frame['task_id'] = $taskId;
+    }
+
+    $json = json_encode($frame, JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        return;
+    }
+
+    // Write directly to STDOUT bypassing ob_start — the output buffer
+    // is reserved for echo/print output forwarded as OUTPUT frames.
+    // Mixing MESSAGE frames into the buffer would corrupt the stream.
+    fwrite(STDOUT, $json . PHP_EOL);
+    fflush(STDOUT);
 }

@@ -7,6 +7,8 @@ namespace Hibla\Parallel;
 use Hibla\Cancellation\CancellationTokenSource;
 use Hibla\Parallel\Interfaces\ParallelExecutorInterface;
 use Hibla\Parallel\Managers\ProcessManager;
+use Hibla\Parallel\Traits\MessageHandlerComposer;
+use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Rcalicdan\ConfigLoader\Config;
 
@@ -15,6 +17,8 @@ use Rcalicdan\ConfigLoader\Config;
  */
 final class ParallelExecutor implements ParallelExecutorInterface
 {
+    use MessageHandlerComposer;
+
     /**
      * @var array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null
      */
@@ -27,6 +31,14 @@ final class ParallelExecutor implements ParallelExecutorInterface
     private ?int $timeoutSeconds = null;
 
     private bool $unlimitedTimeout = false;
+
+    /**
+     * Registered executor-level message handlers in registration order.
+     * All fire before the per-task handler passed to run().
+     *
+     * @var array<int, callable(WorkerMessage): void>
+     */
+    private array $onMessageHandlers = [];
 
     public function __construct()
     {
@@ -105,11 +117,24 @@ final class ParallelExecutor implements ParallelExecutorInterface
     }
 
     /**
+     * @inheritdoc
+     */
+    public function onMessage(callable $handler): static
+    {
+        $clone = clone $this;
+        // Append to preserve registration order — handlers fire in the order
+        // they are registered, consistent with the middleware convention.
+        $clone->onMessageHandlers[] = $handler;
+
+        return $clone;
+    }
+
+    /**
      * @template TResult
      * @inheritdoc
      * @return PromiseInterface<TResult>
      */
-    public function run(callable $callback): PromiseInterface
+    public function run(callable $callback, ?callable $onMessage = null): PromiseInterface
     {
         $source = new CancellationTokenSource();
 
@@ -130,11 +155,27 @@ final class ParallelExecutor implements ParallelExecutorInterface
             $process->terminate();
         });
 
+        // Compose all executor-level handlers (in registration order) followed
+        // by the per-task handler into a single callable. Executor-level handlers
+        // act as the outer middleware layer and always fire first.
+        $composedHandler = $this->composeMessageHandlers($this->onMessageHandlers, $onMessage);
+
         /** @var PromiseInterface<TResult> */
-        return $process->getResult($finalTimeout)
+        return $process->getResult($finalTimeout, $composedHandler)
             ->onCancel(static function () use ($source) {
                 $source->cancel();
             })
         ;
+    }
+
+    /**
+     * Explicitly clear handler and bootstrap references when the executor is
+     * garbage collected to prevent closures from holding external object
+     * references longer than necessary.
+     */
+    public function __destruct()
+    {
+        $this->onMessageHandlers = [];
+        $this->bootstrap = null;
     }
 }

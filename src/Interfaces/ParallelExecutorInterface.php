@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Interfaces;
 
+use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 
 /**
@@ -12,7 +13,7 @@ use Hibla\Promise\Interfaces\PromiseInterface;
  * Each call to `run()` or `spawn()` will create a fresh process that is
  * torn down after the task is complete.
  */
-interface ParallelExecutorInterface extends ExecutorConfigInterface
+interface ParallelExecutorInterface extends ExecutorConfigInterface, MessagePassingInterface
 {
     /**
      * Executes a task in a parallel process and returns a promise for its result.
@@ -65,7 +66,10 @@ interface ParallelExecutorInterface extends ExecutorConfigInterface
      *
      * @template TResult
      * @param callable(): TResult $callback The closure or callable to execute.
-     * @return PromiseInterface<TResult> A promise that will be fulfilled with the return value of the task.
+     * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
+     *        Fires before any executor-level handler registered via onMessage().
+     *        Wrapped in async() — safe to use await() inside without blocking.
+     * @return PromiseInterface<TResult>
      */
-    public function run(callable $callback): PromiseInterface;
+    public function run(callable $callback, ?callable $onMessage = null): PromiseInterface;
 }

@@ -11,10 +11,13 @@ use Hibla\Parallel\Exceptions\TaskPayloadException;
 use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Internals\PersistentProcess;
+use Hibla\Parallel\Traits\MessageHandlerComposer;
+use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Rcalicdan\Serializer\CallbackSerializationManager;
+
 use SplQueue;
 
 /**
@@ -22,13 +25,15 @@ use SplQueue;
  */
 final class ProcessPoolManager
 {
+    use MessageHandlerComposer;
+
     /**
      * @var SplQueue<PersistentProcess>
      */
     private SplQueue $idleWorkers;
 
     /**
-     * @var SplQueue<array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string}>
+     * @var SplQueue<array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string, 4: callable|null}>
      */
     private SplQueue $taskQueue;
 
@@ -53,6 +58,9 @@ final class ProcessPoolManager
 
     /**
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(): mixed)|null} $frameworkInfo
+     * @param array<int, callable(WorkerMessage): void> $onMessageHandlers Registered pool-level handlers
+     *        in registration order. All fire before the per-task handler. Each is wrapped in async()
+     *        so await() inside is safe and none blocks the read loop fiber.
      */
     public function __construct(
         private readonly int $size,
@@ -60,7 +68,8 @@ final class ProcessPoolManager
         private readonly CallbackSerializationManager $serializer,
         private readonly array $frameworkInfo,
         private readonly ?string $memoryLimit,
-        private readonly int $maxNestingLevel
+        private readonly int $maxNestingLevel,
+        private readonly array $onMessageHandlers = [],
     ) {
         // Pre-flight check: prevent pool creation if exceeds the max nesting level
         $currentLevel = (int)((($env = getenv('DEFER_NESTING_LEVEL')) !== false) ? $env : 0);
@@ -89,9 +98,12 @@ final class ProcessPoolManager
     /**
      * @template TValue
      * @param callable(): TValue $task
+     * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
+     *        Fires before the pool-level handler. Both are wrapped in async() and run
+     *        concurrently — no completion ordering is guaranteed between them.
      * @return PromiseInterface<TValue>
      */
-    public function submit(callable $task, int $timeoutSeconds, string $sourceLocation = 'unknown'): PromiseInterface
+    public function submit(callable $task, int $timeoutSeconds, string $sourceLocation = 'unknown', ?callable $onMessage = null): PromiseInterface
     {
         if ($this->isShutdown) {
             /** @var Promise<TValue> $promise */
@@ -136,9 +148,9 @@ final class ProcessPoolManager
         }
 
         if ($worker !== null) {
-            $this->dispatch($worker, $task, $promise, $timeoutSeconds, $sourceLocation);
+            $this->dispatch($worker, $task, $promise, $timeoutSeconds, $sourceLocation, $onMessage);
         } else {
-            $this->taskQueue->enqueue([$task, $promise, $timeoutSeconds, $sourceLocation]);
+            $this->taskQueue->enqueue([$task, $promise, $timeoutSeconds, $sourceLocation, $onMessage]);
         }
 
         return $promise;
@@ -216,7 +228,7 @@ final class ProcessPoolManager
             return;
         }
 
-        /** @var SplQueue<array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string}> $validQueue */
+        /** @var SplQueue<array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string, 4: callable|null}> $validQueue */
         $validQueue = new SplQueue();
 
         while (! $this->taskQueue->isEmpty()) {
@@ -313,7 +325,7 @@ final class ProcessPoolManager
             // Loop to skip cancelled queue items
             $taskToDispatch = null;
             while (! $this->taskQueue->isEmpty()) {
-                /** @var array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string} $queued */
+                /** @var array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string, 4: callable|null} $queued */
                 $queued = $this->taskQueue->dequeue();
                 if ($queued[1]->isCancelled()) {
                     continue; // Skip tasks cancelled before dispatch
@@ -324,8 +336,8 @@ final class ProcessPoolManager
             }
 
             if ($taskToDispatch !== null) {
-                [$task, $promise, $timeout, $sourceLocation] = $taskToDispatch;
-                $this->dispatch($worker, $task, $promise, $timeout, $sourceLocation);
+                [$task, $promise, $timeout, $sourceLocation, $taskOnMessage] = $taskToDispatch;
+                $this->dispatch($worker, $task, $promise, $timeout, $sourceLocation, $taskOnMessage);
             } else {
                 if ($this->isShuttingDownGracefully) {
                     $worker->terminate();
@@ -380,8 +392,9 @@ final class ProcessPoolManager
      * @template TValue
      * @param callable(): TValue $task
      * @param Promise<TValue> $promise
+     * @param callable(WorkerMessage): void|null $onMessage Optional per-task handler
      */
-    private function dispatch(PersistentProcess $worker, callable $task, Promise $promise, int $timeoutSeconds, string $sourceLocation): void
+    private function dispatch(PersistentProcess $worker, callable $task, Promise $promise, int $timeoutSeconds, string $sourceLocation, ?callable $onMessage = null): void
     {
         $taskId = bin2hex(random_bytes(16));
 
@@ -415,7 +428,14 @@ final class ProcessPoolManager
         $workerId = spl_object_id($worker);
         $this->activeTasks[$workerId][$taskId] = $promise;
 
-        $executionPromise = $worker->submitTask($taskId, $jsonPayload, $sourceLocation);
+        // Compose per-task and pool-level handlers into a single callable.
+        // Per-task fires first (scheduled first onto the event loop), then
+        // pool-level. Both are wrapped in async() inside PersistentProcess
+        // so they run as independent fibers — neither blocks the read loop
+        // and neither waits for the other to complete.
+        $composedHandler = $this->composeMessageHandlers($this->onMessageHandlers, $onMessage);
+
+        $executionPromise = $worker->submitTask($taskId, $jsonPayload, $sourceLocation, $composedHandler);
 
         if ($timeoutSeconds > 0) {
             $executionPromise = Promise::timeout($executionPromise, $timeoutSeconds);

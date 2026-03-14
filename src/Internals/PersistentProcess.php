@@ -9,6 +9,7 @@ use function Hibla\await;
 
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
+use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
@@ -20,17 +21,17 @@ use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
 final class PersistentProcess
 {
     /**
-     * @var array<string, array{promise: Promise<mixed>, location: string}>
+     * @var array<string, array{promise: Promise<mixed>, location: string, onMessage: callable|null}>
      */
     private array $pendingTasks = [];
 
     /**
-     *  @var callable(self): void
+     * @var callable(self): void
      */
     private $onReadyCallback;
 
     /**
-     *  @var callable(self): void
+     * @var callable(self): void
      */
     private $onCrashCallback;
 
@@ -44,8 +45,7 @@ final class PersistentProcess
         private readonly PromiseWritableStreamInterface $stdin,
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr
-    ) {
-    }
+    ) {}
 
     /**
      * @param callable(self): void $onReadyCallback
@@ -57,6 +57,12 @@ final class PersistentProcess
         $this->onCrashCallback = $onCrashCallback;
 
         async(function () {
+            // Tracks in-flight handler fibers per task ID so COMPLETED/ERROR
+            // can await all handlers for that specific task before resolving
+            // its promise — prevents callers being released before handlers finish.
+            /** @var array<string, list<PromiseInterface<mixed>>> $pendingHandlers */
+            $pendingHandlers = [];
+
             try {
                 while (null !== ($line = await($this->stdout->readLineAsync()))) {
                     if (trim($line) === '') {
@@ -102,6 +108,30 @@ final class PersistentProcess
                     if ($status === 'OUTPUT') {
                         $output = $data['output'] ?? '';
                         echo \is_string($output) ? $output : '';
+                    } elseif ($status === 'MESSAGE') {
+                        $onMessage = $this->pendingTasks[$taskId]['onMessage'];
+
+                        if ($onMessage !== null) {
+                            $rawData = $data['data'] ?? null;
+
+                            // Transparently deserialize objects serialized by emit()
+                            // using the base64(serialize()) pattern
+                            if (($data['data_serialized'] ?? false) === true && \is_string($rawData)) {
+                                $decoded = base64_decode($rawData, true);
+                                if ($decoded !== false) {
+                                    $rawData = unserialize($decoded);
+                                }
+                            }
+
+                            $message = new WorkerMessage(
+                                data: $rawData,
+                                pid: \is_int($data['pid']) ? $data['pid'] : $this->pid,
+                            );
+
+                            // Track handler fiber under its task ID so the terminal
+                            // frame can await all handlers for this specific task.
+                            $pendingHandlers[$taskId][] = async(fn() => $onMessage($message));
+                        }
                     } elseif ($status === 'COMPLETED') {
                         $result = $data['result'] ?? null;
 
@@ -112,35 +142,57 @@ final class PersistentProcess
                             }
                         }
 
+                        if (isset($pendingHandlers[$taskId]) && \count($pendingHandlers[$taskId]) > 0) {
+                            await(Promise::all($pendingHandlers[$taskId]));
+                            unset($pendingHandlers[$taskId]);
+                        }
+
                         unset($this->pendingTasks[$taskId]);
                         $promise->resolve($result);
                     } elseif ($status === 'ERROR') {
                         /** @var array<string, mixed> $data */
                         $exception = ExceptionHandler::createFromWorkerError($data, $sourceLocation);
+
+                        if (isset($pendingHandlers[$taskId]) && \count($pendingHandlers[$taskId]) > 0) {
+                            await(Promise::all($pendingHandlers[$taskId]));
+                            unset($pendingHandlers[$taskId]);
+                        }
+
                         unset($this->pendingTasks[$taskId]);
                         $promise->reject($exception);
                     }
                 }
             } catch (\Throwable $e) {
                 // Stream closed unexpectedly or any other error — treat as a crash
+                // and clear all pending handler references before crashing.
+                $pendingHandlers = [];
                 $this->terminate();
                 ($this->onCrashCallback)($this);
             } finally {
+                $pendingHandlers = [];
                 $this->terminate();
             }
         });
     }
 
     /**
+     * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
+     *        The handler promise is tracked by startReadLoop() and awaited before the task
+     *        promise resolves — callers are never released before handlers finish.
      * @return PromiseInterface<mixed>
      */
-    public function submitTask(string $taskId, string $payload, string $sourceLocation = 'unknown'): PromiseInterface
+    public function submitTask(string $taskId, string $payload, string $sourceLocation = 'unknown', ?callable $onMessage = null): PromiseInterface
     {
         $this->isBusy = true;
 
         /** @var Promise<mixed> $promise */
         $promise = new Promise();
-        $this->pendingTasks[$taskId] = ['promise' => $promise, 'location' => $sourceLocation];
+
+        $this->pendingTasks[$taskId] = [
+            'promise' => $promise,
+            'location' => $sourceLocation,
+            'onMessage' => $onMessage,
+        ];
 
         async(function () use ($payload) {
             try {
