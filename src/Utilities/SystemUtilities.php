@@ -128,8 +128,8 @@ class SystemUtilities
         if (\function_exists('shell_exec')) {
             $command = match (PHP_OS_FAMILY) {
                 'Windows' => 'wmic cpu get NumberOfLogicalProcessors /value',
-                'Darwin'  => 'sysctl -n hw.logicalcpu',
-                default   => 'nproc',
+                'Darwin' => 'sysctl -n hw.logicalcpu',
+                default => 'nproc',
             };
 
             $output = @shell_exec($command);
@@ -153,6 +153,7 @@ class SystemUtilities
 
             if (is_readable('/proc/cpuinfo')) {
                 $count = substr_count((string) file_get_contents('/proc/cpuinfo'), "\nprocessor");
+
                 return $count > 0 ? $count + 1 : 1;
             }
         }

@@ -8,6 +8,7 @@ use Hibla\Cancellation\CancellationTokenSource;
 use Hibla\Parallel\Interfaces\ParallelExecutorInterface;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Promise\Interfaces\PromiseInterface;
+use Rcalicdan\ConfigLoader\Config;
 
 /**
  * Class for executing one-off parallel tasks and background processes.
@@ -23,7 +24,7 @@ final class ParallelExecutor implements ParallelExecutorInterface
 
     private ?int $maxNestingLevel = null;
 
-    private int $timeoutSeconds = 60;
+    private ?int $timeoutSeconds = null;
 
     private bool $unlimitedTimeout = false;
 
@@ -111,7 +112,11 @@ final class ParallelExecutor implements ParallelExecutorInterface
     public function run(callable $callback): PromiseInterface
     {
         $source = new CancellationTokenSource();
-        $finalTimeout = $this->unlimitedTimeout ? 0 : $this->timeoutSeconds;
+
+        $configTimeout = Config::loadFromRoot('hibla_parallel', 'background_process.timeout', 600);
+        assert(\is_int($configTimeout));
+        $timeout = $this->timeoutSeconds ?? $configTimeout;
+        $finalTimeout = $this->unlimitedTimeout ? 0 : $timeout;
 
         $process = ProcessManager::getGlobal()->spawnStreamedTask(
             $callback,

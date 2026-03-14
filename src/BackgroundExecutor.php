@@ -8,6 +8,7 @@ use Hibla\Parallel\Interfaces\BackgroundExecutorInterface;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
+use Rcalicdan\ConfigLoader\Config;
 
 /**
  * Class for spawning fire-and-forget background processes.
@@ -23,13 +24,11 @@ final class BackgroundExecutor implements BackgroundExecutorInterface
 
     private ?int $maxNestingLevel = null;
 
-    private int $timeoutSeconds = 600;
+    private ?int $timeoutSeconds = null;
 
     private bool $unlimitedTimeout = false;
 
-    public function __construct()
-    {
-    }
+    public function __construct() {}
 
     /**
      * @inheritdoc
@@ -108,7 +107,10 @@ final class BackgroundExecutor implements BackgroundExecutorInterface
      */
     public function spawn(callable $callback): PromiseInterface
     {
-        $finalTimeout = $this->unlimitedTimeout ? 0 : $this->timeoutSeconds;
+        $configTimeout = Config::loadFromRoot('hibla_parallel', 'background_process.timeout', 600);
+        assert(\is_int($configTimeout));
+        $timeout = $this->timeoutSeconds ?? $configTimeout;
+        $finalTimeout = $this->unlimitedTimeout ? 0 : $timeout;
 
         return Promise::resolved(
             ProcessManager::getGlobal()->spawnBackgroundTask(

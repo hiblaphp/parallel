@@ -27,7 +27,9 @@ use Rcalicdan\Serializer\CallbackSerializationManager;
  */
 class ProcessSpawnHandler
 {
-    private string|int $defaultMemoryLimit;
+    private string|int $defaultProcessMemoryLimit;
+
+    private string|int $defaultBackgroundMemoryLimit;
 
     /** @var array<string, string> */
     private array $workerPathCache = [];
@@ -55,8 +57,11 @@ class ProcessSpawnHandler
             );
         }
 
-        $configMemoryLimit = Config::loadFromRoot('hibla_parallel', 'background_process.memory_limit', '512M');
-        $this->defaultMemoryLimit = (\is_string($configMemoryLimit) || \is_int($configMemoryLimit)) ? $configMemoryLimit : '512M';
+        $procMemLimit = Config::loadFromRoot('hibla_parallel', 'process.memory_limit', '512M');
+        $this->defaultProcessMemoryLimit = (\is_string($procMemLimit) || \is_int($procMemLimit)) ? $procMemLimit : '512M';
+
+        $bgMemLimit = Config::loadFromRoot('hibla_parallel', 'background_process.memory_limit', '512M');
+        $this->defaultBackgroundMemoryLimit = (\is_string($bgMemLimit) || \is_int($bgMemLimit)) ? $bgMemLimit : '512M';
     }
 
     /**
@@ -135,7 +140,7 @@ class ProcessSpawnHandler
                 $frameworkInfo,
                 $serializationManager,
                 $timeoutSeconds,
-                $memoryLimit
+                $memoryLimit ?? $this->defaultProcessMemoryLimit
             );
             $stdin->writeAsync($payload . PHP_EOL);
         } catch (\Throwable $e) {
@@ -213,7 +218,7 @@ class ProcessSpawnHandler
                 $frameworkInfo,
                 $serializationManager,
                 $timeoutSeconds,
-                $memoryLimit
+                $memoryLimit ?? $this->defaultBackgroundMemoryLimit
             );
 
             fwrite($pipes[0], $payload . PHP_EOL);
@@ -232,15 +237,15 @@ class ProcessSpawnHandler
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param int $timeoutSeconds Maximum execution time in seconds
-     * @param string|null $memoryLimit Custom memory limit for this specific process
+     * @param string|int $memoryLimit Memory limit for this specific process
      * @return string JSON-encoded payload string
      */
     private function createTaskPayload(
         callable $callback,
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
-        int $timeoutSeconds = 60,
-        ?string $memoryLimit = null
+        int $timeoutSeconds,
+        string|int $memoryLimit
     ): string {
         $serializedCallback = $serializationManager->serializeCallback($callback);
 
@@ -257,7 +262,7 @@ class ProcessSpawnHandler
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
             'framework_bootstrap_callback' => $serializedBootstrapCallback,
             'timeout_seconds' => $timeoutSeconds,
-            'memory_limit' => $memoryLimit ?? $this->defaultMemoryLimit,
+            'memory_limit' => $memoryLimit,
         ];
 
         $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);
@@ -316,7 +321,11 @@ class ProcessSpawnHandler
         $stderr = new PromiseReadableStream($pipes[2]);
 
         // Send the one-time boot payload
-        $bootPayload = $this->createBootPayload($frameworkInfo, $serializationManager, $memoryLimit);
+        $bootPayload = $this->createBootPayload(
+            $frameworkInfo,
+            $serializationManager,
+            $memoryLimit ?? $this->defaultProcessMemoryLimit
+        );
         $stdin->writeAsync($bootPayload . PHP_EOL);
 
         $status = proc_get_status($processResource);
@@ -335,12 +344,12 @@ class ProcessSpawnHandler
      *
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
      * @param CallbackSerializationManager $serializationManager
-     * @param string|null $memoryLimit
+     * @param string|int $memoryLimit
      */
     private function createBootPayload(
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
-        ?string $memoryLimit = null
+        string|int $memoryLimit
     ): string {
         $serializedBootstrapCallback = null;
         if (isset($frameworkInfo['bootstrap_callback']) && is_callable($frameworkInfo['bootstrap_callback'])) {
@@ -351,7 +360,7 @@ class ProcessSpawnHandler
             'autoload_path' => $this->systemUtils->findAutoloadPath(),
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
             'framework_bootstrap_callback' => $serializedBootstrapCallback,
-            'memory_limit' => $memoryLimit ?? $this->defaultMemoryLimit,
+            'memory_limit' => $memoryLimit,
         ];
 
         $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);

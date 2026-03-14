@@ -9,13 +9,14 @@ use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\Managers\ProcessPoolManager;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
+use Rcalicdan\ConfigLoader\Config;
 
 /**
  * Class for managing a pool of persistent worker processes.
  */
 final class ProcessPool implements ProcessPoolInterface
 {
-    private int $timeoutSeconds = 60;
+    private ?int $timeoutSeconds = null;
 
     private bool $unlimitedTimeout = false;
 
@@ -132,7 +133,10 @@ final class ProcessPool implements ProcessPoolInterface
             }
         }
 
-        $finalTimeout = $this->unlimitedTimeout ? 0 : $this->timeoutSeconds;
+        $configTimeout = Config::loadFromRoot('hibla_parallel', 'background_process.timeout', 600);
+        assert(\is_int($configTimeout));
+        $timeout = $this->timeoutSeconds ?? $configTimeout;
+        $finalTimeout = $this->unlimitedTimeout ? 0 : $timeout;
 
         /** @var PromiseInterface<TResult> */
         return $this->getPool()->submit($callback, $finalTimeout, $sourceLocation);
