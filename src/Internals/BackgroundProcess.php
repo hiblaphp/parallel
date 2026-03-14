@@ -16,11 +16,13 @@ final class BackgroundProcess
 
     /**
      * @param int $pid The process ID
-     * @param mixed $processResource The process resource handle from proc_open
+     * @param mixed $processResource The process resource handle from proc_open.
+     *        Null when the resource is unavailable — isRunning() falls back to
+     *        posix_kill() on Unix and tasklist on Windows in that case.
      */
     public function __construct(
         private readonly int $pid,
-        private readonly mixed $processResource,
+        private readonly mixed $processResource = null,
     ) {
     }
 
@@ -65,8 +67,11 @@ final class BackgroundProcess
             if (\is_resource($this->processResource)) {
                 $status = proc_get_status($this->processResource);
                 $running = $status['running'];
+            } elseif (\function_exists('posix_kill')) {
+                $running = posix_kill($this->pid, 0);
             } else {
-                $running = false;
+                $output = shell_exec("ps -p {$this->pid} 2>/dev/null");
+                $running = \is_string($output) && strpos($output, (string)$this->pid) !== false;
             }
         }
 
