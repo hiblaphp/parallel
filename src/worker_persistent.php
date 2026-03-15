@@ -2,6 +2,9 @@
 
 /**
  * Hibla Parallel Persistent Worker Script
+ *
+ * Designed to stay alive across multiple task executions to avoid the
+ * latency of repeated process spawning and framework bootstrapping.
  */
 
 declare(strict_types=1);
@@ -53,12 +56,52 @@ $executionCount = 0;      // number of tasks completed by this worker
 $maxExecutionsPerWorker = null;   // null = unlimited, set from boot payload
 // ================================
 
+/**
+ * Writes a JSON-encoded status message to stdout followed by a newline.
+ */
 function write_frame(array $data): void
 {
     global $stdout;
     if (is_resource($stdout)) {
         @fwrite($stdout, json_encode($data, JSON_UNESCAPED_SLASHES) . PHP_EOL);
         @fflush($stdout);
+    }
+}
+
+/**
+ * Drains stdin after writing a terminal status frame or during shutdown.
+ *
+ * Crucial for Windows compatibility: When a process exits, Windows instantly
+ * destroys open socket descriptors, which can wipe out the final bytes in the
+ * output buffer before the parent process has finished reading them.
+ *
+ * This keeps the child process alive until the parent explicitly closes its end
+ * of the pipe (signalling it has safely read the output) or a 500ms safety
+ * timeout expires.
+ */
+function drain_and_wait(): void
+{
+    global $stdin, $stdout;
+
+    if (is_resource($stdout)) {
+        @fflush($stdout);
+    }
+
+    if (! is_resource($stdin)) {
+        return;
+    }
+
+    // Explicitly set to non-blocking so the 500ms timeout loop doesn't hang
+    // if the parent process itself crashed and stopped writing/closing.
+    @stream_set_blocking($stdin, false);
+
+    $drainStart = hrtime(true);
+    while ((hrtime(true) - $drainStart) < 500_000_000) { // 500ms
+        $chunk = @fread($stdin, 1);
+        if ($chunk === false || feof($stdin)) {
+            break; // Parent closed the pipe, safe to exit
+        }
+        usleep(5000); // 5ms sleep to prevent CPU spin
     }
 }
 
@@ -84,9 +127,12 @@ function containsObjects(mixed $value): bool
 register_shutdown_function(function () {
     global $currentTaskId, $isProcessing, $executionCount, $maxExecutionsPerWorker;
 
-    // Only signal a crash if this worker died mid-task — idle crashes and
-    // clean retirements need no ERROR frame.
+    // If the worker retired gracefully via exit(0) or died while idle, no
+    // ERROR frame is needed, but we MUST still drain_and_wait() to ensure
+    // the parent receives the prior RETIRING or COMPLETED frame safely on Windows.
     if (! $isProcessing || $currentTaskId === null) {
+        drain_and_wait();
+
         return;
     }
 
@@ -111,6 +157,9 @@ register_shutdown_function(function () {
 
     // Signal the parent to terminate this worker and respawn a replacement
     write_frame(['status' => 'CRASHED']);
+
+    // Ensure the CRASHED frame is fully transmitted before the socket dies
+    drain_and_wait();
 });
 // ===========================
 
@@ -241,7 +290,8 @@ while (($payload = fgets($stdin)) !== false) {
             ]);
 
             // Exit cleanly — the parent will spawn a fresh replacement worker.
-            // No crash frame needed since COMPLETED/ERROR was already written above.
+            // exit(0) automatically fires the register_shutdown_function, which
+            // runs drain_and_wait() to guarantee the RETIRING frame is received.
             exit(0);
         }
     }

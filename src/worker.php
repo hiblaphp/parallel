@@ -128,20 +128,25 @@ function drain_and_wait(): void
     global $stdin, $stdout;
 
     if (is_resource($stdout)) {
-        fflush($stdout);
+        @fflush($stdout);
     }
 
     if (! is_resource($stdin)) {
         return;
     }
 
+    // Explicitly set non-blocking. $stdin was set to blocking at the top of
+    // the file. If we leave it blocking and the parent crashes, fread() here
+    // will hang indefinitely and zombie the child process.
+    @stream_set_blocking($stdin, false);
+
     $drainStart = hrtime(true);
-    while ((hrtime(true) - $drainStart) < 500_000_000) {
+    while ((hrtime(true) - $drainStart) < 500_000_000) { // 500ms
         $chunk = @fread($stdin, 1);
         if ($chunk === false || feof($stdin)) {
-            break;
+            break; // Parent closed the pipe, safe to exit
         }
-        usleep(5000);
+        usleep(5000); // 5ms sleep to prevent CPU spin
     }
 }
 

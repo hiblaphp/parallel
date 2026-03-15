@@ -231,9 +231,6 @@ final class ProcessPoolManager
         return $promise;
     }
 
-    /**
-     * Forcefully shuts down the pool.
-     */
     public function shutdown(): void
     {
         if ($this->isShutdown && ! $this->isShuttingDownGracefully) {
@@ -243,8 +240,11 @@ final class ProcessPoolManager
         $this->isShutdown = true;
         $this->isShuttingDownGracefully = false; // Override graceful state
 
+        // On Windows each signalTerminate() fires "start /B taskkill" and returns
+        // immediately, so all workers receive their kill signal before we begin
+        // closing any pipes — avoiding sequential N × exec() blocking.
         foreach ($this->allWorkers as $worker) {
-            $worker->terminate();
+            $worker->signalTerminate();
         }
 
         while (! $this->taskQueue->isEmpty()) {
@@ -262,6 +262,10 @@ final class ProcessPoolManager
                     $promise->reject(new PoolShutdownException('Pool was shut down before the task completed.'));
                 }
             }
+        }
+
+        foreach ($this->allWorkers as $worker) {
+            $worker->cleanupResources();
         }
 
         $this->allWorkers = [];
@@ -315,9 +319,15 @@ final class ProcessPoolManager
             }
         }
 
-        // All done! Terminate workers and finalize shutdown.
+        // All tasks have drained — shut down workers using the two-phase approach.
+        // Phase 1: Signal all workers concurrently before touching any pipes.
         foreach ($this->allWorkers as $worker) {
-            $worker->terminate();
+            $worker->signalTerminate();
+        }
+
+        // Phase 2: Clean up pipes and proc handles after all signals are in-flight.
+        foreach ($this->allWorkers as $worker) {
+            $worker->cleanupResources();
         }
 
         $this->allWorkers = [];
@@ -329,14 +339,19 @@ final class ProcessPoolManager
         }
     }
 
+    /**
+     * Emergency shutdown triggered when a fatal, unrecoverable error is detected
+     * (e.g. a worker crashes during boot before it has sent a READY frame).
+     */
     private function shutdownDueToFatalError(\Throwable $e): void
     {
         $this->isShutdown = true;
         $this->isShuttingDownGracefully = false;
 
         foreach ($this->allWorkers as $worker) {
-            $worker->terminate();
+            $worker->signalTerminate();
         }
+
         $this->allWorkers = [];
 
         while (! $this->taskQueue->isEmpty()) {
@@ -355,6 +370,7 @@ final class ProcessPoolManager
                 }
             }
         }
+
         $this->activeTasks = [];
         $this->idleWorkers = new SplQueue();
 

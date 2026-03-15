@@ -276,7 +276,10 @@ final class PersistentProcess
         return $this->isAlive;
     }
 
-    public function terminate(): void
+    /**
+     * Sends a kill signal to the worker process without blocking on Windows.
+     */
+    public function signalTerminate(): void
     {
         if (! $this->isAlive) {
             return;
@@ -285,11 +288,21 @@ final class PersistentProcess
         $this->handleCrash();
 
         if (PHP_OS_FAMILY === 'Windows') {
-            exec("taskkill /F /T /PID {$this->pid} 2>nul");
-        } else {
-            exec("pkill -9 -P {$this->pid} 2>/dev/null; kill -9 {$this->pid} 2>/dev/null");
-        }
+            $handle = popen("start /B cmd /C \"taskkill /F /T /PID {$this->getWorkerPid()} >nul 2>nul\"", 'r');
 
+            if ($handle !== false) {
+                pclose($handle);
+            }
+        } else {
+            exec("pkill -9 -P {$this->getWorkerPid()} 2>/dev/null; kill -9 {$this->getWorkerPid()} 2>/dev/null");
+        }
+    }
+
+    /**
+     * Closes all I/O streams and releases the proc resource for this worker.
+     */
+    public function cleanupResources(): void
+    {
         $this->stdin->close();
         $this->stdout->close();
         $this->stderr->close();
@@ -298,6 +311,19 @@ final class PersistentProcess
             @proc_terminate($this->processResource);
             @proc_close($this->processResource);
         }
+    }
+
+    /**
+     * Terminates the worker process and releases all associated resources.
+     */
+    public function terminate(): void
+    {
+        if (! $this->isAlive) {
+            return;
+        }
+
+        $this->signalTerminate();
+        $this->cleanupResources();
     }
 
     private function handleCrash(): void

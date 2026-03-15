@@ -54,7 +54,7 @@ class ProcessManager
 
     private int $spawnCount = 0;
 
-    private float $lastSpawnReset = 0.0;
+    private int|float $lastSpawnReset = 0;
 
     private int $maxSpawnsPerSecond;
 
@@ -236,9 +236,11 @@ class ProcessManager
         ?array $customBootstrap = null,
         ?int $maxNestingLevel = null
     ): BackgroundProcess {
-        if (microtime(true) - $this->lastSpawnReset > 1.0) {
+        $currentTime = hrtime(true);
+
+        if (($currentTime - $this->lastSpawnReset) > 1_000_000_000) {
             $this->spawnCount = 0;
-            $this->lastSpawnReset = microtime(true);
+            $this->lastSpawnReset = $currentTime;
         }
 
         if ($this->spawnCount >= $this->maxSpawnsPerSecond) {
@@ -335,7 +337,7 @@ class ProcessManager
         if (! $this->serializer->canSerializeCallback($callback)) {
             throw new TaskPayloadException(
                 'Callback cannot be serialized. ' .
-                'Please ensure it is a valid PHP callable and does not contain unserializable types.'
+                    'Please ensure it is a valid PHP callable and does not contain unserializable types.'
             );
         }
 
