@@ -75,4 +75,26 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      * @return array<int, int>
      */
     public function getWorkerPids(): array;
+
+    /**
+     * Returns a new instance configured to retire and replace workers after
+     * executing a maximum number of tasks.
+     *
+     * Each worker process tracks its own execution count. When the threshold
+     * is reached the worker writes a RETIRING frame after completing its current
+     * task, exits cleanly, and the pool spawns a fresh replacement automatically.
+     *
+     * This is useful for long-running pools where workers accumulate memory
+     * over time due to framework state, static caches, or OPcache growth.
+     * Retiring workers periodically gives each replacement a clean memory slate.
+     *
+     * By default workers run indefinitely (null — no retirement threshold).
+     * Setting this to null explicitly disables retirement if a previous clone
+     * had it configured.
+     *
+     * @param int $maxExecutions Maximum number of tasks before worker retires. Must be >= 1.
+     * @return static A new instance with the retirement threshold configured.
+     * @throws \InvalidArgumentException If $maxExecutions is less than 1.
+     */
+    public function withMaxExecutionsPerWorker(int $maxExecutions): static;
 }

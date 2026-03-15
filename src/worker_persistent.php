@@ -29,6 +29,7 @@ if ($nestingLevel > $maxNestingLevel) {
     exit(1);
 }
 // ==========================================
+
 $stdin = fopen('php://stdin',  'r');
 $stdout = fopen('php://stdout', 'w');
 $stderr = fopen('php://stderr', 'w');
@@ -41,6 +42,16 @@ $stderr = fopen('php://stderr', 'w');
 stream_set_blocking($stdin,  true);
 stream_set_blocking($stdout, false);
 stream_set_blocking($stderr, false);
+
+// ===== PROCESS-LEVEL STATE =====
+// These are declared at script scope and accessed via global in closures
+// and nested scopes — consistent with how $currentTaskId and $isProcessing
+// are managed throughout this script.
+$currentTaskId = null;   // task ID of the currently executing task
+$isProcessing = false;  // true while a task is in-flight
+$executionCount = 0;      // number of tasks completed by this worker
+$maxExecutionsPerWorker = null;   // null = unlimited, set from boot payload
+// ================================
 
 function write_frame(array $data): void
 {
@@ -70,40 +81,40 @@ function containsObjects(mixed $value): bool
 }
 
 // ===== CRASH DETECTION =====
-$currentTaskId = null;
-$isProcessing = false;
-
 register_shutdown_function(function () {
-    global $currentTaskId, $isProcessing;
+    global $currentTaskId, $isProcessing, $executionCount, $maxExecutionsPerWorker;
 
-    // Only signal a crash if this worker died mid-task; idle crashes need no ERROR frame
-    if ($isProcessing && $currentTaskId !== null) {
-        $error = error_get_last();
-        $message = 'Worker process exited or crashed unexpectedly.';
-
-        if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
-            $message = 'Fatal Error: ' . $error['message'];
-        }
-
-        // Reject the in-flight task promise on the parent side
-        write_frame([
-            'status' => 'ERROR',
-            'task_id' => $currentTaskId,
-            'class' => Hibla\Parallel\Exceptions\ProcessCrashedException::class,
-            'message' => $message,
-            'code' => 0,
-            'file' => $error['file'] ?? 'unknown',
-            'line' => $error['line'] ?? 0,
-            'stack_trace' => 'Worker crashed during execution.',
-        ]);
-
-        // Signal the parent to terminate this worker and respawn a replacement
-        write_frame(['status' => 'CRASHED']);
+    // Only signal a crash if this worker died mid-task — idle crashes and
+    // clean retirements need no ERROR frame.
+    if (! $isProcessing || $currentTaskId === null) {
+        return;
     }
+
+    $error = error_get_last();
+    $message = 'Worker process exited or crashed unexpectedly.';
+
+    if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        $message = 'Fatal Error: ' . $error['message'];
+    }
+
+    // Reject the in-flight task promise on the parent side
+    write_frame([
+        'status' => 'ERROR',
+        'task_id' => $currentTaskId,
+        'class' => Hibla\Parallel\Exceptions\ProcessCrashedException::class,
+        'message' => $message,
+        'code' => 0,
+        'file' => $error['file'] ?? 'unknown',
+        'line' => $error['line'] ?? 0,
+        'stack_trace' => 'Worker crashed during execution.',
+    ]);
+
+    // Signal the parent to terminate this worker and respawn a replacement
+    write_frame(['status' => 'CRASHED']);
 });
 // ===========================
 
-// 1. Read Boot Payload (Autoloader, Bootstrap, Limits)
+// 1. Read Boot Payload (Autoloader, Bootstrap, Limits, Retirement Config)
 $bootPayload = fgets($stdin);
 if (! $bootPayload) {
     exit(1);
@@ -116,8 +127,11 @@ if (! empty($bootData['autoload_path']) && file_exists($bootData['autoload_path'
     require_once $bootData['autoload_path'];
 }
 
-// Mark this process as a worker for emit to properly send message
+// Mark as worker immediately after autoload so emit() can write MESSAGE
+// frames. Must be unconditional — framework bootstrap is optional but
+// message passing is always available in persistent workers.
 Hibla\Parallel\Internals\WorkerContext::markAsWorker();
+
 $serializationManager = new Rcalicdan\Serializer\CallbackSerializationManager();
 
 if (! empty($bootData['framework_bootstrap']) && file_exists($bootData['framework_bootstrap'])) {
@@ -129,9 +143,20 @@ if (! empty($bootData['framework_bootstrap']) && file_exists($bootData['framewor
     }
 }
 
-//Tell the parent the worker is ready to accept tasks
-write_frame(['status' => 'READY']);
+// Set the retirement threshold from the boot payload.
+// Only active when explicitly configured via withMaxExecutionsPerWorker() —
+// null means unlimited, workers run indefinitely until the pool shuts down.
+global $maxExecutionsPerWorker;
+$maxExecutionsPerWorker = isset($bootData['max_executions_per_worker'])
+    && \is_int($bootData['max_executions_per_worker'])
+    && $bootData['max_executions_per_worker'] > 0
+    ? $bootData['max_executions_per_worker']
+    : null;
 
+// Tell the parent the worker is ready to accept tasks
+write_frame(['status' => 'READY', 'pid' => getmypid()]);
+
+// ===== TASK LOOP =====
 while (($payload = fgets($stdin)) !== false) {
     if (trim($payload) === '') {
         continue;
@@ -142,9 +167,12 @@ while (($payload = fgets($stdin)) !== false) {
         continue;
     }
 
+    global $currentTaskId, $isProcessing;
     $currentTaskId = $taskData['task_id'];
     $isProcessing = true;
 
+    // Register the task ID so emit() can tag MESSAGE frames for correct
+    // routing back to the originating task handler on the parent side.
     Hibla\Parallel\Internals\WorkerContext::setCurrentTaskId($currentTaskId);
 
     ob_start(function (string $buffer) use ($currentTaskId) {
@@ -185,14 +213,41 @@ while (($payload = fgets($stdin)) !== false) {
         ]);
     }
 
-    // Task finished cleanly — clear crash context
+    // Task finished cleanly — clear crash context and task ID
     $isProcessing = false;
     $currentTaskId = null;
 
+    // Clear WorkerContext so emit() no-ops between tasks rather than
+    // tagging orphaned frames with a stale task ID.
     Hibla\Parallel\Internals\WorkerContext::setCurrentTaskId(null);
 
     gc_collect_cycles();
-    write_frame(['status' => 'READY']);
+
+    // ===== RETIREMENT CHECK =====
+    // Increment the execution counter and check against the configured threshold.
+    // Only active when max_executions_per_worker was explicitly set in the boot
+    // payload — null means unlimited and this block is skipped entirely.
+    // RETIRING is written instead of READY — the parent treats this as a planned
+    // respawn, not a crash, so no ProcessCrashedException is thrown.
+    global $executionCount, $maxExecutionsPerWorker;
+
+    if ($maxExecutionsPerWorker !== null) {
+        $executionCount++;
+
+        if ($executionCount >= $maxExecutionsPerWorker) {
+            write_frame([
+                'status' => 'RETIRING',
+                'executions' => $executionCount,
+            ]);
+
+            // Exit cleanly — the parent will spawn a fresh replacement worker.
+            // No crash frame needed since COMPLETED/ERROR was already written above.
+            exit(0);
+        }
+    }
+    // ============================
+
+    write_frame(['status' => 'READY', 'pid' => getmypid()]);
 }
 
 exit(0);

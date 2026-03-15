@@ -44,6 +44,14 @@ final class ProcessPool implements ProcessPoolInterface
      */
     private ?array $bootstrap = null;
 
+    /**
+     * Maximum number of tasks a single worker executes before retiring and
+     * being replaced by a fresh worker. Null means unlimited.
+     *
+     * @var int<1, max>|null
+     */
+    private ?int $maxExecutionsPerWorker = null;
+
     public function __construct(private readonly int $size)
     {
     }
@@ -137,8 +145,6 @@ final class ProcessPool implements ProcessPoolInterface
     public function onMessage(callable $handler): static
     {
         $clone = clone $this;
-        // Append to preserve registration order — handlers fire in the order
-        // they are registered, consistent with the middleware convention.
         $clone->onMessageHandlers[] = $handler;
 
         return $clone;
@@ -149,8 +155,6 @@ final class ProcessPool implements ProcessPoolInterface
      */
     public function getWorkerCount(): int
     {
-        // Pool manager not yet instantiated — lazy pool that has never had
-        // a task submitted, or pool was already shut down.
         if ($this->pool === null) {
             return 0;
         }
@@ -163,13 +167,29 @@ final class ProcessPool implements ProcessPoolInterface
      */
     public function getWorkerPids(): array
     {
-        // Pool manager not yet instantiated — lazy pool that has never had
-        // a task submitted, or pool was already shut down.
         if ($this->pool === null) {
             return [];
         }
 
         return $this->pool->getWorkerPids();
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function withMaxExecutionsPerWorker(int $maxExecutions): static
+    {
+        if ($maxExecutions < 1) {
+            throw new \InvalidArgumentException(
+                'Max executions per worker must be at least 1. Got: ' . $maxExecutions
+            );
+        }
+
+        $clone = clone $this;
+        /** @var int<1, max> $maxExecutions */
+        $clone->maxExecutionsPerWorker = $maxExecutions;
+
+        return $clone;
     }
 
     /**
@@ -220,9 +240,6 @@ final class ProcessPool implements ProcessPoolInterface
             $promise = $this->pool->shutdownAsync();
             $promise->finally(function () {
                 $this->pool = null;
-                // Explicitly clear handler references on graceful shutdown so
-                // closures don't hold external object references after the pool
-                // is no longer accepting tasks.
                 $this->onMessageHandlers = [];
             });
 
@@ -241,8 +258,6 @@ final class ProcessPool implements ProcessPoolInterface
         $this->pool?->shutdown();
         $this->pool = null;
 
-        // Explicitly clear handler references on shutdown so closures don't
-        // hold external object references after the pool is torn down.
         $this->onMessageHandlers = [];
     }
 
@@ -260,6 +275,7 @@ final class ProcessPool implements ProcessPoolInterface
                 maxNestingLevel: $this->maxNestingLevel ?? $manager->getMaxNestingLevel(),
                 onMessageHandlers: $this->onMessageHandlers,
                 spawnEagerly: $this->spawnEagerly,
+                maxExecutionsPerWorker: $this->maxExecutionsPerWorker,
             );
         }
 
@@ -276,9 +292,6 @@ final class ProcessPool implements ProcessPoolInterface
             $this->shutdown();
         }
 
-        // Always clear handlers on destruct regardless of shutdown state —
-        // guarantees closures release external references on GC even if
-        // shutdown() already cleared them (assignment to empty array is a no-op).
         $this->onMessageHandlers = [];
     }
 }

@@ -281,13 +281,15 @@ class ProcessSpawnHandler
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param string|null $memoryLimit Custom memory limit for this specific process
      * @param int $maxNestingLevel Maximum allowed function nesting level
+     * @param int|null $maxExecutionsPerWorker Maximum number of tasks before worker retires. Null means unlimited.
      * @return PersistentProcess Instance of the spawned persistent process
      */
     public function spawnPersistentWorker(
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
         ?string $memoryLimit = null,
-        int $maxNestingLevel = 5
+        int $maxNestingLevel = 5,
+        ?int $maxExecutionsPerWorker = null,
     ): PersistentProcess {
         $phpBinary = $this->systemUtils->getPhpBinary();
         $workerScript = $this->getWorkerPath('worker_persistent.php');
@@ -324,7 +326,8 @@ class ProcessSpawnHandler
         $bootPayload = $this->createBootPayload(
             $frameworkInfo,
             $serializationManager,
-            $memoryLimit ?? $this->defaultProcessMemoryLimit
+            $memoryLimit ?? $this->defaultProcessMemoryLimit,
+            $maxExecutionsPerWorker,
         );
         $stdin->writeAsync($bootPayload . PHP_EOL);
 
@@ -345,11 +348,13 @@ class ProcessSpawnHandler
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
      * @param CallbackSerializationManager $serializationManager
      * @param string|int $memoryLimit
+     * @param int|null $maxExecutionsPerWorker Maximum tasks before worker retires. Null means unlimited.
      */
     private function createBootPayload(
         array $frameworkInfo,
         CallbackSerializationManager $serializationManager,
-        string|int $memoryLimit
+        string|int $memoryLimit,
+        ?int $maxExecutionsPerWorker = null,
     ): string {
         $serializedBootstrapCallback = null;
         if (isset($frameworkInfo['bootstrap_callback']) && is_callable($frameworkInfo['bootstrap_callback'])) {
@@ -361,6 +366,7 @@ class ProcessSpawnHandler
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
             'framework_bootstrap_callback' => $serializedBootstrapCallback,
             'memory_limit' => $memoryLimit,
+            'max_executions_per_worker' => $maxExecutionsPerWorker,
         ];
 
         $json = json_encode($payloadData, JSON_UNESCAPED_SLASHES);

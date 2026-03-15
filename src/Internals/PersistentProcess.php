@@ -39,6 +39,18 @@ final class PersistentProcess
 
     private bool $isBusy = true;
 
+    /**
+     * The actual PHP process PID as reported by the worker itself via the
+     * READY frame. On both Windows and Linux, proc_get_status()['pid'] may
+     * return a shell wrapper PID rather than the actual PHP process PID.
+     * The worker's own getmypid() is always the authoritative source.
+     *
+     * Null until the first READY frame is received.
+     *
+     * @var int|null
+     */
+    private ?int $workerPid = null;
+
     public function __construct(
         private readonly int $pid,
         private readonly mixed $processResource,
@@ -87,7 +99,25 @@ final class PersistentProcess
                         break;
                     }
 
+                    if ($status === 'RETIRING') {
+                        $executions = isset($data['executions']) && \is_int($data['executions'])
+                            ? $data['executions']
+                            : 'unknown';
+
+                        $this->terminate();
+                        ($this->onCrashCallback)($this);
+
+                        break;
+                    }
+
                     if ($status === 'READY') {
+                        // Store the real PHP process PID from the worker's self-report.
+                        // proc_get_status()['pid'] returns a shell wrapper PID on both
+                        // Windows and Linux — the worker's own getmypid() is authoritative.
+                        if (isset($data['pid']) && \is_int($data['pid'])) {
+                            $this->workerPid = $data['pid'];
+                        }
+
                         $this->isBusy = false;
                         ($this->onReadyCallback)($this);
 
@@ -176,9 +206,27 @@ final class PersistentProcess
         });
     }
 
+    /**
+     * Get the process ID from proc_get_status() — may be a shell wrapper
+     * PID on some platforms.
+     *
+     * @return int
+     */
     public function getPid(): int
     {
         return $this->pid;
+    }
+
+    /**
+     * Returns the actual PHP process PID of this worker as reported by the
+     * worker itself via the READY frame. Falls back to the proc_get_status()
+     * PID if the worker has not yet sent a READY frame.
+     *
+     * @return int
+     */
+    public function getWorkerPid(): int
+    {
+        return $this->workerPid ?? $this->pid;
     }
 
     /**

@@ -57,13 +57,19 @@ final class ProcessPoolManager
     private bool $isShuttingDownGracefully = false;
 
     /**
+     * Maximum number of tasks a single worker executes before retiring and
+     * being replaced by a fresh worker. Null means unlimited — workers run
+     * indefinitely until the pool is shut down or a worker crashes.
+     *
+     * @var int<1, max>|null
+     */
+    private readonly ?int $maxExecutionsPerWorker;
+
+    /**
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(): mixed)|null} $frameworkInfo
-     * @param array<int, callable(WorkerMessage): void> $onMessageHandlers Registered pool-level handlers
-     *        in registration order. All fire before the per-task handler. Each is wrapped in async()
-     *        so await() inside is safe and none blocks the read loop fiber.
-     * @param bool $spawnEagerly When true (default), workers are pre-spawned at construction.
-     *        When false, workers are spawned on the first call to submit() — all workers
-     *        boot concurrently on that first call, subsequent submits queue naturally.
+     * @param array<int, callable(WorkerMessage): void> $onMessageHandlers
+     * @param bool $spawnEagerly
+     * @param int<1, max>|null $maxExecutionsPerWorker Maximum tasks per worker before retirement. Null means unlimited.
      */
     public function __construct(
         private readonly int $size,
@@ -74,6 +80,7 @@ final class ProcessPoolManager
         private readonly int $maxNestingLevel,
         private readonly array $onMessageHandlers = [],
         private readonly bool $spawnEagerly = true,
+        ?int $maxExecutionsPerWorker = null,
     ) {
         // Pre-flight check: prevent pool creation if exceeds the max nesting level
         $currentLevel = (int)((($env = getenv('DEFER_NESTING_LEVEL')) !== false) ? $env : 0);
@@ -87,13 +94,11 @@ final class ProcessPoolManager
             );
         }
 
+        $this->maxExecutionsPerWorker = $maxExecutionsPerWorker;
+
         $this->idleWorkers = new SplQueue();
         $this->taskQueue = new SplQueue();
 
-        // Eager spawning — pre-spawn all workers immediately so the first task
-        // is dispatched to an idle worker with zero additional latency.
-        // Lazy spawning — defer worker creation until the first submit() call
-        // so no processes are spawned if the pool is never actually used.
         if ($this->spawnEagerly) {
             $this->initialize();
         }
@@ -115,11 +120,9 @@ final class ProcessPoolManager
     }
 
     /**
-     * Returns the OS-level PIDs of all currently alive worker processes.
-     *
-     * Useful for monitoring, debugging, and correlating worker activity with
-     * system-level process inspection tools. The array is unkeyed and unordered —
-     * do not rely on index position to identify a specific worker.
+     * Returns the actual PHP process PIDs of all currently alive worker processes
+     * as reported by the workers themselves via READY frames. These match the
+     * values returned by getmypid() inside worker tasks on all platforms.
      *
      * @return array<int, int>
      */
@@ -128,7 +131,7 @@ final class ProcessPoolManager
         $pids = [];
 
         foreach ($this->allWorkers as $worker) {
-            $pids[] = $worker->getPid();
+            $pids[] = $worker->getWorkerPid();
         }
 
         return $pids;
@@ -366,7 +369,8 @@ final class ProcessPoolManager
             $this->frameworkInfo,
             $this->serializer,
             $this->memoryLimit,
-            $this->maxNestingLevel
+            $this->maxNestingLevel,
+            $this->maxExecutionsPerWorker,
         );
 
         $workerId = spl_object_id($process);

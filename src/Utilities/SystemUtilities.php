@@ -53,9 +53,9 @@ class SystemUtilities
                 return $cached;
             }
 
-            $which      = PHP_OS_FAMILY === 'Windows' ? 'where' : 'which';
+            $which = PHP_OS_FAMILY === 'Windows' ? 'where' : 'which';
             $nullDevice = PHP_OS_FAMILY === 'Windows' ? 'nul' : '/dev/null';
-            $result     = shell_exec("{$which} {$path} 2>{$nullDevice}");
+            $result = shell_exec("{$which} {$path} 2>{$nullDevice}");
 
             if ($result !== null && \is_string($result) && trim($result) !== '') {
                 $foundPath = trim($result);
@@ -161,8 +161,8 @@ class SystemUtilities
         if (\function_exists('shell_exec')) {
             $command = match (PHP_OS_FAMILY) {
                 'Windows' => 'wmic cpu get NumberOfLogicalProcessors /value',
-                'Darwin'  => 'sysctl -n hw.logicalcpu',
-                default   => 'nproc',
+                'Darwin' => 'sysctl -n hw.logicalcpu',
+                default => 'nproc',
             };
 
             $output = @shell_exec($command);
@@ -170,13 +170,13 @@ class SystemUtilities
             if (\is_string($output) && trim($output) !== '') {
                 if (PHP_OS_FAMILY === 'Windows' && preg_match('/NumberOfLogicalProcessors=(\d+)/', $output, $m) === 1) {
                     /** @var int<1, max> $count */
-                    $count  = max(1, (int) $m[1]);
+                    $count = max(1, (int) $m[1]);
                     $cached = $count;
 
                     return $cached;
                 } elseif (($count = (int) trim($output)) > 0) {
                     /** @var int<1, max> $count */
-                    $count  = max(1, $count);
+                    $count = max(1, $count);
                     $cached = $count;
 
                     return $cached;
@@ -189,7 +189,7 @@ class SystemUtilities
                 $content = trim((string) file_get_contents('/sys/devices/system/cpu/present'));
                 if (preg_match('/^(\d+)-(\d+)$/', $content, $m) === 1) {
                     /** @var int<1, max> $count */
-                    $count  = max(1, (int) $m[2] - (int) $m[1] + 1);
+                    $count = max(1, (int) $m[2] - (int) $m[1] + 1);
                     $cached = $count;
 
                     return $cached;
@@ -212,7 +212,7 @@ class SystemUtilities
             $env = getenv('NUMBER_OF_PROCESSORS');
             if ($env !== false && (int) $env > 0) {
                 /** @var int<1, max> $count */
-                $count  = max(1, (int) $env);
+                $count = max(1, (int) $env);
                 $cached = $count;
 
                 return $cached;
