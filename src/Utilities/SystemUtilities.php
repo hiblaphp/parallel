@@ -14,14 +14,26 @@ use function Rcalicdan\ConfigLoader\configRoot;
 class SystemUtilities
 {
     /**
-     * Get PHP binary path with enhanced detection
+     * Get PHP binary path with enhanced detection.
+     *
+     * Result is cached after the first call — PHP binary does not change
+     * during process lifetime so repeated calls are free.
      *
      * @return string Path to PHP binary executable
      */
     public function getPhpBinary(): string
     {
+        /** @var string|null $cached */
+        static $cached = null;
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
         if (\defined('PHP_BINARY') && is_executable(PHP_BINARY)) {
-            return PHP_BINARY;
+            $cached = PHP_BINARY;
+
+            return $cached;
         }
 
         $possiblePaths = [
@@ -36,22 +48,28 @@ class SystemUtilities
 
         foreach ($possiblePaths as $path) {
             if (is_executable($path)) {
-                return $path;
+                $cached = $path;
+
+                return $cached;
             }
 
-            $which = PHP_OS_FAMILY === 'Windows' ? 'where' : 'which';
+            $which      = PHP_OS_FAMILY === 'Windows' ? 'where' : 'which';
             $nullDevice = PHP_OS_FAMILY === 'Windows' ? 'nul' : '/dev/null';
-            $result = shell_exec("{$which} {$path} 2>{$nullDevice}");
+            $result     = shell_exec("{$which} {$path} 2>{$nullDevice}");
 
             if ($result !== null && \is_string($result) && trim($result) !== '') {
                 $foundPath = trim($result);
                 if (is_executable($foundPath)) {
-                    return $foundPath;
+                    $cached = $foundPath;
+
+                    return $cached;
                 }
             }
         }
 
-        return 'php';
+        $cached = 'php';
+
+        return $cached;
     }
 
     /**
@@ -118,27 +136,50 @@ class SystemUtilities
     }
 
     /**
-     * Get the number of available CPU cores
-     * Handle cross-platform CPU core detection
+     * Get the number of available CPU cores.
      *
-     * @return int Number of CPU cores
+     * Result is cached after the first call — CPU count does not change
+     * during process lifetime so repeated shell calls are avoided.
+     *
+     * Cross-platform detection order:
+     *   1. shell_exec with platform-specific command (wmic / sysctl / nproc)
+     *   2. Linux filesystem fallback (/sys/devices/system/cpu/present, /proc/cpuinfo)
+     *   3. Windows environment variable (NUMBER_OF_PROCESSORS)
+     *   4. Safe default of 4
+     *
+     * @return int<1, max> Number of logical CPU cores, minimum 1
      */
     public function getCpuCount(): int
     {
+        /** @var int<1, max>|null $cached */
+        static $cached = null;
+
+        if ($cached !== null) {
+            return $cached;
+        }
+
         if (\function_exists('shell_exec')) {
             $command = match (PHP_OS_FAMILY) {
                 'Windows' => 'wmic cpu get NumberOfLogicalProcessors /value',
-                'Darwin' => 'sysctl -n hw.logicalcpu',
-                default => 'nproc',
+                'Darwin'  => 'sysctl -n hw.logicalcpu',
+                default   => 'nproc',
             };
 
             $output = @shell_exec($command);
 
             if (\is_string($output) && trim($output) !== '') {
                 if (PHP_OS_FAMILY === 'Windows' && preg_match('/NumberOfLogicalProcessors=(\d+)/', $output, $m) === 1) {
-                    return (int) $m[1];
+                    /** @var int<1, max> $count */
+                    $count  = max(1, (int) $m[1]);
+                    $cached = $count;
+
+                    return $cached;
                 } elseif (($count = (int) trim($output)) > 0) {
-                    return $count;
+                    /** @var int<1, max> $count */
+                    $count  = max(1, $count);
+                    $cached = $count;
+
+                    return $cached;
                 }
             }
         }
@@ -147,24 +188,39 @@ class SystemUtilities
             if (is_readable('/sys/devices/system/cpu/present')) {
                 $content = trim((string) file_get_contents('/sys/devices/system/cpu/present'));
                 if (preg_match('/^(\d+)-(\d+)$/', $content, $m) === 1) {
-                    return (int) $m[2] - (int) $m[1] + 1;
+                    /** @var int<1, max> $count */
+                    $count  = max(1, (int) $m[2] - (int) $m[1] + 1);
+                    $cached = $count;
+
+                    return $cached;
                 }
             }
 
             if (is_readable('/proc/cpuinfo')) {
                 $count = substr_count((string) file_get_contents('/proc/cpuinfo'), "\nprocessor");
+                if ($count > 0) {
+                    /** @var int<2, max> $result */
+                    $result = $count + 1;
+                    $cached = $result;
 
-                return $count > 0 ? $count + 1 : 1;
+                    return $cached;
+                }
             }
         }
 
         if (PHP_OS_FAMILY === 'Windows') {
             $env = getenv('NUMBER_OF_PROCESSORS');
-            if ($env !== false) {
-                return (int) $env;
+            if ($env !== false && (int) $env > 0) {
+                /** @var int<1, max> $count */
+                $count  = max(1, (int) $env);
+                $cached = $count;
+
+                return $cached;
             }
         }
 
-        return 4;
+        $cached = 4;
+
+        return $cached;
     }
 }
