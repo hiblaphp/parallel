@@ -100,6 +100,41 @@ final class ProcessPoolManager
     }
 
     /**
+     * Returns the number of worker processes currently alive in the pool.
+     *
+     * For eager pools this equals the configured pool size under normal conditions.
+     * For lazy pools this reflects how many workers have been spawned so far.
+     * The count may temporarily drop below the configured size while a crashed
+     * worker's replacement is booting.
+     *
+     * @return int
+     */
+    public function getWorkerCount(): int
+    {
+        return \count($this->allWorkers);
+    }
+
+    /**
+     * Returns the OS-level PIDs of all currently alive worker processes.
+     *
+     * Useful for monitoring, debugging, and correlating worker activity with
+     * system-level process inspection tools. The array is unkeyed and unordered —
+     * do not rely on index position to identify a specific worker.
+     *
+     * @return array<int, int>
+     */
+    public function getWorkerPids(): array
+    {
+        $pids = [];
+
+        foreach ($this->allWorkers as $worker) {
+            $pids[] = $worker->getPid();
+        }
+
+        return $pids;
+    }
+
+    /**
      * @template TValue
      * @param callable(): TValue $task
      * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.

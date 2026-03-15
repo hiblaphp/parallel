@@ -176,6 +176,11 @@ final class PersistentProcess
         });
     }
 
+    public function getPid(): int
+    {
+        return $this->pid;
+    }
+
     /**
      * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
      *        The handler promise is tracked by startReadLoop() and awaited before the task

@@ -145,6 +145,34 @@ final class ProcessPool implements ProcessPoolInterface
     }
 
     /**
+     * @inheritdoc
+     */
+    public function getWorkerCount(): int
+    {
+        // Pool manager not yet instantiated — lazy pool that has never had
+        // a task submitted, or pool was already shut down.
+        if ($this->pool === null) {
+            return 0;
+        }
+
+        return $this->pool->getWorkerCount();
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function getWorkerPids(): array
+    {
+        // Pool manager not yet instantiated — lazy pool that has never had
+        // a task submitted, or pool was already shut down.
+        if ($this->pool === null) {
+            return [];
+        }
+
+        return $this->pool->getWorkerPids();
+    }
+
+    /**
      * @template TResult
      * @inheritdoc
      * @return PromiseInterface<TResult>
