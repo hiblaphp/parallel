@@ -29,6 +29,8 @@ final class ProcessPool implements ProcessPoolInterface
 
     private bool $isShutdown = false;
 
+    private bool $spawnEagerly = true;
+
     /**
      * Registered pool-level message handlers in registration order.
      * All fire before the per-task handler passed to run().
@@ -114,6 +116,17 @@ final class ProcessPool implements ProcessPoolInterface
 
         $clone = clone $this;
         $clone->maxNestingLevel = $level;
+
+        return $clone;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function withLazySpawning(): static
+    {
+        $clone = clone $this;
+        $clone->spawnEagerly = false;
 
         return $clone;
     }
@@ -218,6 +231,7 @@ final class ProcessPool implements ProcessPoolInterface
                 memoryLimit: $this->memoryLimit,
                 maxNestingLevel: $this->maxNestingLevel ?? $manager->getMaxNestingLevel(),
                 onMessageHandlers: $this->onMessageHandlers,
+                spawnEagerly: $this->spawnEagerly,
             );
         }
 

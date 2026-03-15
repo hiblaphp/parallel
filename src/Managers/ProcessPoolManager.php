@@ -47,20 +47,23 @@ final class ProcessPoolManager
      */
     private array $activeTasks = [];
 
-    private bool $isShutdown = false;
-
-    private bool $isShuttingDownGracefully = false;
-
     /**
      * @var Promise<void>|null
      */
     private ?Promise $shutdownPromise = null;
+
+    private bool $isShutdown = false;
+
+    private bool $isShuttingDownGracefully = false;
 
     /**
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(): mixed)|null} $frameworkInfo
      * @param array<int, callable(WorkerMessage): void> $onMessageHandlers Registered pool-level handlers
      *        in registration order. All fire before the per-task handler. Each is wrapped in async()
      *        so await() inside is safe and none blocks the read loop fiber.
+     * @param bool $spawnEagerly When true (default), workers are pre-spawned at construction.
+     *        When false, workers are spawned on the first call to submit() — all workers
+     *        boot concurrently on that first call, subsequent submits queue naturally.
      */
     public function __construct(
         private readonly int $size,
@@ -70,6 +73,7 @@ final class ProcessPoolManager
         private readonly ?string $memoryLimit,
         private readonly int $maxNestingLevel,
         private readonly array $onMessageHandlers = [],
+        private readonly bool $spawnEagerly = true,
     ) {
         // Pre-flight check: prevent pool creation if exceeds the max nesting level
         $currentLevel = (int)((($env = getenv('DEFER_NESTING_LEVEL')) !== false) ? $env : 0);
@@ -85,13 +89,13 @@ final class ProcessPoolManager
 
         $this->idleWorkers = new SplQueue();
         $this->taskQueue = new SplQueue();
-        $this->initialize();
-    }
 
-    private function initialize(): void
-    {
-        for ($i = 0; $i < $this->size; ++$i) {
-            $this->spawnWorker();
+        // Eager spawning — pre-spawn all workers immediately so the first task
+        // is dispatched to an idle worker with zero additional latency.
+        // Lazy spawning — defer worker creation until the first submit() call
+        // so no processes are spawned if the pool is never actually used.
+        if ($this->spawnEagerly) {
+            $this->initialize();
         }
     }
 
@@ -111,6 +115,15 @@ final class ProcessPoolManager
             $promise->reject(new PoolShutdownException('Cannot submit task to a shutdown pool.'));
 
             return $promise;
+        }
+
+        // Lazy spawning — initialize all workers on the first submit() call.
+        // All workers boot concurrently so subsequent tasks queue naturally
+        // and dispatch to idle workers as they become ready.
+        // Note: bootstrap errors that would have surfaced at construction time
+        // with eager spawning will surface here instead on the first submission.
+        if (! $this->spawnEagerly) {
+            $this->maybeSpawnWorker();
         }
 
         /** @var Promise<TValue> $promise */
@@ -219,6 +232,20 @@ final class ProcessPoolManager
 
         if ($this->shutdownPromise !== null && ! $this->shutdownPromise->isFulfilled() && ! $this->shutdownPromise->isRejected()) {
             $this->shutdownPromise->resolve(null);
+        }
+    }
+
+    private function initialize(): void
+    {
+        for ($i = 0; $i < $this->size; ++$i) {
+            $this->spawnWorker();
+        }
+    }
+
+    private function maybeSpawnWorker(): void
+    {
+        if (\count($this->allWorkers) < $this->size) {
+            $this->spawnWorker();
         }
     }
 

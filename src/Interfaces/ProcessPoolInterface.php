@@ -68,9 +68,29 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
      *        Fires before any pool-level handler registered via onMessage().
      *        Wrapped in async() — safe to use await() inside without blocking.
-     * @return PromiseInterface<TResult>
+     * @return PromiseInterface<TResult> A promise that will be fulfilled with the return value of the task.
      */
     public function run(callable $callback, ?callable $onMessage = null): PromiseInterface;
+
+    /**
+     * Returns a new instance configured to spawn workers lazily on the first
+     * task submission rather than eagerly at pool construction time.
+     *
+     * **Eager spawning (default):**
+     * - Workers are pre-spawned at pool construction
+     * - First task dispatched immediately to an idle worker — zero latency
+     * - Bootstrap errors surface immediately at construction time
+     * - Best for sustained workloads where the pool is always kept busy
+     *
+     * **Lazy spawning:**
+     * - Workers are spawned on the first call to run()
+     * - First tasks incur worker boot latency (~50-100ms per worker)
+     * - Bootstrap errors surface on first task submission rather than construction
+     * - Best for conditional or short-lived pools where workers may not be needed
+     *
+     * @return static A new instance configured for lazy worker spawning.
+     */
+    public function withLazySpawning(): static;
 
     /**
      * Gracefully shuts down the pool asynchronously.
