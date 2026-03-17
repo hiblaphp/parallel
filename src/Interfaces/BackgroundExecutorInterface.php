@@ -61,14 +61,14 @@ interface BackgroundExecutorInterface extends ExecutorConfigInterface
      *
      * **IMPORTANT** - Functions and classes MUST be properly namespaced and autoloaded
      * via Composer to be available in child worker processes.
-     * 
+     *
      * **NESTED EXECUTION & SAFETY:**
-     * Hibla enforces a maximum nesting level (default 5) to prevent recursive 
-     * process spawning (Fork Bombs). 
-     * 
+     * Hibla enforces a maximum nesting level (default 5) to prevent recursive
+     * process spawning (Fork Bombs).
+     *
      * IMPORTANT: To ensure that nesting limits are correctly enforced and that
      * exceptions are properly propagated back to the parent, you MUST await()
-     * the result of a nested parallel() call. Un-awaited nested tasks may be 
+     * the result of a nested parallel() call. Un-awaited nested tasks may be
      * forcefully terminated if the parent process finishes its execution first.
      *
      * @param callable(): mixed $callback The closure or callable to execute.

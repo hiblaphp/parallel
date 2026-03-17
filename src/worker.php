@@ -295,7 +295,7 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
         }
 
         $result = Hibla\await(Hibla\async($callback));
-        \Hibla\EventLoop\Loop::run();
+        Hibla\EventLoop\Loop::run();
         ob_end_flush();
 
         if (function_exists('pcntl_alarm')) {

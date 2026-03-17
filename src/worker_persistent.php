@@ -236,7 +236,7 @@ while (($payload = fgets($stdin)) !== false) {
         $callback = $serializationManager->unserializeCallback($taskData['serialized_callback']);
         $result = Hibla\await(Hibla\async($callback));
         ob_end_flush();
-        \Hibla\EventLoop\Loop::run();
+        Hibla\EventLoop\Loop::run();
 
         $needsSerialization = is_resource($result) || containsObjects($result);
 

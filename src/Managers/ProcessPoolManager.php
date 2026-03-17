@@ -70,6 +70,7 @@ final class ProcessPoolManager
      * @param array<int, callable(WorkerMessage): void> $onMessageHandlers
      * @param bool $spawnEagerly
      * @param int<1, max>|null $maxExecutionsPerWorker Maximum tasks per worker before retirement. Null means unlimited.
+     * @param callable(): void|null $onWorkerRespawn Internal respawn hook passed from ProcessPool.
      */
     public function __construct(
         private readonly int $size,
@@ -81,6 +82,8 @@ final class ProcessPoolManager
         private readonly array $onMessageHandlers = [],
         private readonly bool $spawnEagerly = true,
         ?int $maxExecutionsPerWorker = null,
+        /** @var callable(): void|null */
+        private $onWorkerRespawn = null,
     ) {
         // Pre-flight check: prevent pool creation if exceeds the max nesting level
         $currentLevel = (int)((($env = getenv('DEFER_NESTING_LEVEL')) !== false) ? $env : 0);
@@ -464,6 +467,11 @@ final class ProcessPoolManager
             // Always respawn to maintain the pool size
             if (\count($this->allWorkers) < $this->size) {
                 $this->spawnWorker();
+
+                // Trigger the hook asynchronously so it doesn't block worker booting
+                if ($this->onWorkerRespawn !== null) {
+                    \Hibla\async($this->onWorkerRespawn);
+                }
             }
         };
 

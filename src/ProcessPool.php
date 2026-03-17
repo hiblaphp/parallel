@@ -52,6 +52,11 @@ final class ProcessPool implements ProcessPoolInterface
      */
     private ?int $maxExecutionsPerWorker = null;
 
+    /**
+     * @var callable(ProcessPoolInterface): void|null
+     */
+    private $onRespawnHandler = null;
+
     public function __construct(private readonly int $size)
     {
     }
@@ -168,7 +173,7 @@ final class ProcessPool implements ProcessPoolInterface
     public function getWorkerPids(): array
     {
         if ($this->pool === null) {
-            return [];
+            return[];
         }
 
         return $this->pool->getWorkerPids();
@@ -188,6 +193,17 @@ final class ProcessPool implements ProcessPoolInterface
         $clone = clone $this;
         /** @var int<1, max> $maxExecutions */
         $clone->maxExecutionsPerWorker = $maxExecutions;
+
+        return $clone;
+    }
+
+    /**
+     * @inheritdoc
+     */
+    public function onWorkerRespawn(callable $handler): static
+    {
+        $clone = clone $this;
+        $clone->onRespawnHandler = $handler;
 
         return $clone;
     }
@@ -241,6 +257,7 @@ final class ProcessPool implements ProcessPoolInterface
             $promise->finally(function () {
                 $this->pool = null;
                 $this->onMessageHandlers = [];
+                $this->onRespawnHandler = null;
             });
 
             return $promise;
@@ -259,12 +276,27 @@ final class ProcessPool implements ProcessPoolInterface
         $this->pool = null;
 
         $this->onMessageHandlers = [];
+        $this->onRespawnHandler = null;
     }
 
     private function getPool(): ProcessPoolManager
     {
         if ($this->pool === null) {
             $manager = ProcessManager::getGlobal();
+
+            // Wrap the handler to inject the pool instance safely without memory leaks
+            $internalRespawnHandler = null;
+            if ($this->onRespawnHandler !== null) {
+                $weakThis = \WeakReference::create($this);
+                $userHandler = $this->onRespawnHandler;
+
+                $internalRespawnHandler = static function () use ($weakThis, $userHandler): void {
+                    $pool = $weakThis->get();
+                    if ($pool !== null) {
+                        $userHandler($pool);
+                    }
+                };
+            }
 
             $this->pool = new ProcessPoolManager(
                 size: $this->size,
@@ -276,6 +308,7 @@ final class ProcessPool implements ProcessPoolInterface
                 onMessageHandlers: $this->onMessageHandlers,
                 spawnEagerly: $this->spawnEagerly,
                 maxExecutionsPerWorker: $this->maxExecutionsPerWorker,
+                onWorkerRespawn: $internalRespawnHandler,
             );
         }
 
@@ -293,5 +326,6 @@ final class ProcessPool implements ProcessPoolInterface
         }
 
         $this->onMessageHandlers = [];
+        $this->onRespawnHandler = null;
     }
 }

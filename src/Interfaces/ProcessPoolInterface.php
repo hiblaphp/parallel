@@ -97,4 +97,14 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      * @throws \InvalidArgumentException If $maxExecutions is less than 1.
      */
     public function withMaxExecutionsPerWorker(int $maxExecutions): static;
+
+    /**
+     * Registers a callback that is triggered whenever a worker crashes or retires
+     * and a replacement worker is spawned. Useful for re-submitting long-running
+     * tasks (like socket listeners) to the new worker.
+     *
+     * @param callable(ProcessPoolInterface $pool): void $handler
+     * @return static A new instance with the respawn handler configured.
+     */
+    public function onWorkerRespawn(callable $handler): static;
 }
