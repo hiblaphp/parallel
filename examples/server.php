@@ -50,7 +50,7 @@ $routerClass = new class () {
     }
 };
 
-$pool = Parallel::pool(size: 6);
+$pool = Parallel::pool(size: 8);
 
 echo 'Loop Driver: ' . EventLoopComponentFactory::resolveDriver() . "\n";
 echo 'Master Supervising Cluster (PID: ' . getmypid() . ")\n";

@@ -59,19 +59,18 @@ if ($process->isRunning()) {
     echo "Task is running with PID: " . $process->getPid();
 }
 ```
-
 ---
 
 ## 2. Persistent Worker Pools
 
-Worker pools maintain a fixed number of workers to eliminate the overhead of repeated process spawning.
+Worker pools maintain a fixed set of workers to eliminate the overhead of repeated process spawning and framework bootstrapping.
 
 ```php
 use Hibla\Parallel\Parallel;
 use function Hibla\await;
 
 $pool = Parallel::pool(size: 4)
-    ->withMaxExecutionsPerWorker(100) // Replaces worker after 100 tasks to prevent leaks
+    ->withMaxExecutionsPerWorker(100) // Periodic retirement to clear memory
     ->withMemoryLimit('128M');
 
 $task = fn() => getmypid();
@@ -80,7 +79,21 @@ $task = fn() => getmypid();
 for ($i = 0; $i < 4; $i++) {
     $pool->run($task)->then(fn($pid) => print("Handled by worker: $pid\n"));
 }
+
+/**
+ * CRITICAL: Shutdown
+ * Persistent workers maintain open IPC channels that keep the Event Loop alive.
+ * You MUST call shutdown or shutdownAsync to allow the script to exit.
+ */
+
+// Option A: Synchronous (blocks until all workers exit)
+$pool->shutdown();
+
+// Option B: Asynchronous (returns a Promise)
+// await($pool->shutdownAsync());
 ```
+
+---
 
 ---
 
@@ -294,6 +307,75 @@ $promise->cancel();
 2.  **Must Await:** Always `await()` nested parallel calls. Un-awaited nested tasks may be killed by the OS if the parent worker exits first.
 
 ---
+
+---
+
+## 12. Architecture & Testability
+
+Hibla Parallel is designed with high-level architectural patterns in mind. The `Parallel` class acts as a static facade, providing a clean entry point to the engine's core strategies. Every strategy is backed by a dedicated interface and a concrete implementation.
+
+### The Strategy Map
+
+| Facade Method | Concrete Class | Interface | Description |
+| :--- | :--- | :--- | :--- |
+| `Parallel::task()` | `ParallelExecutor` | `ParallelExecutorInterface` | One-off tasks that return a result. |
+| `Parallel::pool(n)` | `ProcessPool` | `ProcessPoolInterface` | A managed cluster of reusable persistent workers. |
+| `Parallel::background()` | `BackgroundExecutor` | `BackgroundExecutorInterface` | Detached fire-and-forget processes. |
+
+### Usage Options
+
+#### A. Using the Facade (Recommended for most cases)
+The Facade is the easiest way to access Hibla's features using the global configuration.
+```php
+use Hibla\Parallel\Parallel;
+
+$result = await(Parallel::task()->run(fn() => "Facade result"));
+```
+
+#### B. Direct Instantiation (Best for DI and Manual Control)
+You can skip the facade and instantiate the concrete classes directly. This is ideal if you are using a Container (like Laravel's or Symfony's) to manage your services.
+```php
+use Hibla\Parallel\ProcessPool;
+
+// Manual instantiation
+$pool = new ProcessPool(size: 8);
+
+$pool->run(fn() => "Direct instantiation result");
+```
+
+### Dependency Injection & Mocking
+
+By type-hinting the interfaces, your code becomes decoupled from the library's implementation. This allows you to swap execution strategies (e.g., swapping a `ParallelExecutor` for a `ProcessPool`) or use Mocks during testing.
+
+```php
+use Hibla\Parallel\Interfaces\ParallelExecutorInterface;
+
+class ReportGenerator
+{
+    public function __construct(
+        private ParallelExecutorInterface $executor 
+    ) {}
+
+    public function generate(array $data)
+    {
+        return $this->executor->run(fn() => $this->heavyLogic($data));
+    }
+}
+
+// In Production (injecting a pool for speed)
+$generator = new ReportGenerator(Parallel::pool(4));
+
+// In Testing (injecting a mock)
+$mock = Mockery::mock(ParallelExecutorInterface::class);
+$mock->shouldReceive('run')->andReturn(Promise::resolved('mock_data'));
+$generator = new ReportGenerator($mock);
+```
+
+### Clean Resource Management
+All concrete classes implement `__destruct()` logic to attempt to clean up OS resources. However, for **ProcessPool**, it is always recommended to call `shutdown()` or `shutdownAsync()` explicitly to ensure the Event Loop can exit cleanly once work is complete.
+
+---
+
 
 ## Credits
 *   **Serialization:** Built on the high-performance [rcalicdan/serializer](https://github.com/rcalicdan/serializer) and [opis/closure](https://github.com/opis/closure).
