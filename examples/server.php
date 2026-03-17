@@ -11,6 +11,7 @@ use Hibla\Parallel\Parallel;
 use Hibla\Promise\Promise;
 use Hibla\Socket\SocketServer;
 
+// use benchmarking tool like ab or wrk to test the server
 $routerClass = new class () {
     private array $static = [];
     private array $dynamic = [];

@@ -35,10 +35,10 @@ $serverTask = function () use ($routerClass) {
     });
 
     $router->get('/suicide', function () use ($pid) { // open your browser and visit http://localhost:8080/suicide and see the cli logs
-        echo "[Worker $pid] ☠️ Received suicide command! Crashing now...\n";
+        echo "[Worker $pid]  Received suicide command! Crashing now...\n";
         Hibla\delay(0.1)->then(fn () => exit(1));
 
-        return "[Worker $pid] 😵 Acknowledged. I am dying. Goodbye world.";
+        return "[Worker $pid]  Acknowledged. I am dying. Goodbye world.";
     });
 
     $server = new SocketServer('127.0.0.1:8080', [
@@ -67,8 +67,8 @@ $poolSize = 4;
 $pool = Parallel::pool(size: $poolSize)
     ->withoutTimeout()
     ->onWorkerRespawn(function (ProcessPoolInterface $pool) use ($serverTask) {
-        echo "\n[Master] 🛡️ ALERT: Worker process died! Triggering onWorkerRespawn hook...\n";
-        echo "[Master] ♻️  Re-submitting Socket Server Task to the replacement worker.\n\n";
+        echo "\n[Master]  ALERT: Worker process died! Triggering onWorkerRespawn hook...\n";
+        echo "[Master] Re-submitting Socket Server Task to the replacement worker.\n\n";
 
         $pool->run($serverTask)->catch(fn ($e) => null);
     })
