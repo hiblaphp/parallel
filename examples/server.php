@@ -2,7 +2,8 @@
 
 declare(strict_types=1);
 
-require __DIR__ . '/vendor/autoload.php';
+require __DIR__ . '/../vendor/autoload.php';
+require __DIR__ . '/sample_router.php';
 
 use function Hibla\asyncFn;
 
@@ -12,55 +13,17 @@ use Hibla\Promise\Promise;
 use Hibla\Socket\SocketServer;
 
 // use benchmarking tool like ab or wrk to test the server
-$routerClass = new class () {
-    private array $static = [];
-    private array $dynamic = [];
-
-    public function get(string $path, callable $handler): void
-    {
-        $this->addRoute('GET', $path, $handler);
-    }
-
-    private function addRoute(string $method, string $path, callable $handler): void
-    {
-        if (strpos($path, '{') === false) {
-            $this->static[$method][$path] = $handler;
-
-            return;
-        }
-
-        $pattern = preg_replace('/\{(\w+)\}/', '(?P<$1>[^/]+)', $path);
-        $this->dynamic[$method]['#^' . $pattern . '$#'] = $handler;
-    }
-
-    public function dispatch(string $method, string $uri): string
-    {
-        if (isset($this->static[$method][$uri])) {
-            return ($this->static[$method][$uri])([]);
-        }
-
-        foreach ($this->dynamic[$method] ?? [] as $pattern => $handler) {
-            if (preg_match($pattern, $uri, $matches)) {
-                $params = array_filter($matches, fn ($k) => ! is_int($k), ARRAY_FILTER_USE_KEY);
-
-                return $handler($params);
-            }
-        }
-
-        return '404 Not Found';
-    }
-};
-
-$pool = Parallel::pool(size: 8);
+// for best performance consider installing ext-uv extension
+$pool = Parallel::pool(size: 8)->withBootstrap(__DIR__ . '/bootsrap.php');
 
 echo 'Loop Driver: ' . EventLoopComponentFactory::resolveDriver() . "\n";
 echo 'Master Supervising Cluster (PID: ' . getmypid() . ")\n";
 echo "Simulating simulated I/O latency per request...\n";
 
-$startAcceptor = function () use (&$startAcceptor, $pool, $routerClass) {
-    $pool->run(function () use ($routerClass) {
+$startAcceptor = function () use (&$startAcceptor, $pool) {
+    $pool->run(function ()  {
         $pid = getmypid();
-        $router = new $routerClass();
+        $router = new Router();
 
         $router->get('/', function () use ($pid) {
             return "Welcome to Hibla! Processed by worker {$pid} after simulated I/O";
@@ -85,11 +48,11 @@ $startAcceptor = function () use (&$startAcceptor, $pool, $routerClass) {
                 $content = $router->dispatch($method, $uri);
 
                 $response = "HTTP/1.1 200 OK\r\n"
-                          . "Content-Type: text/plain\r\n"
-                          . 'Content-Length: ' . strlen($content) . "\r\n"
-                          . "Connection: keep-alive\r\n"
-                          . "\r\n"
-                          . $content;
+                    . "Content-Type: text/plain\r\n"
+                    . 'Content-Length: ' . strlen($content) . "\r\n"
+                    . "Connection: keep-alive\r\n"
+                    . "\r\n"
+                    . $content;
 
                 $connection->write($response);
             }));

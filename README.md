@@ -376,6 +376,98 @@ All concrete classes implement `__destruct()` logic to attempt to clean up OS re
 
 ---
 
+---
+
+## 13. Autoloading & Code Availability
+
+Because Hibla workers run in isolated PHP processes, they start with a "clean slate." You must ensure that any code you want to execute in a worker is available to that process.
+
+### Requirement 1: Use Namespaces & Autoloading
+The most reliable way to use Hibla is to ensure your classes and functions are managed by Composer's autoloader. 
+
+```php
+//  DO: Use namespaced classes/functions
+use App\Tasks\HeavyTask;
+
+parallel([HeavyTask::class, 'run']); 
+```
+
+### Requirement 2: Named Functions vs. Closures
+*   **Named Functions:** If you pass a string like `'my_function'`, that function **must** exist in the worker (via autoloader or bootstrap).
+*   **Closures/Anonymous Classes:** Hibla **serializes the actual code** of closures and anonymous classes. Use these if you want to pass logic that isn't part of your main codebase's autoloader.
+
+```php
+//  Works without autoloader (Logic is serialized and sent to worker)
+parallel(function() {
+    return "I am self-contained logic";
+});
+```
+
+### Requirement 3: Manual Bootstrapping
+If you have legacy code, global functions, or framework logic that is not covered by the standard autoloader, you must use the `withBootstrap()` method to include those files before the task starts.
+
+```php
+use Hibla\Parallel\Parallel;
+
+$pool = Parallel::pool(4)
+    ->withBootstrap(__DIR__ . '/includes/legacy_functions.php');
+
+// Now 'legacy_calculate()' is available inside the worker
+$pool->run(fn() => legacy_calculate());
+```
+
+---
+
+## 14. Rich Data & Stateful Execution
+
+Hibla Parallel isn't limited to simple strings or arrays. Because it uses a sophisticated serialization engine, you can transport complex objects and access class state from within your parallel tasks.
+
+### Returning Value Objects
+You can return any serializable object from a worker. It will be reconstructed in the parent process with its type and data intact.
+
+```php
+use App\ValueObjects\TaskResult;
+
+$result = await(parallel(function() {
+    return new TaskResult(status: 'success', data: [1, 2, 3]);
+}));
+
+echo get_class($result); // "App\ValueObjects\TaskResult"
+echo $result->status;    // "success"
+```
+
+### Accessing Class Properties (`$this`)
+When you use `parallel()` inside a class method, the closure can capture `$this`. This allows the background worker to access the object's properties, even private ones.
+
+```php
+namespace App\Services;
+
+class Person
+{
+    public function __construct(
+        private string $name = "John Doe",
+        private int $age = 30
+    ) {}
+
+    public function getNameParallel(): string
+    {
+        // The worker captures the state of $this
+        return await(parallel(fn() => $this->name));
+    }
+}
+```
+
+### Important Requirements for Objects
+To use complex objects and class state, you must follow two rules:
+
+1.  **Autoloading:** The class definition (e.g., `Person` or `TaskResult`) **must** be available to the worker via the Composer autoloader or a bootstrap file.
+2.  **No Resources:** You cannot transport objects that hold active system resources (like PDO database handles, open file pointers, or network sockets). These should be initialized inside the worker logic instead.
+
+---
+
+
+
+
 
 ## Credits
 *   **Serialization:** Built on the high-performance [rcalicdan/serializer](https://github.com/rcalicdan/serializer) and [opis/closure](https://github.com/opis/closure).
