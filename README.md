@@ -2,7 +2,7 @@
 
 **The high-performance, self-healing, and cross-platform parallel processing engine for PHP.**
 
-Hibla Parallel brings **Erlang-style reliability** and **Node.js-level performance** to the PHP ecosystem. Orchestrate worker clusters that are fast (proven **100,000+ RPS**), truly non-blocking on all platforms, and capable of healing themselves through a supervised "Let it Crash" architecture.
+Hibla Parallel brings **Erlang-style reliability** and **Node.js-level performance** to the PHP ecosystem. Orchestrate worker clusters that are fast (proven **100,000+ RPS**) on http socket server benchmark, truly non-blocking on all platforms, and capable of healing themselves through a supervised "Let it Crash" architecture.
 
 [![Latest Release](https://img.shields.io/github/release/hiblaphp/parallel.svg?style=flat-square)](https://github.com/hiblaphp/parallel/releases)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](./LICENSE)
@@ -19,6 +19,7 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level performan
 *   **OS-Level Task Cancellation:** Terminate tasks instantly. Kills OS processes and automatically maintains pool capacity.
 
 ---
+
 ## Contents
 
 - [Key Features](#key-features)
@@ -49,7 +50,7 @@ composer require hiblaphp/parallel
 
 ---
 
-## 1. Quick Start: Simple Primitives
+## Quick Start: Simple Primitives
 
 Hibla provides global helper functions for the most common use cases.
 
@@ -82,7 +83,7 @@ if ($process->isRunning()) {
 ```
 ---
 
-## 2. Persistent Worker Pools
+## Persistent Worker Pools
 
 Worker pools maintain a fixed set of workers to eliminate the overhead of repeated process spawning and framework bootstrapping.
 
@@ -116,9 +117,7 @@ $pool->shutdown();
 
 ---
 
----
-
-## 3. Self-Healing & Supervisor Pattern
+## Self-Healing & Supervisor Pattern
 
 Build "Erlang-style" supervised clusters. If a worker crashes, Hibla triggers `onWorkerRespawn`, allowing you to re-initialize your logic (e.g., a socket server) automatically.
 
@@ -146,7 +145,7 @@ $pool->run($serverTask);
 
 ---
 
-## 4. Fractal Concurrency: The Async Hybrid
+## Fractal Concurrency: The Async Hybrid
 
 Hibla Parallel provides a unified concurrency model. While `async/await` handles non-blocking I/O, `parallel()` allows you to offload **actual blocking PHP functions** (like `sleep()`, legacy database drivers, or heavy CPU tasks) to background processes.
 
@@ -186,7 +185,7 @@ echo "Executed ~4 seconds of work in: {$duration} seconds!";
 // Output: Executed ~4 seconds of work in: 1.04 seconds!
 ```
 
-## 5. Distributed Exception Teleportation
+## Distributed Exception Teleportation
 
 Hibla "teleports" exceptions from workers back to the parent. It re-instantiates the original exception type and **merges stack traces** so you see exactly where the error originated.
 
@@ -213,7 +212,7 @@ try {
 
 ---
 
-## 6. IPC & Real-time Output
+## IPC & Real-time Output
 
 ### Console Streaming
 Everything printed inside a worker is streamed to the parent console instantly via non-blocking buffers.
@@ -250,7 +249,7 @@ $executor = Parallel::task()
 
 ---
 
-## 7. Abnormal Termination Detection
+## Abnormal Termination Detection
 
 If a worker hits a Segmentation Fault or calls `exit()`, Hibla detects the silent death and rejects the promise with a `ProcessCrashedException`.
 
@@ -268,7 +267,7 @@ try {
 
 ---
 
-## 8. Framework Bootstrapping
+## Framework Bootstrapping
 
 Load Laravel, Symfony, or any custom environment inside your workers.
 
@@ -286,7 +285,7 @@ $pool->run(fn() => config('app.name')); // Access framework features
 
 ---
 
-## 9. Global Configuration
+## Global Configuration
 
 Create a `hibla_parallel.php` in your root directory to set system-wide defaults.
 
@@ -306,7 +305,7 @@ return [
 
 ---
 
-## 10. Task Cancellation & Management
+## Task Cancellation & Management
 
 If you cancel a task promise, Hibla forcefully kills the underlying OS process immediately.
 
@@ -322,16 +321,14 @@ $promise->cancel();
 
 ---
 
-## 11. Nested Execution & Safety
+## Nested Execution & Safety
 
 1.  **Short Closure Warning:** Do **NOT** nest `parallel()` calls using arrow functions (`fn() => ...`). This causes AST corruption and infinite **Fork Bombs**. Always use `function() {}` or **Invokable Classes** for nesting.
 2.  **Must Await:** Always `await()` nested parallel calls. Un-awaited nested tasks may be killed by the OS if the parent worker exits first.
 
 ---
 
----
-
-## 12. Architecture & Testability
+## Architecture & Testability
 
 Hibla Parallel is designed with high-level architectural patterns in mind. The `Parallel` class acts as a static facade, providing a clean entry point to the engine's core strategies. Every strategy is backed by a dedicated interface and a concrete implementation.
 
@@ -397,9 +394,7 @@ All concrete classes implement `__destruct()` logic to attempt to clean up OS re
 
 ---
 
----
-
-## 13. Autoloading & Code Availability
+## Autoloading & Code Availability
 
 Because Hibla workers run in isolated PHP processes, they start with a "clean slate." You must ensure that any code you want to execute in a worker is available to that process.
 
@@ -439,7 +434,7 @@ $pool->run(fn() => legacy_calculate());
 
 ---
 
-## 14. Rich Data & Stateful Execution
+## Rich Data & Stateful Execution
 
 Hibla Parallel isn't limited to simple strings or arrays. Because it uses a sophisticated serialization engine, you can transport complex objects and access class state from within your parallel tasks.
 
@@ -485,10 +480,6 @@ To use complex objects and class state, you must follow two rules:
 2.  **No Resources:** You cannot transport objects that hold active system resources (like PDO database handles, open file pointers, or network sockets). These should be initialized inside the worker logic instead.
 
 ---
-
-
-
-
 
 ## Credits
 *   **Serialization:** Built on the high-performance [rcalicdan/serializer](https://github.com/rcalicdan/serializer) and [opis/closure](https://github.com/opis/closure).
