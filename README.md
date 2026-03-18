@@ -19,7 +19,28 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level performan
 *   **OS-Level Task Cancellation:** Terminate tasks instantly. Kills OS processes and automatically maintains pool capacity.
 
 ---
+## Contents
 
+- [Key Features](#key-features)
+- [Installation](#installation)
+- [Quick Start: Simple Primitives](#quick-start-simple-primitives)
+- [Persistent Worker Pools](#persistent-worker-pools)
+- [Self-Healing & Supervisor Pattern](#self-healing--supervisor-pattern)
+- [Fractal Concurrency: The Async Hybrid](#fractal-concurrency-the-async-hybrid)
+- [Distributed Exception Teleportation](#distributed-exception-teleportation)
+- [IPC & Real-time Output](#ipc--real-time-output)
+- [Abnormal Termination Detection](#abnormal-termination-detection)
+- [Framework Bootstrapping](#framework-bootstrapping)
+- [Global Configuration](#global-configuration)
+- [Task Cancellation & Management](#task-cancellation--management)
+- [Nested Execution & Safety](#nested-execution--safety)
+- [Architecture & Testability](#architecture--testability)
+- [Autoloading & Code Availability](#autoloading--code-availability)
+- [Rich Data & Stateful Execution](#rich-data--stateful-execution)
+- [Credits](#credits)
+- [License](#license)
+
+---
 ## Installation
 
 ```bash
