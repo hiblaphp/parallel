@@ -2,7 +2,7 @@
 
 **The high-performance, self-healing, and cross-platform parallel processing engine for PHP.**
 
-Hibla Parallel brings **Erlang-style reliability** and **Node.js-level performance** to the PHP ecosystem. Orchestrate worker clusters that are fast (proven **100,000+ RPS** on http socket server benchmarks), truly non-blocking on all platforms, and capable of healing themselves through a supervised "Let it Crash" architecture.
+Hibla Parallel brings **Erlang-style reliability** and **Node.js-level cluster pool performance** to the PHP ecosystem. Orchestrate worker clusters that are fast (proven **100,000+ RPS** on http socket server benchmarks), truly non-blocking on all platforms, and capable of healing themselves through a supervised "Let it Crash" architecture.
 
 [![Latest Release](https://img.shields.io/github/release/hiblaphp/parallel.svg?style=flat-square)](https://github.com/hiblaphp/parallel/releases)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](./LICENSE)
@@ -15,7 +15,7 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level performan
 - **True Non-Blocking I/O:** Fully asynchronous architecture. Parent-to-worker communication never starves the event loop, even on Windows.
 - **Cross-Platform:** Seamless support for **Linux, macOS, and Windows**. Intelligently uses socket pairs on Windows to bypass kernel pipe limitations.
 - **Self-Healing:** Using `onWorkerRespawn`, the master process ensures tasks are always running by auto-respawning crashed workers.
-- **Fractal Concurrency:** Mix multi-process parallelism with fiber-based asynchrony recursively.
+- **Hybrid Concurrency:** Mix multi-process parallelism with fiber-based asynchrony recursively.
 - **OS-Level Task Cancellation:** Terminate tasks instantly. Kills OS processes and automatically maintains pool capacity.
 
 ---
