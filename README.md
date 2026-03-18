@@ -514,31 +514,179 @@ $pool = Parallel::pool(size: 4)
 
 The trade-off: the first batch of tasks will incur worker boot latency (~50–100ms per worker), and bootstrap errors surface on first task submission rather than at construction.
 
----
-
 ## Self-Healing & Supervisor Pattern
 
-Build Erlang-style supervised clusters. If a worker crashes, Hibla triggers `onWorkerRespawn`, allowing you to re-initialize your logic automatically on the replacement worker.
+Build Erlang-style supervised clusters. If a worker crashes for any reason —
+segfault, out-of-memory kill, or an explicit `exit()` — Hibla detects the
+death, immediately spawns a replacement worker to maintain pool capacity, and
+fires the `onWorkerRespawn` hook so you can re-submit whatever that worker
+was doing.
+
+The pattern is three lines:
 ```php
 use Hibla\Parallel\Parallel;
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 
-$serverTask = function() {
-    echo "[Worker] Listening on 8080...\n";
-    Hibla\delay(5)->then(fn() => exit(1)); // simulate a crash
+$pool = Parallel::pool(size: 4)
+    ->withoutTimeout() // long-running workers must not have a timeout
+    ->onWorkerRespawn(function (ProcessPoolInterface $pool) use ($serverTask) {
+        // Fired every time a worker dies and its replacement is ready.
+        // Re-submit your long-running task to the new worker here.
+        $pool->run($serverTask);
+    });
+```
+
+### Complete example: chaos server
+
+The following example makes the supervisor behavior directly observable.
+Each worker binds to port 8080 via `SO_REUSEPORT` and serves HTTP requests.
+The `/suicide` route lets you trigger a controlled worker crash from the
+browser and watch the master detect and recover from it in the terminal
+in real time.
+```php
+<?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../vendor/autoload.php';
+
+use Hibla\Parallel\Interfaces\ProcessPoolInterface;
+use Hibla\Parallel\Parallel;
+use Hibla\Socket\SocketServer;
+
+// Define the router as an anonymous class so it can be captured by the
+// closure and serialized to each worker via opis/closure. Each worker
+// receives a full copy of the class definition and instantiates it locally.
+// In a real application this would be a named autoloadable class instead.
+$routerClass = new class () {
+    private array $static = [];
+
+    public function get(string $path, callable $handler): void
+    {
+        $this->static['GET'][$path] = $handler;
+    }
+
+    public function dispatch(string $method, string $uri): string
+    {
+        return isset($this->static[$method][$uri])
+            ? ($this->static[$method][$uri])()
+            : '404 Not Found';
+    }
 };
 
-$pool = Parallel::pool(size: 2)
+// This closure is the long-running task submitted to each worker.
+// It never returns — it starts a socket server and runs indefinitely.
+// Hibla workers have their own event loop so this is valid:
+// the worker runs its server loop cooperatively rather than blocking.
+$serverTask = function () use ($routerClass) {
+    $pid    = getmypid();
+    $router = new $routerClass();
+
+    $router->get('/', function () use ($pid) {
+        return "[Worker $pid] Hello! I am healthy and serving requests.";
+    });
+
+    // Visit http://127.0.0.1:8080/suicide in a browser to trigger a crash.
+    // The delay(0.1) lets the HTTP response flush before exit() fires —
+    // without it the connection would close mid-response and the browser
+    // would show a connection reset error instead of the acknowledgment.
+    $router->get('/suicide', function () use ($pid) {
+        echo "[Worker $pid] Received suicide command! Crashing now...\n";
+        Hibla\delay(0.1)->then(fn () => exit(1));
+
+        return "[Worker $pid] Acknowledged. I am dying. Goodbye world.";
+    });
+
+    // SO_REUSEPORT allows multiple processes to bind to the same port.
+    // The kernel load-balances incoming connections across all bound
+    // workers at the TCP accept level — zero application coordination.
+    $server = new SocketServer('127.0.0.1:8080', [
+        'tcp' => ['so_reuseport' => true, 'backlog' => 65535],
+    ]);
+
+    $server->on('connection', function ($connection) use ($router) {
+        $connection->on('data', function (string $rawRequest) use ($connection, $router) {
+            $firstLine = substr($rawRequest, 0, strpos($rawRequest, "\r\n"));
+            $parts     = explode(' ', $firstLine);
+            $method    = $parts[0] ?? 'GET';
+            $uri       = explode('?', $parts[1] ?? '/')[0];
+
+            $content  = $router->dispatch($method, $uri);
+            $response = "HTTP/1.1 200 OK\r\n"
+                . "Content-Type: text/plain\r\n"
+                . "Content-Length: " . strlen($content) . "\r\n"
+                . "\r\n"
+                . $content;
+
+            $connection->write($response);
+        });
+    });
+
+    echo "[Worker $pid] Started listening on 8080\n";
+};
+
+$poolSize = 4;
+
+$pool = Parallel::pool(size: $poolSize)
+    ->withoutTimeout() // server workers run indefinitely — no timeout
     ->onWorkerRespawn(function (ProcessPoolInterface $pool) use ($serverTask) {
-        echo "[Master] Worker died! Respawning and re-applying task...\n";
+        // A worker crashed or was killed. The pool has already spawned a
+        // replacement — re-submit the server task to put it to work.
+        echo "\n[Master] ALERT: Worker process died! Triggering onWorkerRespawn hook...\n";
+        echo "[Master] Re-submitting Socket Server Task to the replacement worker.\n\n";
+
         $pool->run($serverTask);
     });
 
-$pool->run($serverTask);
-$pool->run($serverTask);
+echo "--- Hibla Parallel: Chaos Web Server Test ---\n";
+echo "[Master PID: " . getmypid() . "] Supervising $poolSize workers...\n\n";
+
+for ($i = 0; $i < $poolSize; $i++) {
+    // The catch() silences ProcessCrashedException on the initial submissions.
+    // When a worker crashes its in-flight promise rejects with that exception —
+    // it is expected and already handled by onWorkerRespawn above, so there
+    // is nothing to act on here at the call site.
+    $pool->run($serverTask)->catch(fn (ProcessCrashException $e) => null);
+}
 ```
 
----
+Run it for example `php chaos_server.php` and visit `http://127.0.0.1:8080/suicide` in a browser to trigger a
+crash. The terminal output shows the full lifecycle:
+```
+--- Hibla Parallel: Chaos Web Server Test ---
+[Master PID: 6309] Supervising 4 workers...
+
+[Worker 6311] Started listening on 8080
+[Worker 6318] Started listening on 8080
+[Worker 6317] Started listening on 8080
+[Worker 6315] Started listening on 8080
+
+[Worker 6315] Received suicide command! Crashing now...
+
+[Master] ALERT: Worker process died! Triggering onWorkerRespawn hook...
+[Master] Re-submitting Socket Server Task to the replacement worker.
+
+[Worker 6406] Started listening on 8080
+
+[Worker 6406] Received suicide command! Crashing now...
+
+[Master] ALERT: Worker process died! Triggering onWorkerRespawn hook...
+[Master] Re-submitting Socket Server Task to the replacement worker.
+
+[Worker 6453] Started listening on 8080
+```
+
+Three things to observe in this output:
+
+The master PID never changes — `6309` supervises the entire session. It is
+not affected by any worker crash.
+
+Every crash is followed immediately by a new worker PID coming online. The
+pool never drops below 4 listening workers. From the perspective of any
+HTTP client hitting port 8080, the cluster is healthy throughout.
+
+You can hit `/suicide` as many times as you like. The cluster recovers every
+time with no manual intervention and no restart of the master process.
 
 ## Fractal Concurrency: The Async Hybrid
 
