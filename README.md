@@ -47,6 +47,7 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level performan
 - [Framework Bootstrapping](#framework-bootstrapping)
 - [Autoloading & Code Availability](#autoloading--code-availability)
 - [Global Configuration](#global-configuration)
+- [Architecture & Testability](#architecture--testability)
 
 **Cross-cutting behaviors**
 - [Real-time Output & Messaging](#real-time-output--messaging)
@@ -57,7 +58,6 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level performan
 
 **Reference**
 - [Exception Reference](#exception-reference)
-- [Architecture & Testability](#architecture--testability)
 
 **Meta**
 - [Credits](#credits)
@@ -168,11 +168,19 @@ $result = await(parallel(function() {
 
 ## IPC: Inter-Process Communication
 
-Hibla communicates with workers over OS-level I/O channels created by `proc_open()`. Understanding this channel design explains why Hibla is non-blocking even on Windows and how real-time output streaming works.
+Hibla Parallel communicates with workers over OS-level I/O channels created by `proc_open()`. Understanding this channel design explains why the library is non-blocking even on Windows and how real-time output streaming works.
 
-### Structured JSON frames
+### Structured frames
 
-All communication is line-delimited JSON. The parent writes one JSON line to the worker's stdin to deliver the task. The worker writes JSON lines to its stdout as the task runs. Each line is a self-contained frame with a `status` field that tells the parent what kind of event it represents:
+All communication uses a simple line-delimited JSON protocol — similar
+in spirit to [NDJSON](https://ndjson.org/) and
+[JSON Lines](https://jsonlines.org/), but implemented directly over
+`proc_open()` pipes rather than files or TCP sockets. The parent writes
+one JSON line to the worker's stdin to deliver the task. The worker
+writes JSON lines to its stdout as the task runs. Each line is a
+complete, self-contained JSON object terminated by a newline — the
+parent reads lines one at a time on a non-blocking stream and routes
+each frame by its `status` field.
 
 | Frame type | Direction | When it is sent |
 | :--- | :--- | :--- |
@@ -185,7 +193,12 @@ All communication is line-delimited JSON. The parent writes one JSON line to the
 | `RETIRING` | Worker → Parent | *(Persistent workers only)* Worker has hit its max executions limit and is exiting cleanly |
 | `CRASHED` | Worker → Parent | *(Persistent workers only)* Worker is dying due to an unrecoverable error |
 
-The parent reads these frames continuously on a non-blocking stream, dispatching each one as it arrives. OUTPUT frames are forwarded to the parent's stdout immediately — this is how `echo` inside a worker appears in the parent's console in real time. MESSAGE frames from `emit()` trigger the registered `onMessage` handler. COMPLETED and ERROR frames settle the task's promise.
+The parent reads these frames continuously on a non-blocking stream,
+dispatching each one as it arrives. OUTPUT frames are forwarded to the
+parent's stdout immediately — this is how `echo` inside a worker
+appears in the parent's console in real time. MESSAGE frames from
+`emit()` trigger the registered `onMessage` handler. COMPLETED and
+ERROR frames settle the task's promise.
 
 ### Pipes on Unix, sockets on Windows
 
@@ -223,7 +236,7 @@ The worker reports its own PID (`getmypid()`) in the READY frame because `proc_g
 
 ## Worker Types
 
-Hibla ships three worker scripts, each optimized for a different execution model. The parent selects the correct script automatically based on which API you use.
+Hibla Parallel ships three worker scripts, each optimized for a different execution model. The parent selects the correct script automatically based on which API you use. You don't interact with this file directly and the library handles worker execution for you
 
 ### Streamed worker (`worker.php`)
 
@@ -306,7 +319,7 @@ Choose the right tool for your use case:
 
 | Method | Effect |
 | :--- | :--- |
-| `->withTimeout(int $seconds)` | Reject with `TimeoutException` after N seconds |
+| `->withTimeout(int $seconds)` | Define the worker max lifetime Reject with `TimeoutException` after N seconds and terminate the worker |
 | `->withoutTimeout()` | Disable the timeout entirely |
 | `->withMemoryLimit(string $limit)` | Set worker memory limit (e.g. `'256M'`, `'1G'`) |
 | `->withUnlimitedMemory()` | Set memory limit to `-1` |
@@ -357,7 +370,7 @@ if ($process->isRunning()) {
 
 ## Rich Data & Stateful Execution
 
-Hibla is not limited to scalar return values. Because it uses a full serialization engine, you can pass objects into tasks, return objects from tasks, and access class state from inside parallel closures — all of it crossing the process boundary transparently.
+Hibla Parallel is not limited to scalar return values. Because it uses a full serialization engine, you can pass objects into tasks, return objects from tasks, and access class state from inside parallel closures — all of it crossing the process boundary transparently.
 
 ### Returning Value Objects
 
@@ -406,7 +419,7 @@ echo $builder->buildParallel(); // "Q4 Report (2025)"
 
 ## Global Helper Functions
 
-Hibla exposes four global helpers in the `Hibla` namespace. They are thin wrappers around the facade and are the recommended API for most scripts.
+Hibla Parallel exposes four global helpers in the `Hibla` namespace. They are thin wrappers around the facade and are the recommended API for most scripts.
 
 ### `parallel(callable $task, ?int $timeout = null)`
 
@@ -690,9 +703,9 @@ time with no manual intervention and no restart of the master process.
 
 ## Fractal Concurrency: The Async Hybrid
 
-Hibla provides a unified concurrency model. While `async/await` handles non-blocking I/O, `parallel()` offloads **actual blocking PHP functions** (like `sleep()`, legacy database drivers, or CPU-heavy work) to separate processes.
+Hibla Parallel provides a unified concurrency model. While `async/await` handles non-blocking I/O, `parallel()` offloads **actual blocking PHP functions** (like `sleep()`, legacy database drivers, or CPU-heavy work) to separate processes.
 
-Because every worker is a "Smart Worker" with its own event loop, you can mix these models recursively. The following block finishes in exactly 1 second:
+Because every worker is a "Smart Worker" with its own event loop, you can mix these models recursively until the maximum process nesting limit. The following block finishes in exactly 1 second:
 ```php
 use Hibla\Promise\Promise;
 use function Hibla\{parallel, async, await, delay};
@@ -967,7 +980,7 @@ The same two-level composition is available on `Parallel::task()` using `->onMes
 
 ## Distributed Exception Teleportation
 
-Hibla "teleports" exceptions from workers back to the parent. It re-instantiates the original exception type and **merges stack traces** so you see exactly where the error originated.
+Hibla Parallel "teleports" exceptions from workers back to the parent. It re-instantiates the original exception type and **merges stack traces** so you see exactly where the error originated.
 ```php
 use function Hibla\{parallel, await};
 
@@ -990,7 +1003,7 @@ try {
 
 ## Abnormal Termination Detection
 
-If a worker hits a segmentation fault, runs out of memory, or calls `exit()`, Hibla detects the silent death and rejects the promise with a `ProcessCrashedException`.
+If a worker hits a segmentation fault, runs out of memory, or calls `exit()`, Hibla Parallel detects the silent death and rejects the promise with a `ProcessCrashedException`.
 ```php
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use function Hibla\{parallel, await};
@@ -1080,7 +1093,7 @@ try {
 
 ## Architecture & Testability
 
-Hibla is designed with testability in mind. The `Parallel` facade provides a clean entry point to three independent strategies, each backed by a dedicated interface and a concrete implementation.
+Hibla Parallel is designed with testability in mind. The `Parallel` facade provides a clean entry point to three independent strategies, each backed by a dedicated interface and a concrete implementation.
 
 ### Strategy Map
 
