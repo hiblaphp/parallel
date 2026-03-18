@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-require __DIR__ . '/vendor/autoload.php';
+require __DIR__ . '/../vendor/autoload.php';
 
 use function Hibla\asyncFn;
 
@@ -34,7 +34,7 @@ $serverTask = function () use ($routerClass) {
         return "[Worker $pid] Hello! I am healthy and serving requests.";
     });
 
-    $router->get('/suicide', function () use ($pid) { // open your browser and visit http://localhost:8080/suicide and see the cli logs
+    $router->get('/suicide', function () use ($pid) { // open your browser and visit http://127.0.0.1:8080/suicide and see the cli logs
         echo "[Worker $pid]  Received suicide command! Crashing now...\n";
         Hibla\delay(0.1)->then(fn () => exit(1));
 
@@ -59,7 +59,7 @@ $serverTask = function () use ($routerClass) {
         }));
     });
 
-    echo "[Worker $pid] 🚀 Started listening on 8080\n";
+    echo "[Worker $pid] Started listening on 8080\n";
 };
 
 $poolSize = 4;
@@ -70,15 +70,13 @@ $pool = Parallel::pool(size: $poolSize)
         echo "\n[Master]  ALERT: Worker process died! Triggering onWorkerRespawn hook...\n";
         echo "[Master] Re-submitting Socket Server Task to the replacement worker.\n\n";
 
-        $pool->run($serverTask)->catch(fn ($e) => null);
+        $pool->run($serverTask);
     })
 ;
 
 echo "--- Hibla Parallel: Chaos Web Server Test ---\n";
-echo '[Master PID: ' . getmypid() . "] Supervising 3 workers...\n\n";
+echo '[Master PID: ' . getmypid() . "] Supervising $poolSize workers...\n\n";
 
 for ($i = 0; $i < $poolSize; $i++) {
     $pool->run($serverTask)->catch(fn ($e) => null);
 }
-
-Loop::run();
