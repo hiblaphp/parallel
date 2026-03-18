@@ -34,7 +34,7 @@ $serverTask = function () use ($routerClass) {
         return "[Worker $pid] Hello! I am healthy and serving requests.";
     });
 
-    $router->get('/suicide', function () use ($pid) { // open your browser and visit http://127.0.0.1:8080/suicide and see the cli logs
+    $router->get('/crash', function () use ($pid) { // open your browser and visit http://127.0.0.1:8080/crash and see the cli logs
         echo "[Worker $pid]  Received suicide command! Crashing now...\n";
         Hibla\delay(0.1)->then(fn () => exit(1));
 

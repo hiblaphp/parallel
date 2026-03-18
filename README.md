@@ -540,7 +540,7 @@ $pool = Parallel::pool(size: 4)
 
 The following example makes the supervisor behavior directly observable.
 Each worker binds to port 8080 via `SO_REUSEPORT` and serves HTTP requests.
-The `/suicide` route lets you trigger a controlled worker crash from the
+The `/crash` route lets you trigger a controlled worker crash from the
 browser and watch the master detect and recover from it in the terminal
 in real time.
 ```php
@@ -586,11 +586,11 @@ $serverTask = function () use ($routerClass) {
         return "[Worker $pid] Hello! I am healthy and serving requests.";
     });
 
-    // Visit http://127.0.0.1:8080/suicide in a browser to trigger a crash.
+    // Visit http://127.0.0.1:8080/crash in a browser to trigger a crash.
     // The delay(0.1) lets the HTTP response flush before exit() fires —
     // without it the connection would close mid-response and the browser
     // would show a connection reset error instead of the acknowledgment.
-    $router->get('/suicide', function () use ($pid) {
+    $router->get('/crash', function () use ($pid) {
         echo "[Worker $pid] Received suicide command! Crashing now...\n";
         Hibla\delay(0.1)->then(fn () => exit(1));
 
@@ -650,7 +650,7 @@ for ($i = 0; $i < $poolSize; $i++) {
 }
 ```
 
-Run it for example `php chaos_server.php` and visit `http://127.0.0.1:8080/suicide` in a browser to trigger a
+Run it for example `php chaos_server.php` and visit `http://127.0.0.1:8080/crash` in a browser to trigger a
 crash. The terminal output shows the full lifecycle:
 ```
 --- Hibla Parallel: Chaos Web Server Test ---
@@ -685,7 +685,7 @@ Every crash is followed immediately by a new worker PID coming online. The
 pool never drops below 4 listening workers. From the perspective of any
 HTTP client hitting port 8080, the cluster is healthy throughout.
 
-You can hit `/suicide` as many times as you like. The cluster recovers every
+You can hit `/crash` as many times as you like. The cluster recovers every
 time with no manual intervention and no restart of the master process.
 
 ## Fractal Concurrency: The Async Hybrid
