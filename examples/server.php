@@ -14,7 +14,8 @@ use Hibla\Socket\SocketServer;
 
 // use benchmarking tool like ab or wrk to test the server
 // for best performance consider installing ext-uv extension
-$pool = Parallel::pool(size: 8)->withBootstrap(__DIR__ . '/bootsrap.php');
+$poolSize = 8;// match base on your available cpu core
+$pool = Parallel::pool(size: $poolSize)->withBootstrap(__DIR__ . '/bootsrap.php');
 
 echo 'Loop Driver: ' . EventLoopComponentFactory::resolveDriver() . "\n";
 echo 'Master Supervising Cluster (PID: ' . getmypid() . ")\n";
@@ -38,7 +39,7 @@ $startAcceptor = function () use (&$startAcceptor, $pool) {
         ]);
 
         $server->on('connection', function ($connection) use ($router) {
-            $connection->on('data', asyncFn(function (string $rawRequest) use ($connection, $router) {
+            $connection->on('data', function (string $rawRequest) use ($connection, $router) {
 
                 $firstLine = substr($rawRequest, 0, strpos($rawRequest, "\r\n"));
                 $parts = explode(' ', $firstLine);
@@ -55,13 +56,13 @@ $startAcceptor = function () use (&$startAcceptor, $pool) {
                     . $content;
 
                 $connection->write($response);
-            }));
+            });
         });
 
         return new Promise();
     });
 };
 
-for ($i = 0; $i < 8; $i++) {
+for ($i = 0; $i < $poolSize; $i++) {
     $startAcceptor();
 }
