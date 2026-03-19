@@ -252,34 +252,51 @@ Used by `Parallel::pool()`. Spawned once per pool slot at pool construction (or 
 
 ---
 
+
 ## Nested Execution & Safety
 
-Workers are real OS processes and each one can itself call `parallel()` to spawn further child processes. Hibla enforces a configurable nesting limit (default 5) to prevent runaway recursive spawning — a fork bomb — from exhausting system resources.
+Workers are real OS processes and each one can itself call `parallel()`, `spawn()`, or any `Parallel::` executor to spawn further child processes. Hibla enforces a configurable nesting limit (default 5) to prevent runaway recursive spawning — a fork bomb — from exhausting system resources.
 
-### The short closure problem
+### The nested closure problem
 
-Do **not** nest `parallel()` calls using arrow functions (`fn() => ...`). Arrow functions automatically capture the entire parent scope by value. When opis/closure serializes a nested arrow function, it includes the outer `parallel()` call in the captured scope, causing the child worker to re-evaluate the parent call on deserialization — triggering an infinite chain of process spawns. Hibla detects this automatically and throws an exception, but you should treat arrow functions in nested parallel calls as structurally forbidden:
+Do **not** nest parallel task calls (whether using `parallel()`, `spawn()`, or pool executors) using short closures (`fn() => ...`) on the exact same line. 
+
+Because PHP cannot natively serialize closures, Hibla relies on `opis/closure`, which uses PHP's Reflection API to locate the closure's line number, opens the file, and extracts the code. If multiple closures exist on the **same line**, the parser gets confused and extracts the outer closure instead of the inner one. When the child worker deserializes and runs this, it re-evaluates the parent call—triggering an infinite chain of process spawns (a Fork Bomb).
+
+While formatting short closures on multiple lines bypasses the parser bug, short closures still carry the hidden risk of **implicitly capturing the entire parent scope by value**, which can accidentally serialize massive unintended payloads across processes.
+
 ```php
-// DANGEROUS — do not do this
+// DANGEROUS — Single-line closures confuse the AST parser and trigger a fork bomb
 parallel(fn() => await(parallel(fn() => sleep(5))));
+spawn(fn() => await(spawn(fn() => sleep(5))));
 
-// SAFER — regular closures use explicit scope, no accidental capture
+// RISKY — Multi-line short closures bypass the bug, but capture the entire parent scope!
+// Auto-formatters (like Pint/PHP-CS-Fixer) might also collapse this back to one line.
+parallel(
+    fn() => await(
+        parallel(
+            fn() => sleep(5)
+        )
+    )
+);
+
+// SAFER — Regular closures use explicit scope (`use ($vars)`), preventing payload bloat
 parallel(function() {
-    return await(parallel(function() {
+    return await(spawn(function() {
         return sleep(5);
     }));
 });
 
-// SAFEST — non-closure callables have no scope-capture issues at all
+// SAFEST — Non-closure callables have no parsing or scope-capture issues at all
 parallel([MyTask::class, 'run']);
-parallel([new MyTask(), 'execute']);
-parallel(new MyInvokableTask());
-parallel('App\Tasks\myFunction');
+spawn([new MyTask(), 'execute']);
+$pool->run(new MyInvokableTask());
+Parallel::task()->run('App\Tasks\myFunction');
 ```
 
 ### Always await nested calls
 
-Always `await()` the result of a nested `parallel()` call inside a worker. An un-awaited nested task may be killed by the OS if the parent worker exits before the child finishes, and nesting limit enforcement depends on the promise being tracked.
+Always `await()` the result of a nested process call (like `parallel()` or `spawn()`) inside a worker. An un-awaited nested task may be killed by the OS if the parent worker exits before the child finishes, and nesting limit enforcement depends on the promise being tracked.
 
 ### Configuring the nesting limit
 
@@ -310,10 +327,11 @@ Choose the right tool for your use case:
 | Use Case | API | Returns |
 | :--- | :--- | :--- |
 | Run a task and get its result | `parallel(fn() => ...)` or `Parallel::task()->run(...)` | `PromiseInterface<TResult>` |
-| Run many tasks, wrapping a callable for reuse | `parallelFn(callable $task)` | `callable(): PromiseInterface<TResult>` |
+| Run many tasks, wrapping a callable | `parallelFn(callable)` or `Parallel::task()->runFn(callable)` | `callable(mixed ...$args): PromiseInterface<TResult>` |
 | Fire-and-forget background work | `spawn(fn() => ...)` or `Parallel::background()->spawn(...)` | `PromiseInterface<BackgroundProcess>` |
-| Fire-and-forget, wrapping a callable for reuse | `spawnFn(callable $task)` | `callable(): PromiseInterface<BackgroundProcess>` |
-| High-throughput repeated work (reuse workers) | `Parallel::pool(n)->run(...)` | `PromiseInterface<TResult>` |
+| Fire-and-forget, wrapping a callable | `spawnFn(callable)` or `Parallel::background()->spawnFn(callable)` | `callable(mixed ...$args): PromiseInterface<BackgroundProcess>` |
+| High-throughput repeated work | `Parallel::pool(n)->run(...)` | `PromiseInterface<TResult>` |
+| High-throughput, wrapping a callable| `Parallel::pool(n)->runFn(callable)` | `callable(mixed ...$args): PromiseInterface<TResult>` ||
 
 **Fluent configuration** is available on all strategies:
 

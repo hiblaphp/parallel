@@ -19,24 +19,36 @@ interface BackgroundExecutorInterface extends ExecutorConfigInterface
      * resolves immediately with a `BackgroundProcess` instance, which can be used
      * to check the status of or terminate the process.
      *
-     * **NESTED SHORT CLOSURE WARNING** - AST CORRUPTION & FORK BOMBS
+     * **NESTED CLOSURE WARNING** - AST CORRUPTION & FORK BOMBS
      *
-     * Nesting `parallel()` calls using arrow functions / short closures (`fn() => ...`)
-     * causes AST serialization corruption in the underlying Opis Closure library.
-     * Because short closures automatically capture the entire parent scope by value,
-     * nesting them corrupts the serialized payload. This causes the child worker to
+     * Nesting `parallel()` or `spawn()` calls on the **same line** causes AST serialization
+     * corruption in the underlying Opis Closure library. The reflection-based parser will
+     * extract the outer closure instead of the inner one, causing the child worker to
      * mistakenly re-evaluate the parent call, triggering an infinite FORK BOMB.
+     *
+     * Furthermore, using short closures (`fn() => ...`) implicitly captures the entire
+     * parent scope by value, which can serialize massive unintended payloads.
      *
      * The library AUTOMATICALLY DETECTS and THROWS EXCEPTIONS to prevent this,
      * but it's important to use the correct syntax.
      *
-     * **DANGEROUS** (Short closures - will corrupt serialization and fork bomb):
+     * **DANGEROUS** (Single-line nested closures - will cause a fork bomb):
      * ```php
      * parallel(fn() => await(parallel(fn() => sleep(5))));
-     * async(fn() => await(parallel(fn() => sleep(5))));
      * ```
      *
-     * **SAFER** (Regular closures - explicit scope prevents serialization corruption):
+     * **RISKY** (Multi-line short closures - avoids fork bomb, but captures huge scope):
+     * ```php
+     * parallel(
+     *     fn() => await(
+     *         parallel(
+     *             fn() => sleep(5)
+     *         )
+     *     )
+     * );
+     * ```
+     *
+     * **SAFER** (Regular closures - explicit scope prevents payload bloat):
      * ```php
      * parallel(function () {
      *     return await(parallel(function () {
@@ -75,4 +87,19 @@ interface BackgroundExecutorInterface extends ExecutorConfigInterface
      * @return PromiseInterface<BackgroundProcess> A promise that resolves with the process handle.
      */
     public function spawn(callable $callback): PromiseInterface;
+
+    /**
+     * Wrap a callable to return a new callable that spawns a background process when invoked.
+     *
+     * This acts as a factory for fire-and-forget background tasks.
+     *
+     * The arguments passed to the returned function will be serialized and passed
+     * to the background process.
+     *
+     * (See spawn() for nesting execution warnings and short closure rules).
+     *
+     * @param callable(mixed ...$args): mixed $task The task to execute in background
+     * @return callable(mixed ...$args): PromiseInterface<BackgroundProcess> A callable that returns a Promise
+     */
+    public function spawnFn(callable $task): callable;
 }

@@ -20,24 +20,36 @@ interface ParallelRunnerInterface
      *
      * The task will be added to a queue and executed by the next available worker.
      *
-     * **NESTED SHORT CLOSURE WARNING** - AST CORRUPTION & FORK BOMBS
+     * **NESTED CLOSURE WARNING** - AST CORRUPTION & FORK BOMBS
      *
-     * Nesting `parallel()` calls using arrow functions / short closures (`fn() => ...`)
-     * causes AST serialization corruption in the underlying Opis Closure library.
-     * Because short closures automatically capture the entire parent scope by value,
-     * nesting them corrupts the serialized payload. This causes the child worker to
+     * Nesting `parallel()` or `spawn()` calls on the **same line** causes AST serialization
+     * corruption in the underlying Opis Closure library. The reflection-based parser will
+     * extract the outer closure instead of the inner one, causing the child worker to
      * mistakenly re-evaluate the parent call, triggering an infinite FORK BOMB.
+     *
+     * Furthermore, using short closures (`fn() => ...`) implicitly captures the entire
+     * parent scope by value, which can serialize massive unintended payloads.
      *
      * The library AUTOMATICALLY DETECTS and THROWS EXCEPTIONS to prevent this,
      * but it's important to use the correct syntax.
      *
-     * **DANGEROUS** (Short closures - will corrupt serialization and fork bomb):
+     * **DANGEROUS** (Single-line nested closures - will cause a fork bomb):
      * ```php
      * parallel(fn() => await(parallel(fn() => sleep(5))));
-     * async(fn() => await(parallel(fn() => sleep(5))));
      * ```
      *
-     * **SAFER** (Regular closures - explicit scope prevents serialization corruption):
+     * **RISKY** (Multi-line short closures - avoids fork bomb, but captures huge scope):
+     * ```php
+     * parallel(
+     *     fn() => await(
+     *         parallel(
+     *             fn() => sleep(5)
+     *         )
+     *     )
+     * );
+     * ```
+     *
+     * **SAFER** (Regular closures - explicit scope prevents payload bloat):
      * ```php
      * parallel(function () {
      *     return await(parallel(function () {
@@ -80,4 +92,23 @@ interface ParallelRunnerInterface
      * @return PromiseInterface<TResult> A promise that will be fulfilled with the return value of the task.
      */
     public function run(callable $callback, ?callable $onMessage = null): PromiseInterface;
+
+    /**
+     * Wrap a callable to return a new callable that executes in parallel when invoked.
+     *
+     * This acts as a factory for parallel tasks. It is particularly useful when working
+     * with higher-order functions like `Promise::map()`, `array_map()`, or event listeners
+     * where you need to pass a callable that triggers a parallel process.
+     *
+     * The arguments passed to the returned function will be serialized and passed
+     * to the background process.
+     *
+     * (See run() for nesting execution warnings and short closure rules).
+     *
+     * @template TResult
+     * @param callable(mixed ...$args): TResult $task The task to execute in parallel
+     * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
+     * @return callable(mixed ...$args): PromiseInterface<TResult> A callable that returns a Promise
+     */
+    public function runFn(callable $task, ?callable $onMessage = null): callable;
 }
