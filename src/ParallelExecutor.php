@@ -40,9 +40,7 @@ final class ParallelExecutor implements ParallelExecutorInterface
      */
     private array $onMessageHandlers = [];
 
-    public function __construct()
-    {
-    }
+    public function __construct() {}
 
     /**
      * @inheritdoc
@@ -166,6 +164,19 @@ final class ParallelExecutor implements ParallelExecutorInterface
                 $source->cancel();
             })
         ;
+    }
+
+    /**
+     * @template TResult
+     * @inheritdoc
+     * @param callable(mixed ...$args): TResult $task
+     * @return callable(mixed ...$args): PromiseInterface<TResult>
+     */
+    public function runFn(callable $task, ?callable $onMessage = null): callable
+    {
+        return function (mixed ...$args) use ($task, $onMessage): PromiseInterface {
+            return $this->run(static fn() => $task(...$args), $onMessage);
+        };
     }
 
     /**

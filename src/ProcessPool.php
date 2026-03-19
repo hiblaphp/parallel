@@ -57,9 +57,7 @@ final class ProcessPool implements ProcessPoolInterface
      */
     private $onRespawnHandler = null;
 
-    public function __construct(private readonly int $size)
-    {
-    }
+    public function __construct(private readonly int $size) {}
 
     /**
      * @inheritdoc
@@ -173,7 +171,7 @@ final class ProcessPool implements ProcessPoolInterface
     public function getWorkerPids(): array
     {
         if ($this->pool === null) {
-            return[];
+            return [];
         }
 
         return $this->pool->getWorkerPids();
@@ -242,6 +240,19 @@ final class ProcessPool implements ProcessPoolInterface
 
         /** @var PromiseInterface<TResult> */
         return $this->getPool()->submit($callback, $finalTimeout, $sourceLocation, $onMessage);
+    }
+
+    /**
+     * @template TResult
+     * @inheritdoc
+     * @param callable(mixed ...$args): TResult $task
+     * @return callable(mixed ...$args): PromiseInterface<TResult>
+     */
+    public function runFn(callable $task, ?callable $onMessage = null): callable
+    {
+        return function (mixed ...$args) use ($task, $onMessage): PromiseInterface {
+            return $this->run(static fn() => $task(...$args), $onMessage);
+        };
     }
 
     /**
