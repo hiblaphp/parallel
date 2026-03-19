@@ -196,6 +196,8 @@ describe('Promise Combinators Integration', function () {
             }))
         );
 
+        $pool->shutdown();
+
         expect($result[0])->toBe('PARIS');
         expect($result[1])->toBe('LONDON');
     });
