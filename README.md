@@ -9,55 +9,68 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level cluster p
 
 ---
 
-## Key Features
-
-- **Extreme Throughput:** Optimized for zero-latency task dispatching. Handles over **102,000 requests per second** in socket server benchmarks.
-- **True Non-Blocking I/O:** Fully asynchronous architecture. Parent-to-worker communication never starves the event loop, even on Windows.
-- **Cross-Platform:** Seamless support for **Linux, macOS, and Windows**. Intelligently uses socket pairs on Windows to bypass kernel pipe limitations.
-- **Self-Healing:** Using `onWorkerRespawn`, the master process ensures tasks are always running by auto-respawning crashed workers.
-- **Hybrid Concurrency:** Mix multi-process parallelism with fiber-based asynchrony recursively.
-- **OS-Level Task Cancellation:** Terminate tasks instantly. Kills OS processes and automatically maintains pool capacity.
-
----
-
 ## Contents
-
-## Contents
-
-**Understanding the library**
-- [How Parallel Works](#how-parallel-works)
-- [Serialization: Crossing the Process Boundary](#serialization-crossing-the-process-boundary)
-- [IPC: Inter-Process Communication](#ipc-inter-process-communication)
-- [Worker Types](#worker-types)
-- [Nested Execution & Safety](#nested-execution--safety)
 
 **Getting started**
 - [Installation](#installation)
+- [Quick Start](#quick-start)
 - [Quick Reference](#quick-reference)
-- [Quick Start: Simple Primitives](#quick-start-simple-primitives)
-- [Rich Data & Stateful Execution](#rich-data--stateful-execution)
 
-**The API**
+**Core concepts**
+- [How Parallel Works](#how-parallel-works)
+- [Worker Types](#worker-types)
+- [Serialization: Crossing the Process Boundary](#serialization-crossing-the-process-boundary)
+- [IPC: Inter-Process Communication](#ipc-inter-process-communication)
+
+**Writing tasks**
+- [Simple Primitives](#simple-primitives)
+- [Rich Data & Stateful Execution](#rich-data--stateful-execution)
 - [Global Helper Functions](#global-helper-functions)
+  - [`parallel()`](#parallelcallable-task-int-timeout--null)
+  - [`parallelFn()`](#parallelFncallable-task-int-timeout--null)
+  - [`spawn()`](#spawncallable-task-int-timeout--null)
+  - [`spawnFn()`](#spawnFncallable-task-int-timeout--null)
+  - [Using `runFn` and `spawnFn` on fluent executors](#using-runfn-and-spawnfn-on-fluent-executors)
+
+**Persistent pools**
 - [Persistent Worker Pools](#persistent-worker-pools)
+  - [Automatic garbage collection between tasks](#automatic-garbage-collection-between-tasks)
+  - [Why `withMaxExecutionsPerWorker`](#why-withmaxexecutionsperworker)
+  - [Lazy vs. Eager Spawning](#lazy-vs-eager-spawning)
 - [Self-Healing & Supervisor Pattern](#self-healing--supervisor-pattern)
+  - [Complete example: chaos server](#complete-example-chaos-server)
+- [Pool Monitoring](#pool-monitoring)
+
+**Real-time communication**
+- [Real-time Output & Messaging](#real-time-output--messaging)
+  - [Console Streaming](#console-streaming)
+  - [Structured Messaging with `emit()`](#structured-messaging-with-emit)
+  - [Pool-Level vs. Per-Task Message Handlers](#pool-level-vs-per-task-message-handlers)
+  - [Handler completion blocks task promise resolution](#handler-completion-blocks-task-promise-resolution)
+
+**Advanced patterns**
 - [Fractal Concurrency: The Async Hybrid](#fractal-concurrency-the-async-hybrid)
+- [Nested Execution & Safety](#nested-execution--safety)
+  - [The nested closure problem](#the-nested-closure-problem)
+  - [Closure safety levels](#closure-safety-levels)
+  - [Always `await()` nested calls](#always-await-nested-calls)
+  - [Configuring the nesting limit](#configuring-the-nesting-limit)
+
+**Error handling & safety**
+- [Distributed Exception Teleportation](#distributed-exception-teleportation)
+- [Abnormal Termination Detection](#abnormal-termination-detection)
+- [Task Cancellation & Management](#task-cancellation--management)
+- [Exception Reference](#exception-reference)
 
 **Project setup**
 - [Framework Bootstrapping](#framework-bootstrapping)
 - [Autoloading & Code Availability](#autoloading--code-availability)
 - [Global Configuration](#global-configuration)
 - [Architecture & Testability](#architecture--testability)
-
-**Cross-cutting behaviors**
-- [Real-time Output & Messaging](#real-time-output--messaging)
-- [Distributed Exception Teleportation](#distributed-exception-teleportation)
-- [Abnormal Termination Detection](#abnormal-termination-detection)
-- [Task Cancellation & Management](#task-cancellation--management)
-- [Pool Monitoring](#pool-monitoring)
-
-**Reference**
-- [Exception Reference](#exception-reference)
+  - [Strategy Map](#strategy-map)
+  - [Using the Facade](#using-the-facade-recommended)
+  - [Direct Instantiation](#direct-instantiation-best-for-di)
+  - [Dependency Injection & Mocking](#dependency-injection--mocking)
 
 **Meta**
 - [Credits](#credits)
@@ -65,21 +78,99 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level cluster p
 
 ---
 
+## Installation
+```bash
+composer require hiblaphp/parallel
+```
+
+---
+
+## Quick Start
+
+The fastest way to run code in a separate process and get the result back:
+```php
+require __DIR__ . '/vendor/autoload.php';
+
+use function Hibla\{parallel, await};
+
+$result = await(parallel(function () {
+    return 'Hello from a separate process!';
+}));
+
+echo $result; // Hello from a separate process!
+```
+
+That is the entire API for the common case. The rest of this document covers
+everything built on top of it.
+
+---
+
+## Quick Reference
+
+Choose the right tool for your use case:
+
+| Use Case | API | Returns |
+| :--- | :--- | :--- |
+| Run a task and get its result | `parallel(fn() => ...)` or `Parallel::task()->run(...)` | `PromiseInterface<TResult>` |
+| Run many tasks, wrapping a callable | `parallelFn(callable)` or `Parallel::task()->runFn(callable)` | `callable(mixed ...$args): PromiseInterface<TResult>` |
+| Fire-and-forget background work | `spawn(fn() => ...)` or `Parallel::background()->spawn(...)` | `PromiseInterface<BackgroundProcess>` |
+| Fire-and-forget, wrapping a callable | `spawnFn(callable)` or `Parallel::background()->spawnFn(callable)` | `callable(mixed ...$args): PromiseInterface<BackgroundProcess>` |
+| High-throughput repeated work | `Parallel::pool(n)->run(...)` | `PromiseInterface<TResult>` |
+| High-throughput, wrapping a callable | `Parallel::pool(n)->runFn(callable)` | `callable(mixed ...$args): PromiseInterface<TResult>` |
+
+**Fluent configuration** is available on all strategies:
+
+| Method | Effect |
+| :--- | :--- |
+| `->withTimeout(int $seconds)` | Reject with `TimeoutException` after N seconds and terminate the worker |
+| `->withoutTimeout()` | Disable the timeout entirely |
+| `->withMemoryLimit(string $limit)` | Set worker memory limit (e.g. `'256M'`, `'1G'`) |
+| `->withUnlimitedMemory()` | Set memory limit to `-1` |
+| `->withBootstrap(string $file, ?callable $cb)` | Load a framework or legacy environment in the worker |
+| `->withMaxNestingLevel(int $level)` | Override the fork-bomb safety limit (1–10) |
+| `->withLazySpawning()` | *(Pool only)* Spawn workers on first `run()` call instead of at construction |
+| `->withMaxExecutionsPerWorker(int $n)` | *(Pool only)* Retire and replace workers after N tasks |
+| `->onMessage(callable $handler)` | *(Task/Pool)* Register a handler for `emit()` messages from workers |
+| `->onWorkerRespawn(callable $handler)` | *(Pool only)* Called whenever a worker exits and a replacement is spawned |
+
+---
+
 ## How Parallel Works
 
-PHP is a single-threaded runtime. The event loop and fiber-based concurrency in `hiblaphp/async` let you interleave non-blocking I/O efficiently, but they do not escape this constraint — one thread, one CPU core. When you need to run genuinely CPU-bound work, call a blocking library that cannot be made async, or isolate a task so a fatal error in it cannot kill your main process, you need a separate OS process.
+PHP is a single-threaded runtime. The event loop and fiber-based concurrency in
+`hiblaphp/async` let you interleave non-blocking I/O efficiently, but they do
+not escape this constraint — one thread, one CPU core. When you need to run
+genuinely CPU-bound work, call a blocking library that cannot be made async, or
+isolate a task so a fatal error in it cannot kill your main process, you need a
+separate OS process.
 
-Hibla Parallel solves this by spawning real child processes via `proc_open()` and communicating with them over OS-level I/O channels. Each worker is a fresh PHP process — its own memory space, its own CPU scheduling, its own crash domain. A segfault, out-of-memory kill, or unhandled fatal in a worker cannot corrupt or terminate the parent.
+Hibla Parallel solves this by spawning real child processes via `proc_open()`
+and communicating with them over OS-level I/O channels. Each worker is a fresh
+PHP process — its own memory space, its own CPU scheduling, its own crash
+domain. A segfault, out-of-memory kill, or unhandled fatal in a worker cannot
+corrupt or terminate the parent.
 
 When you call `parallel(fn() => heavyWork())`:
 
-1. **Spawn.** The parent calls `proc_open()` to start a new PHP process running one of Hibla's worker scripts. The worker receives its I/O channels (stdin, stdout, stderr) at the OS level.
-2. **Serialize.** The parent serializes the closure — its code, bound variables, and `$this` if captured — into a JSON payload and writes it to the worker's stdin.
-3. **Execute.** The worker reads the payload, deserializes the closure, runs it inside its own event loop, and captures the return value.
-4. **Communicate.** The worker writes structured JSON frames back to the parent over stdout in real time — output frames as the task runs, a terminal frame when it finishes.
-5. **Deserialize.** The parent reads the terminal frame, deserializes the result, and resolves the promise.
+1. **Spawn.** The parent calls `proc_open()` to start a new PHP process running
+   one of Hibla's worker scripts. The worker receives its I/O channels (stdin,
+   stdout, stderr) at the OS level.
+2. **Serialize.** The parent serializes the closure — its code, bound variables,
+   and `$this` if captured — into a JSON payload and writes it to the worker's
+   stdin.
+3. **Execute.** The worker reads the payload, deserializes the closure, runs it
+   inside its own event loop, and captures the return value.
+4. **Communicate.** The worker writes structured JSON frames back to the parent
+   over stdout in real time — output frames as the task runs, a terminal frame
+   when it finishes.
+5. **Deserialize.** The parent reads the terminal frame, deserializes the
+   result, and resolves the promise.
 
-The parent never blocks during this. Communication happens over non-blocking streams managed by `hiblaphp/stream`, so the parent's event loop continues running other fibers, timers, and I/O while it waits for a worker to finish. A pool of four workers can handle four tasks simultaneously without the parent event loop stalling at all.
+The parent never blocks during this. Communication happens over non-blocking
+streams managed by `hiblaphp/stream`, so the parent's event loop continues
+running other fibers, timers, and I/O while it waits for a worker to finish. A
+pool of four workers can handle four tasks simultaneously without the parent
+event loop stalling at all.
 ```
 Parent process (event loop running)
 │
@@ -99,25 +190,71 @@ Parent process (event loop running)
 
 ---
 
+## Worker Types
+
+Hibla Parallel ships three worker scripts, each optimized for a different
+execution model. The parent selects the correct script automatically based on
+which API you use.
+
+### Streamed worker (`worker.php`)
+
+Used by `parallel()` and `Parallel::task()`. Spawned fresh for each task.
+Maintains full bidirectional communication with the parent — OUTPUT frames
+stream in real time, `emit()` sends MESSAGE frames, exceptions teleport back
+as ERROR frames, and results are transmitted as COMPLETED frames. The worker
+exits after handling one task.
+
+### Background worker (`worker_background.php`)
+
+Used by `spawn()` and `Parallel::background()`. Spawned fresh for each task.
+stdout and stderr are redirected to `/dev/null` at spawn time — the parent has
+no communication channel back from this worker. The worker runs the task and
+exits. This means `emit()` is a silent no-op inside background workers, and
+there is no result, no exception teleportation, and no real-time output. Use
+this only for true fire-and-forget work where you do not need to know what
+happened inside.
+
+### Persistent worker (`worker_persistent.php`)
+
+Used by `Parallel::pool()`. Spawned once per pool slot at pool construction
+(or on first use with lazy spawning) and kept alive to handle many tasks
+sequentially. Shares the same structured-frame communication protocol as the
+streamed worker but with task IDs added to every frame for routing, plus the
+READY/RETIRING/CRASHED lifecycle frames. Crashes trigger the pool's respawn
+logic. Retirement after `withMaxExecutionsPerWorker(n)` tasks triggers a clean
+RETIRING exit and an automatic replacement.
+
+---
+
 ## Serialization: Crossing the Process Boundary
 
-The central challenge in any multi-process system is that processes do not share memory. Everything that moves between the parent and a worker — the task to run, the result it produces, exceptions it throws, and messages it emits — must be converted to bytes, transmitted, and reconstructed on the other side.
+The central challenge in any multi-process system is that processes do not
+share memory. Everything that moves between the parent and a worker — the task
+to run, the result it produces, exceptions it throws, and messages it emits —
+must be converted to bytes, transmitted, and reconstructed on the other side.
 
 ### Serializing the task
 
-PHP closures are not natively serializable. Hibla uses [opis/closure](https://github.com/opis/closure) to serialize the AST (Abstract Syntax Tree) of the closure's source code along with any variables it captures from its surrounding scope. The serialized representation is a compact string that the worker can deserialize back into a fully functional callable — including bound variables and the captured `$this` object if the closure was defined inside a class method.
+PHP closures are not natively serializable. Hibla uses
+[opis/closure](https://github.com/opis/closure) to serialize the AST (Abstract
+Syntax Tree) of the closure's source code along with any variables it captures
+from its surrounding scope. The serialized representation is a compact string
+that the worker can deserialize back into a fully functional callable —
+including bound variables and the captured `$this` object if the closure was
+defined inside a class method.
 ```php
 $multiplier = 3;
 
-$result = await(parallel(function() use ($multiplier) {
-    // $multiplier = 3 is serialized with the closure and
-    // reconstructed in the worker — the worker never shared
-    // memory with the parent, it received a copy of the value
+$result = await(parallel(function () use ($multiplier) {
+    // $multiplier = 3 is serialized with the closure and reconstructed
+    // in the worker — the worker never shared memory with the parent,
+    // it received a copy of the value
     return 6 * $multiplier; // 18
 }));
 ```
 
-The entire task payload is JSON-encoded before being written to the worker's stdin:
+The entire task payload is JSON-encoded before being written to the worker's
+stdin:
 ```json
 {
   "serialized_callback": "...",
@@ -130,7 +267,11 @@ The entire task payload is JSON-encoded before being written to the worker's std
 
 ### Serializing the result
 
-Once the task finishes, the worker serializes the return value back to the parent. Scalar values (strings, integers, floats, booleans, null) and plain arrays are JSON-encoded directly. Objects and nested arrays containing objects are serialized with PHP's native `serialize()` and base64-encoded before being embedded in the JSON frame:
+Once the task finishes, the worker serializes the return value back to the
+parent. Scalar values (strings, integers, floats, booleans, null) and plain
+arrays are JSON-encoded directly. Objects and nested arrays containing objects
+are serialized with PHP's native `serialize()` and base64-encoded before being
+embedded in the JSON frame:
 ```json
 {
   "status": "COMPLETED",
@@ -139,26 +280,40 @@ Once the task finishes, the worker serializes the return value back to the paren
 }
 ```
 
-The parent checks the `result_serialized` flag, decodes and unserializes the value if needed, and resolves the promise with the reconstructed object. The object arrives in the parent with its type, properties, and values intact — as if it had never left the process.
+The parent checks the `result_serialized` flag, decodes and unserializes the
+value if needed, and resolves the promise with the reconstructed object. The
+object arrives in the parent with its type, properties, and values intact — as
+if it had never left the process.
 
 ### Serializing exceptions
 
-When a task throws, the worker captures the exception's class name, message, code, file, line, and full stack trace, encodes them as a structured ERROR frame, and sends it to the parent. The parent's `ExceptionHandler` re-instantiates the original exception class (falling back to `RuntimeException` if the class is not available in the parent) and merges the worker's stack trace into it, so the combined trace shows both where `parallel()` was called in the parent and where the exception was thrown in the worker.
+When a task throws, the worker captures the exception's class name, message,
+code, file, line, and full stack trace, encodes them as a structured ERROR
+frame, and sends it to the parent. The parent's `ExceptionHandler`
+re-instantiates the original exception class (falling back to `RuntimeException`
+if the class is not available in the parent) and merges the worker's stack trace
+into it, so the combined trace shows both where `parallel()` was called in the
+parent and where the exception was thrown in the worker.
 
 ### What cannot be serialized
 
-Objects that hold active OS resources — open database connections (PDO handles), open file pointers, network sockets, cURL handles — cannot be serialized because the resource itself lives in the OS kernel and is tied to the specific process that opened it. Attempting to pass one will fail at serialization time with a `TaskPayloadException`.
+Objects that hold active OS resources — open database connections (PDO handles),
+open file pointers, network sockets, cURL handles — cannot be serialized because
+the resource itself lives in the OS kernel and is tied to the specific process
+that opened it. Attempting to pass one will fail at serialization time with a
+`TaskPayloadException`.
 
-The pattern for these cases is to initialize the resource inside the worker, not pass it in:
+The pattern for these cases is to initialize the resource inside the worker,
+not pass it in:
 ```php
 // Wrong — PDO handle cannot be serialized across processes
 $db = new PDO('mysql:host=localhost;dbname=app', 'user', 'pass');
-$result = await(parallel(function() use ($db) {
+$result = await(parallel(function () use ($db) {
     return $db->query('SELECT ...');  // TaskPayloadException
 }));
 
 // Correct — create the connection inside the worker
-$result = await(parallel(function() {
+$result = await(parallel(function () {
     $db = new PDO('mysql:host=localhost;dbname=app', 'user', 'pass');
     return $db->query('SELECT ...')->fetchAll();
 }));
@@ -168,19 +323,20 @@ $result = await(parallel(function() {
 
 ## IPC: Inter-Process Communication
 
-Hibla Parallel communicates with workers over OS-level I/O channels created by `proc_open()`. Understanding this channel design explains why the library is non-blocking even on Windows and how real-time output streaming works.
+Hibla Parallel communicates with workers over OS-level I/O channels created by
+`proc_open()`. Understanding this channel design explains why the library is
+non-blocking even on Windows and how real-time output streaming works.
 
 ### Structured frames
 
-All communication uses a simple line-delimited JSON protocol — similar
-in spirit to [NDJSON](https://ndjson.org/) and
+All communication uses a simple line-delimited JSON protocol — similar in
+spirit to [NDJSON](https://ndjson.org/) and
 [JSON Lines](https://jsonlines.org/), but implemented directly over
-`proc_open()` pipes rather than files or TCP sockets. The parent writes
-one JSON line to the worker's stdin to deliver the task. The worker
-writes JSON lines to its stdout as the task runs. Each line is a
-complete, self-contained JSON object terminated by a newline — the
-parent reads lines one at a time on a non-blocking stream and routes
-each frame by its `status` field.
+`proc_open()` pipes rather than files or TCP sockets. The parent writes one
+JSON line to the worker's stdin to deliver the task. The worker writes JSON
+lines to its stdout as the task runs. Each line is a complete, self-contained
+JSON object terminated by a newline — the parent reads lines one at a time on
+a non-blocking stream and routes each frame by its `status` field.
 
 | Frame type | Direction | When it is sent |
 | :--- | :--- | :--- |
@@ -193,20 +349,25 @@ each frame by its `status` field.
 | `RETIRING` | Worker → Parent | *(Persistent workers only)* Worker has hit its max executions limit and is exiting cleanly |
 | `CRASHED` | Worker → Parent | *(Persistent workers only)* Worker is dying due to an unrecoverable error |
 
-The parent reads these frames continuously on a non-blocking stream,
-dispatching each one as it arrives. OUTPUT frames are forwarded to the
-parent's stdout immediately — this is how `echo` inside a worker
-appears in the parent's console in real time. MESSAGE frames from
-`emit()` trigger the registered `onMessage` handler. COMPLETED and
-ERROR frames settle the task's promise.
-
 ### Pipes on Unix, sockets on Windows
 
-On Linux and macOS, Hibla uses anonymous pipes (`['pipe', 'r']` and `['pipe', 'w']` in the `proc_open()` descriptor spec). Anonymous pipes support `stream_set_blocking(false)` correctly at the kernel level, making them fully compatible with the non-blocking stream layer. They are also approximately 15% faster than sockets for small messages.
+On Linux and macOS, Hibla uses anonymous pipes (`['pipe', 'r']` and
+`['pipe', 'w']` in the `proc_open()` descriptor spec). Anonymous pipes support
+`stream_set_blocking(false)` correctly at the kernel level, making them fully
+compatible with the non-blocking stream layer. They are also approximately 15%
+faster than sockets for small messages.
 
-On Windows, anonymous pipes do not support non-blocking mode at the kernel level. Calling `stream_set_blocking($pipe, false)` on a Windows anonymous pipe is silently ignored — the pipe remains blocking. A blocking read on a pipe that has no data stalls the entire PHP thread indefinitely, which would deadlock the event loop.
+On Windows, anonymous pipes do not support non-blocking mode at the kernel
+level. Calling `stream_set_blocking($pipe, false)` on a Windows anonymous pipe
+is silently ignored — the pipe remains blocking. A blocking read on a pipe that
+has no data stalls the entire PHP thread indefinitely, which would deadlock the
+event loop.
 
-Hibla detects the platform at spawn time and switches to socket pairs (`['socket']`) on Windows. Socket pairs support true non-blocking mode on Windows and are the standard solution for this limitation. The rest of the code — stream reading, frame parsing, promise resolution — is identical on both platforms:
+Hibla detects the platform at spawn time and switches to socket pairs
+(`['socket']`) on Windows. Socket pairs support true non-blocking mode on
+Windows and are the standard solution for this limitation. The rest of the code
+— stream reading, frame parsing, promise resolution — is identical on both
+platforms:
 ```php
 // From ProcessSpawnHandler::spawnStreamedTask()
 $descriptorSpec = PHP_OS_FAMILY === 'Windows'
@@ -216,163 +377,68 @@ $descriptorSpec = PHP_OS_FAMILY === 'Windows'
 
 ### Stdin handshake and drain-and-wait
 
-After the worker finishes and writes its terminal frame (COMPLETED, ERROR, or TIMEOUT), it does not exit immediately. On Windows, a process exiting instantly destroys its socket descriptors, which can wipe out bytes that are still in the OS transmit buffer before the parent's non-blocking stream reader has consumed them.
+After the worker finishes and writes its terminal frame (COMPLETED, ERROR, or
+TIMEOUT), it does not exit immediately. On Windows, a process exiting instantly
+destroys its socket descriptors, which can wipe out bytes that are still in the
+OS transmit buffer before the parent's non-blocking stream reader has consumed
+them.
 
-To prevent this, the worker enters a **drain-and-wait** loop after writing the terminal frame: it switches its own stdin to non-blocking mode and reads in a 5ms polling loop for up to 500ms. The parent signals it is done by closing its end of the stdin pipe after receiving the terminal frame, which causes `feof()` to return `true` in the worker's drain loop and lets the worker exit cleanly. This handshake guarantees the terminal frame is always fully received before the worker process disappears.
+To prevent this, the worker enters a drain-and-wait loop after writing the
+terminal frame: it switches its own stdin to non-blocking mode and reads in a
+5ms polling loop for up to 500ms. The parent signals it is done by closing its
+end of the stdin pipe after receiving the terminal frame, which causes `feof()`
+to return `true` in the worker's drain loop and lets the worker exit cleanly.
+This handshake guarantees the terminal frame is always fully received before the
+worker process disappears.
 
 ### Persistent worker IPC
 
-Persistent pool workers use the same channel design but stay alive across multiple tasks. Instead of a one-shot payload-and-exit model, the boot sequence is:
+Persistent pool workers use the same channel design but stay alive across
+multiple tasks. Instead of a one-shot payload-and-exit model, the boot sequence
+is:
 
-1. Parent spawns the worker and writes a one-time **boot payload** to stdin with the autoload path, bootstrap configuration, memory limit, and retirement threshold.
-2. Worker loads the autoloader, runs any framework bootstrap, and writes `{"status":"READY","pid":12345}` to stdout.
-3. Parent dispatches queued tasks by writing JSON lines to stdin, one per task, each identified by a unique `task_id`.
-4. Worker reads task lines in a loop, executes each one, and writes COMPLETED or ERROR frames tagged with the same `task_id` back to stdout.
-5. All frames from all tasks share the same stdout channel — the `task_id` tag allows the parent to route each frame to the correct task's promise and `onMessage` handler.
+1. Parent spawns the worker and writes a one-time boot payload to stdin with
+   the autoload path, bootstrap configuration, memory limit, and retirement
+   threshold.
+2. Worker loads the autoloader, runs any framework bootstrap, and writes
+   `{"status":"READY","pid":12345}` to stdout.
+3. Parent dispatches queued tasks by writing JSON lines to stdin, one per task,
+   each identified by a unique `task_id`.
+4. Worker reads task lines in a loop, executes each one, and writes COMPLETED
+   or ERROR frames tagged with the same `task_id` back to stdout.
+5. All frames from all tasks share the same stdout channel — the `task_id` tag
+   allows the parent to route each frame to the correct task's promise and
+   `onMessage` handler.
 
-The worker reports its own PID (`getmypid()`) in the READY frame because `proc_get_status()['pid']` returns the shell wrapper's PID on some platforms rather than the actual PHP process PID. The self-reported PID is used for `SIGKILL` / `taskkill` on cancellation.
-
----
-
-## Worker Types
-
-Hibla Parallel ships three worker scripts, each optimized for a different execution model. The parent selects the correct script automatically based on which API you use. You don't interact with this file directly and the library handles worker execution for you
-
-### Streamed worker (`worker.php`)
-
-Used by `parallel()` and `Parallel::task()`. Spawned fresh for each task. Maintains full bidirectional communication with the parent — OUTPUT frames stream in real time, `emit()` sends MESSAGE frames, exceptions teleport back as ERROR frames, and results are transmitted as COMPLETED frames. The worker exits after handling one task.
-
-### Background worker (`worker_background.php`)
-
-Used by `spawn()` and `Parallel::background()`. Spawned fresh for each task. stdout and stderr are redirected to `/dev/null` at spawn time — the parent has no communication channel back from this worker. The worker runs the task and exits. This means `emit()` is a silent no-op inside background workers, and there is no result, no exception teleportation, and no real-time output. Use this only for true fire-and-forget work where you do not need to know what happened inside.
-
-### Persistent worker (`worker_persistent.php`)
-
-Used by `Parallel::pool()`. Spawned once per pool slot at pool construction (or on first use with lazy spawning) and kept alive to handle many tasks sequentially. Shares the same structured-frame communication protocol as the streamed worker but with task IDs added to every frame for routing, plus the READY/RETIRING/CRASHED lifecycle frames. Crashes trigger the pool's respawn logic. Retirement after `withMaxExecutionsPerWorker(n)` tasks triggers a clean RETIRING exit and an automatic replacement.
+The worker reports its own PID (`getmypid()`) in the READY frame because
+`proc_get_status()['pid']` returns the shell wrapper's PID on some platforms
+rather than the actual PHP process PID. The self-reported PID is used for
+`SIGKILL` / `taskkill` on cancellation.
 
 ---
 
-
-## Nested Execution & Safety
-
-Workers are real OS processes and each one can itself call `parallel()`, `spawn()`, or any `Parallel::` executor to spawn further child processes. Hibla enforces a configurable nesting limit (default 5) to prevent runaway recursive spawning — a fork bomb — from exhausting system resources.
-
-### The nested closure problem
-
-Do **not** nest parallel task calls (whether using `parallel()`, `spawn()`, or pool executors) using short closures (`fn() => ...`) on the exact same line. 
-
-Because PHP cannot natively serialize closures, Hibla relies on `opis/closure`, which uses PHP's Reflection API to locate the closure's line number, opens the file, and extracts the code. If multiple closures exist on the **same line**, the parser gets confused and extracts the outer closure instead of the inner one. When the child worker deserializes and runs this, it re-evaluates the parent call—triggering an infinite chain of process spawns (a Fork Bomb).
-
-While formatting short closures on multiple lines bypasses the parser bug, short closures still carry the hidden risk of **implicitly capturing the entire parent scope by value**, which can accidentally serialize massive unintended payloads across processes.
-
-```php
-// DANGEROUS — Single-line closures confuse the AST parser and trigger a fork bomb
-parallel(fn() => await(parallel(fn() => sleep(5))));
-spawn(fn() => await(spawn(fn() => sleep(5))));
-
-// RISKY — Multi-line short closures bypass the bug, but capture the entire parent scope!
-// Auto-formatters (like Pint/PHP-CS-Fixer) might also collapse this back to one line.
-parallel(
-    fn() => await(
-        parallel(
-            fn() => sleep(5)
-        )
-    )
-);
-
-// SAFER — Regular closures use explicit scope (`use ($vars)`), preventing payload bloat
-parallel(function() {
-    return await(spawn(function() {
-        return sleep(5);
-    }));
-});
-
-// SAFEST — Non-closure callables have no parsing or scope-capture issues at all
-parallel([MyTask::class, 'run']);
-spawn([new MyTask(), 'execute']);
-$pool->run(new MyInvokableTask());
-Parallel::task()->run('App\Tasks\myFunction');
-```
-
-### Always await nested calls
-
-Always `await()` the result of a nested process call (like `parallel()` or `spawn()`) inside a worker. An un-awaited nested task may be killed by the OS if the parent worker exits before the child finishes, and nesting limit enforcement depends on the promise being tracked.
-
-### Configuring the nesting limit
-
-The default limit of 5 is sufficient for virtually all real workloads. If you genuinely need deeper nesting, raise it per-executor or globally in `hibla_parallel.php`. The hard ceiling is 10:
-```php
-// Per-executor override
-Parallel::task()
-    ->withMaxNestingLevel(8)
-    ->run(fn() => deeplyNestedWork());
-
-// Global override in hibla_parallel.php
-'max_nesting_level' => 8,
-```
-
----
-
-## Installation
-```bash
-composer require hiblaphp/parallel
-```
-
----
-
-## Quick Reference
-
-Choose the right tool for your use case:
-
-| Use Case | API | Returns |
-| :--- | :--- | :--- |
-| Run a task and get its result | `parallel(fn() => ...)` or `Parallel::task()->run(...)` | `PromiseInterface<TResult>` |
-| Run many tasks, wrapping a callable | `parallelFn(callable)` or `Parallel::task()->runFn(callable)` | `callable(mixed ...$args): PromiseInterface<TResult>` |
-| Fire-and-forget background work | `spawn(fn() => ...)` or `Parallel::background()->spawn(...)` | `PromiseInterface<BackgroundProcess>` |
-| Fire-and-forget, wrapping a callable | `spawnFn(callable)` or `Parallel::background()->spawnFn(callable)` | `callable(mixed ...$args): PromiseInterface<BackgroundProcess>` |
-| High-throughput repeated work | `Parallel::pool(n)->run(...)` | `PromiseInterface<TResult>` |
-| High-throughput, wrapping a callable| `Parallel::pool(n)->runFn(callable)` | `callable(mixed ...$args): PromiseInterface<TResult>` ||
-
-**Fluent configuration** is available on all strategies:
-
-| Method | Effect |
-| :--- | :--- |
-| `->withTimeout(int $seconds)` | Define the worker max lifetime Reject with `TimeoutException` after N seconds and terminate the worker |
-| `->withoutTimeout()` | Disable the timeout entirely |
-| `->withMemoryLimit(string $limit)` | Set worker memory limit (e.g. `'256M'`, `'1G'`) |
-| `->withUnlimitedMemory()` | Set memory limit to `-1` |
-| `->withBootstrap(string $file, ?callable $cb)` | Load a framework or legacy environment in the worker |
-| `->withMaxNestingLevel(int $level)` | Override the fork-bomb safety limit (1–10) |
-| `->withLazySpawning()` | *(Pool only)* Spawn workers on first `run()` call instead of at construction |
-| `->withMaxExecutionsPerWorker(int $n)` | *(Pool only)* Retire and replace workers after N tasks |
-| `->onMessage(callable $handler)` | *(Task/Pool)* Register a handler for `emit()` messages from workers |
-| `->onWorkerRespawn(callable $handler)` | *(Pool only)* Called whenever a worker crashes and a replacement is spawned |
-
----
-
-## Quick Start: Simple Primitives
+## Simple Primitives
 
 Hibla provides global helper functions for the most common use cases.
 
-### One-Off Tasks with Results
+### One-off tasks with results
 ```php
-use function Hibla\parallel;
-use function Hibla\await;
+use function Hibla\{parallel, await};
 
-$result = await(parallel(function() {
+$result = await(parallel(function () {
     return strlen("Hello from the background!");
 }));
 
 echo $result; // 27
 ```
 
-### Fire-and-Forget
+### Fire-and-forget
 ```php
 use function Hibla\{spawn, await};
 
 // spawn() returns a Promise that resolves to a BackgroundProcess handle.
 // You must await() the spawn call itself to get that handle.
-$process = await(spawn(function() {
+$process = await(spawn(function () {
     file_put_contents('log.txt', "Task started at " . date('Y-m-d H:i:s'));
     sleep(5);
 }));
@@ -388,16 +454,20 @@ if ($process->isRunning()) {
 
 ## Rich Data & Stateful Execution
 
-Hibla Parallel is not limited to scalar return values. Because it uses a full serialization engine, you can pass objects into tasks, return objects from tasks, and access class state from inside parallel closures — all of it crossing the process boundary transparently.
+Hibla Parallel is not limited to scalar return values. Because it uses a full
+serialization engine, you can pass objects into tasks, return objects from
+tasks, and access class state from inside parallel closures — all of it crossing
+the process boundary transparently.
 
-### Returning Value Objects
+### Returning value objects
 
-Any serializable object returned from a worker is reconstructed in the parent with its type, class name, and property values intact:
+Any serializable object returned from a worker is reconstructed in the parent
+with its type, class name, and property values intact:
 ```php
 use App\ValueObjects\TaskResult;
 use function Hibla\{parallel, await};
 
-$result = await(parallel(function() {
+$result = await(parallel(function () {
     return new TaskResult(status: 'success', data: [1, 2, 3]);
 }));
 
@@ -405,9 +475,11 @@ echo get_class($result); // "App\ValueObjects\TaskResult"
 echo $result->status;    // "success"
 ```
 
-### Accessing Class Properties (`$this`)
+### Accessing class properties (`$this`)
 
-When `parallel()` is called inside a class method, the closure can capture `$this`. The worker receives a serialized copy of the object and can read its properties — including private ones:
+When `parallel()` is called inside a class method, the closure can capture
+`$this`. The worker receives a serialized copy of the object and can read its
+properties — including private ones:
 ```php
 namespace App\Services;
 
@@ -428,34 +500,50 @@ $builder = new ReportBuilder();
 echo $builder->buildParallel(); // "Q4 Report (2025)"
 ```
 
-### Two Rules for Object Serialization
+### Two rules for object serialization
 
-1. **Autoloading:** The class definition must be available to the worker via the Composer autoloader or a bootstrap file. If the worker cannot find the class, deserialization will fail.
-2. **No resources:** Objects holding active OS resources (PDO handles, open file pointers, network sockets) cannot cross the process boundary — see [Serialization: Crossing the Process Boundary](#serialization-crossing-the-process-boundary) for the correct pattern.
+1. **Autoloading:** The class definition must be available to the worker via the
+   Composer autoloader or a bootstrap file. If the worker cannot find the class,
+   deserialization will fail.
+2. **No resources:** Objects holding active OS resources (PDO handles, open file
+   pointers, network sockets) cannot cross the process boundary — see
+   [Serialization: Crossing the Process Boundary](#serialization-crossing-the-process-boundary)
+   for the correct pattern.
 
 ---
 
 ## Global Helper Functions
 
-Hibla Parallel exposes four global helpers in the `Hibla` namespace. They are thin wrappers around the facade and are the recommended API for most scripts.
+Hibla Parallel exposes four global helpers in the `Hibla` namespace. They are
+thin wrappers around the facade and are the recommended API for most scripts.
+All four accept an optional `$timeout` argument. For anything beyond a simple
+timeout override — custom memory limits, bootstrap files, or message handlers —
+use the fluent executors directly (see
+[Using `runFn` and `spawnFn` on fluent executors](#using-runfn-and-spawnfn-on-fluent-executors)).
 
 ### `parallel(callable $task, ?int $timeout = null)`
 
-Runs a task in a new process and returns a `Promise` resolving to the task's return value.
+Runs a task in a new process and returns a `Promise` resolving to the task's
+return value.
 ```php
 use function Hibla\{parallel, await};
 
-$result = await(parallel(fn() => expensiveComputation(), timeout: 30));
+$result = await(parallel(function () {
+    return expensiveComputation();
+}, timeout: 30));
 ```
 
 ### `parallelFn(callable $task, ?int $timeout = null)`
 
-Wraps a callable so that each invocation spawns a new parallel process. Useful with higher-order functions like `Promise::map()` or event listeners where you need to pass a callable rather than invoke one directly.
+Wraps a callable and returns a new callable that spawns a fresh parallel process
+on each invocation. Useful with higher-order functions like `Promise::all()` or
+event listeners where you need to pass a callable rather than invoke one
+immediately.
 ```php
 use function Hibla\{parallelFn, await};
 use Hibla\Promise\Promise;
 
-$processItem = parallelFn(function(int $id) {
+$processItem = parallelFn(function (int $id): array {
     return fetchFromDatabase($id);
 });
 
@@ -468,26 +556,30 @@ $results = await(Promise::all([
 
 ### `spawn(callable $task, ?int $timeout = null)`
 
-Spawns a fire-and-forget background process. The returned `Promise` resolves immediately with a `BackgroundProcess` handle. No result is returned to the parent.
+Spawns a fire-and-forget background process. The returned `Promise` resolves
+immediately with a `BackgroundProcess` handle. No result, output, or exception
+is ever returned to the parent.
 ```php
 use function Hibla\{spawn, await};
 
-$process = await(spawn(function() {
+$process = await(spawn(function () {
     generateReport();
 }));
 
 echo $process->getPid();
 echo $process->isRunning() ? 'still running' : 'done';
-$process->terminate();
+
+$process->terminate(); // kill it early if needed
 ```
 
 ### `spawnFn(callable $task, ?int $timeout = null)`
 
-The fire-and-forget equivalent of `parallelFn`. Returns a callable that spawns a new background process on each invocation.
+The fire-and-forget equivalent of `parallelFn`. Returns a callable that spawns
+a new detached background process on each invocation.
 ```php
 use function Hibla\spawnFn;
 
-$sendEmail = spawnFn(function(string $to, string $subject) {
+$sendEmail = spawnFn(function (string $to, string $subject): void {
     mailer()->send($to, $subject);
 });
 
@@ -495,13 +587,129 @@ $sendEmail('alice@example.com', 'Welcome!');
 $sendEmail('bob@example.com', 'Your invoice');
 ```
 
-> **Note:** `emit()` called inside a `spawn()` / `spawnFn()` task is a **silent no-op**. Fire-and-forget workers redirect stdout to `/dev/null`, so structured message passing is unavailable. Use `parallel()` or a pool if you need `emit()`.
+> **Note:** `emit()` called inside a `spawn()` or `spawnFn()` task is a silent
+> no-op. Fire-and-forget workers redirect stdout to `/dev/null`, so structured
+> message passing is unavailable. Use `parallel()` or a pool if you need
+> `emit()`.
+
+### Using `runFn` and `spawnFn` on fluent executors
+
+The global helpers use default configuration. When you need custom timeouts,
+memory limits, a bootstrap file, or message handlers applied consistently to
+every invocation of the factory, use the `->runFn()` and `->spawnFn()` methods
+on the fluent executors instead.
+
+The returned callable behaves identically to calling `->run()` or `->spawn()`
+directly — the only difference is that you get a reusable callable rather than
+an immediate promise.
+
+**`Parallel::task()->runFn()`**
+
+Each invocation spawns a fresh worker with the configured settings:
+```php
+use Hibla\Parallel\Parallel;
+use Hibla\Parallel\ValueObjects\WorkerMessage;
+use Hibla\Promise\Promise;
+use function Hibla\{await, emit};
+
+$processItem = Parallel::task()
+    ->withTimeout(30)
+    ->withMemoryLimit('256M')
+    ->withBootstrap('/path/to/bootstrap.php')
+    ->onMessage(function (WorkerMessage $msg) {
+        printf("Worker %d: %s\n", $msg->pid, $msg->data);
+    })
+    ->runFn(function (int $id): array {
+        emit("Processing $id");
+        return fetchAndTransform($id);
+    });
+
+$results = await(Promise::all([
+    $processItem(1),
+    $processItem(2),
+    $processItem(3),
+]));
+```
+
+`runFn()` accepts a per-invocation message handler as its second argument. It
+fires before the executor-level `onMessage` handler, following the same ordering
+rules described in
+[Pool-Level vs. Per-Task Message Handlers](#pool-level-vs-per-task-message-handlers):
+```php
+$processItem = Parallel::task()
+    ->onMessage(fn($msg) => Log::info('executor-level', [$msg->data]))
+    ->runFn(
+        function (int $id): array {
+            return fetchAndTransform($id);
+        },
+        onMessage: fn($msg) => Log::debug('per-invocation', [$msg->data])
+    );
+```
+
+**`Parallel::pool()->runFn()`**
+
+Tasks are dispatched to the pool's persistent workers rather than spawning a
+fresh process per invocation. Use this when you want both the reuse efficiency
+of a pool and a consistent callable interface for higher-order functions:
+```php
+use Hibla\Parallel\Parallel;
+use Hibla\Promise\Promise;
+use function Hibla\await;
+
+$pool = Parallel::pool(size: 4)
+    ->withTimeout(30)
+    ->withMemoryLimit('256M');
+
+$processItem = $pool->runFn(function (int $id): array {
+    return fetchAndTransform($id);
+});
+
+$results = await(Promise::all(array_map($processItem, $ids)));
+
+$pool->shutdown();
+```
+
+**`Parallel::background()->spawnFn()`**
+
+Each invocation spawns a detached fire-and-forget process with the configured
+settings. The returned promise resolves immediately with a `BackgroundProcess`
+handle, not a task result:
+```php
+use Hibla\Parallel\Parallel;
+use function Hibla\await;
+
+$sendEmail = Parallel::background()
+    ->withTimeout(120)
+    ->withMemoryLimit('128M')
+    ->withBootstrap('/path/to/bootstrap.php')
+    ->spawnFn(function (string $to, string $subject): void {
+        Mailer::send($to, $subject);
+    });
+
+await($sendEmail('alice@example.com', 'Welcome!'));
+await($sendEmail('bob@example.com', 'Invoice'));
+```
+
+> **Note:** `emit()` called inside a `->spawnFn()` task is a silent no-op.
+> Fire-and-forget workers redirect stdout to `/dev/null`, so structured message
+> passing is unavailable. Use `->runFn()` or a pool if you need `emit()`.
+
+**Choosing between global helpers and fluent factories**
+
+Use `parallelFn()` and `spawnFn()` for quick scripts where the defaults are
+acceptable. Use `->runFn()` and `->spawnFn()` on the fluent executors whenever
+you need consistent configuration, message handlers, or bootstrap logic applied
+to every invocation — or when working with a pool and want to avoid constructing
+a new executor on each call.
 
 ---
 
 ## Persistent Worker Pools
 
-Worker pools maintain a fixed set of long-lived workers to eliminate the overhead of repeated process spawning and framework bootstrapping. Each worker handles multiple tasks sequentially, making pools ideal for high-throughput workloads.
+Worker pools maintain a fixed set of long-lived workers to eliminate the
+overhead of repeated process spawning and framework bootstrapping. Each worker
+handles multiple tasks sequentially, making pools ideal for high-throughput
+workloads.
 ```php
 use Hibla\Parallel\Parallel;
 use function Hibla\await;
@@ -529,29 +737,65 @@ $pool->shutdown();
 // await($pool->shutdownAsync());
 ```
 
+### Automatic garbage collection between tasks
+
+After every completed task, before writing the next `READY` frame, each
+persistent worker automatically calls `gc_collect_cycles()` to collect any
+reference cycles left behind by the task. This runs unconditionally regardless
+of any other configuration and provides a baseline level of memory hygiene at
+no cost to the caller.
+
+For most workloads this is sufficient. If a task leaves behind significant heap
+allocations, large static caches, or framework state that the garbage collector
+cannot reclaim — which `gc_collect_cycles()` alone cannot address — use
+`withMaxExecutionsPerWorker()` to retire and replace workers at a predictable
+cadence.
+
 ### Why `withMaxExecutionsPerWorker`?
 
-Long-running pools accumulate memory over time. PHP's OPcache grows, framework static caches fill up, and each task may leave behind residual heap allocations. By retiring a worker after N tasks and replacing it with a fresh one, you get a clean memory slate at a predictable cadence — important for pools that run for hours or days.
+Long-running pools can accumulate memory over time even with cycle collection
+in place. PHP's OPcache grows, framework static caches fill up, and residual
+heap allocations may persist across tasks. By retiring a worker after N tasks
+and replacing it with a fresh process, you get a fully clean memory slate at a
+predictable cadence — important for pools that run for hours or days.
 
 ### Lazy vs. Eager Spawning
 
-By default, pools spawn all workers **eagerly** at construction time. Workers are immediately ready for the first task with zero dispatch latency, and bootstrap errors surface at construction rather than silently on first use.
+By default, pools spawn all workers eagerly at construction time. Workers are
+immediately ready for the first task with zero dispatch latency, and bootstrap
+errors surface at construction rather than silently on first use.
 
-Use **lazy spawning** when the pool is conditional or short-lived and workers may never be needed:
+Use lazy spawning when the pool is conditional or short-lived and workers may
+never be needed:
 ```php
 $pool = Parallel::pool(size: 4)
     ->withLazySpawning();
 ```
 
-The trade-off: the first batch of tasks will incur worker boot latency (~50–100ms per worker), and bootstrap errors surface on first task submission rather than at construction.
+The trade-off: the first batch of tasks will incur worker boot latency
+(~50–100ms per worker), and bootstrap errors surface on first task submission
+rather than at construction.
+
+---
 
 ## Self-Healing & Supervisor Pattern
 
 Build Erlang-style supervised clusters. If a worker crashes for any reason —
 segfault, out-of-memory kill, or an explicit `exit()` — Hibla detects the
 death, immediately spawns a replacement worker to maintain pool capacity, and
-fires the `onWorkerRespawn` hook so you can re-submit whatever that worker
-was doing.
+fires the `onWorkerRespawn` hook so you can re-submit whatever that worker was
+doing.
+
+**`onWorkerRespawn` fires on both crashes and planned retirements.**
+
+When a worker reaches its `withMaxExecutionsPerWorker()` limit it exits cleanly
+with a RETIRING frame rather than a crash signal, but the pool treats both
+events identically from the caller's perspective: a replacement worker is
+spawned and `onWorkerRespawn` is called. This means any long-running task that
+was running on a retiring worker needs to be re-submitted in the hook just as
+it would after a crash. If you use `withMaxExecutionsPerWorker()` without an
+`onWorkerRespawn` handler, long-running tasks submitted to that worker will not
+be re-submitted on retirement.
 
 The pattern is three lines:
 ```php
@@ -561,19 +805,19 @@ use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 $pool = Parallel::pool(size: 4)
     ->withoutTimeout() // long-running workers must not have a timeout
     ->onWorkerRespawn(function (ProcessPoolInterface $pool) use ($serverTask) {
-        // Fired every time a worker dies and its replacement is ready.
-        // Re-submit your long-running task to the new worker here.
+        // Fired every time a worker exits — whether from a crash or a planned
+        // retirement via withMaxExecutionsPerWorker(). Re-submit your
+        // long-running task to the replacement worker here.
         $pool->run($serverTask);
     });
 ```
 
 ### Complete example: chaos server
 
-The following example makes the supervisor behavior directly observable.
-Each worker binds to port 8080 via `SO_REUSEPORT` and serves HTTP requests.
-The `/crash` route lets you trigger a controlled worker crash from the
-browser and watch the master detect and recover from it in the terminal
-in real time.
+The following example makes the supervisor behavior directly observable. Each
+worker binds to port 8080 via `SO_REUSEPORT` and serves HTTP requests. The
+`/crash` route lets you trigger a controlled worker crash from the browser and
+watch the master detect and recover from it in the terminal in real time.
 ```php
 <?php
 
@@ -661,9 +905,9 @@ $poolSize = 4;
 $pool = Parallel::pool(size: $poolSize)
     ->withoutTimeout() // server workers run indefinitely — no timeout
     ->onWorkerRespawn(function (ProcessPoolInterface $pool) use ($serverTask) {
-        // A worker crashed or was killed. The pool has already spawned a
+        // A worker crashed or retired. The pool has already spawned a
         // replacement — re-submit the server task to put it to work.
-        echo "\n[Master] ALERT: Worker process died! Triggering onWorkerRespawn hook...\n";
+        echo "\n[Master] ALERT: Worker process exited! Triggering onWorkerRespawn hook...\n";
         echo "[Master] Re-submitting Socket Server Task to the replacement worker.\n\n";
 
         $pool->run($serverTask);
@@ -677,12 +921,12 @@ for ($i = 0; $i < $poolSize; $i++) {
     // When a worker crashes its in-flight promise rejects with that exception —
     // it is expected and already handled by onWorkerRespawn above, so there
     // is nothing to act on here at the call site.
-    $pool->run($serverTask)->catch(fn (ProcessCrashException $e) => null);
+    $pool->run($serverTask)->catch(fn (ProcessCrashedException $e) => null);
 }
 ```
 
-Run it for example `php chaos_server.php` and visit `http://127.0.0.1:8080/crash` in a browser to trigger a
-crash. The terminal output shows the full lifecycle:
+Run it with `php chaos_server.php` and visit `http://127.0.0.1:8080/crash` in
+a browser to trigger a crash. The terminal output shows the full lifecycle:
 ```
 --- Hibla Parallel: Chaos Web Server Test ---
 [Master PID: 6309] Supervising 4 workers...
@@ -694,36 +938,235 @@ crash. The terminal output shows the full lifecycle:
 
 [Worker 6315] Received suicide command! Crashing now...
 
-[Master] ALERT: Worker process died! Triggering onWorkerRespawn hook...
+[Master] ALERT: Worker process exited! Triggering onWorkerRespawn hook...
 [Master] Re-submitting Socket Server Task to the replacement worker.
 
 [Worker 6406] Started listening on 8080
-
-[Worker 6406] Received suicide command! Crashing now...
-
-[Master] ALERT: Worker process died! Triggering onWorkerRespawn hook...
-[Master] Re-submitting Socket Server Task to the replacement worker.
-
-[Worker 6453] Started listening on 8080
 ```
 
 Three things to observe in this output:
 
-The master PID never changes — `6309` supervises the entire session. It is
-not affected by any worker crash.
+The master PID never changes — `6309` supervises the entire session. It is not
+affected by any worker crash or retirement.
 
-Every crash is followed immediately by a new worker PID coming online. The
-pool never drops below 4 listening workers. From the perspective of any
-HTTP client hitting port 8080, the cluster is healthy throughout.
+Every exit is followed immediately by a new worker PID coming online. The pool
+never drops below 4 listening workers. From the perspective of any HTTP client
+hitting port 8080, the cluster is healthy throughout.
 
-You can hit `/crash` as many times as you like. The cluster recovers every
-time with no manual intervention and no restart of the master process.
+You can hit `/crash` as many times as you like. The cluster recovers every time
+with no manual intervention and no restart of the master process.
+
+---
+
+## Pool Monitoring
+
+Inspect a live pool to understand its current state. Useful for health checks,
+dashboards, and debugging.
+```php
+use Hibla\Parallel\Parallel;
+
+$pool = Parallel::pool(size: 4);
+
+// Number of worker processes currently alive
+echo $pool->getWorkerCount(); // 4
+
+// OS-level PIDs as self-reported by workers via the READY frame —
+// matches getmypid() inside worker tasks on all platforms
+$pids = $pool->getWorkerPids(); // [12345, 12346, 12347, 12348]
+echo implode(', ', $pids);
+
+$pool->shutdown();
+```
+
+---
+
+## Real-time Output & Messaging
+
+### Console Streaming
+
+Everything printed inside a worker using `echo`, `print`, or any function that
+writes through PHP's output buffer is captured and streamed to the parent
+console in real time via non-blocking frames:
+```php
+use function Hibla\parallel;
+
+parallel(function () {
+    echo "Starting process...\n";
+    sleep(1);
+    echo "50% complete...\n";
+    sleep(1);
+    echo "Finished!\n";
+});
+// Parent sees each line as it is printed
+```
+
+**Direct writes to `STDOUT` are not captured.**
+
+Hibla intercepts output by installing an output buffer handler (`ob_start`)
+inside the worker. That handler only captures what flows through PHP's output
+buffering layer — `echo`, `print`, `printf`, `var_dump`, `print_r`, and similar
+functions all go through it. Calls that bypass the buffer and write directly to
+the file descriptor — `fwrite(STDOUT, ...)`, `fputs(STDOUT, ...)` — are not
+intercepted and will not reach the parent.
+```php
+use function Hibla\parallel;
+
+parallel(function () {
+    // Will not reach the parent — bypasses the output buffer entirely
+    fwrite(STDOUT, "progress update\n");
+
+    // Will reach the parent — goes through the output buffer
+    echo "progress update\n";
+});
+```
+
+If you need to send structured data back to the parent rather than raw console
+output, use `emit()` with an `onMessage` handler instead:
+```php
+use Hibla\Parallel\Parallel;
+use function Hibla\emit;
+
+Parallel::task()
+    ->onMessage(function ($msg) {
+        echo "Worker says: {$msg->data}\n";
+    })
+    ->run(function () {
+        emit("progress update");
+    });
+```
+
+See [Structured Messaging with `emit()`](#structured-messaging-with-emit) for
+the full messaging API.
+
+### Structured Messaging with `emit()`
+
+Use `emit()` to send structured data back to the parent without finishing the
+task. The parent receives a `WorkerMessage` object with `$msg->data` containing
+the emitted value and `$msg->pid` containing the worker's process ID.
+
+`emit()` supports any serializable PHP value — scalars, arrays, and objects all
+cross the process boundary transparently. This means you can emit typed value
+objects and use `instanceof` checks in your `onMessage` handler to branch on
+message type, giving you a clean and expressive messaging protocol without
+string-based type flags:
+```php
+use Hibla\Parallel\Parallel;
+use App\Messages\ProgressUpdate;
+use App\Messages\ValidationError;
+use App\Messages\StageComplete;
+use function Hibla\emit;
+
+Parallel::task()
+    ->onMessage(function ($msg) {
+        if ($msg->data instanceof ProgressUpdate) {
+            printf("Worker %d: %d%% complete\n", $msg->pid, $msg->data->percent);
+        } elseif ($msg->data instanceof ValidationError) {
+            printf("Validation failed on row %d: %s\n", $msg->data->row, $msg->data->reason);
+        } elseif ($msg->data instanceof StageComplete) {
+            printf("Stage '%s' finished in %.2fs\n", $msg->data->name, $msg->data->duration);
+        }
+    })
+    ->run(function () {
+        emit(new ProgressUpdate(percent: 25));
+
+        foreach (loadRows() as $i => $row) {
+            if (! validate($row)) {
+                emit(new ValidationError(row: $i, reason: 'missing required field'));
+                continue;
+            }
+            process($row);
+        }
+
+        emit(new StageComplete(name: 'processing', duration: 1.42));
+        emit(new ProgressUpdate(percent: 100));
+    });
+```
+
+For this to work, the message classes must be autoloaded in both the worker and
+the parent — define them in your application's namespace and let Composer handle
+the rest.
+
+> **Note:** Calling `emit()` inside a fire-and-forget worker spawned via
+> `spawn()` or `spawnFn()` is a silent no-op. Those workers redirect stdout to
+> `/dev/null`, so message passing is unavailable. Use `parallel()` or a pool if
+> you need `emit()`.
+
+### Pool-Level vs. Per-Task Message Handlers
+
+You can register message handlers at two levels. They compose without conflict
+— the per-task handler fires first, followed by the pool-level handler, and
+both run concurrently as async fibers:
+```php
+$pool = Parallel::pool(size: 4)
+    ->onMessage(function ($msg) {
+        // Pool-level handler — fires for every task's messages.
+        // Use this for cross-cutting concerns: logging, metrics, dashboards.
+        Logger::info("Worker {$msg->pid} emitted", ['data' => $msg->data]);
+    });
+
+$pool->run(
+    function () {
+        Hibla\emit(new ProgressUpdate(percent: 50));
+        Hibla\emit(new ProgressUpdate(percent: 100));
+    },
+    onMessage: function ($msg) {
+        // Per-task handler — fires only for this task's messages, before pool-level.
+        if ($msg->data instanceof ProgressUpdate) {
+            echo "This task is {$msg->data->percent}% done\n";
+        }
+    }
+);
+
+$pool->shutdown();
+```
+
+The same two-level composition is available on `Parallel::task()` using
+`->onMessage()` for the executor level and the second argument to `->run()`
+for the per-task level.
+
+### Handler completion blocks task promise resolution
+
+The parent does not resolve the task promise — and therefore does not return
+from `await(parallel(...))` — until every registered `onMessage` handler has
+finished executing. All handlers start concurrently as async fibers, so the
+total wall-clock cost equals the slowest handler, not the sum of all handlers.
+But if any single handler does slow I/O, a blocking database write, or a
+long-running computation, it delays the parent receiving the task result even
+if the worker itself finished long ago.
+```php
+// This handler delays every task result by at least 2 seconds,
+// regardless of how fast the worker finished.
+$pool = Parallel::pool(size: 4)
+    ->onMessage(function ($msg) {
+        sleep(2); // blocks the fiber — parent waits here before resolving
+    });
+```
+
+Keep `onMessage` handlers fast. If you need to do slow work in response to a
+message — writing to a database, calling an external API — dispatch it as a
+background task from inside the handler rather than doing it inline:
+```php
+$pool = Parallel::pool(size: 4)
+    ->onMessage(function ($msg) {
+        // Dispatches the slow work and returns immediately.
+        // The handler fiber completes without waiting for the write.
+        spawn(function () use ($msg) {
+            Database::insertMetric($msg->data);
+        });
+    });
+```
+
+---
 
 ## Fractal Concurrency: The Async Hybrid
 
-Hibla Parallel provides a unified concurrency model. While `async/await` handles non-blocking I/O, `parallel()` offloads **actual blocking PHP functions** (like `sleep()`, legacy database drivers, or CPU-heavy work) to separate processes.
+Hibla Parallel provides a unified concurrency model. While `async/await` handles
+non-blocking I/O, `parallel()` offloads actual blocking PHP functions (like
+`sleep()`, legacy database drivers, or CPU-heavy work) to separate processes.
 
-Because every worker is a "Smart Worker" with its own event loop, you can mix these models recursively until the maximum process nesting limit. The following block finishes in exactly 1 second:
+Because every worker is a smart worker with its own event loop, you can mix
+these models recursively until the maximum process nesting limit. The following
+block finishes in exactly 1 second:
 ```php
 use Hibla\Promise\Promise;
 use function Hibla\{parallel, async, await, delay};
@@ -753,252 +1196,108 @@ echo "Executed ~4 seconds of work in: {$duration} seconds!";
 
 ---
 
-## Framework Bootstrapping
+## Nested Execution & Safety
 
-Load Laravel, Symfony, or any custom environment inside your workers.
+Workers are real OS processes and each one can itself call `parallel()`,
+`spawn()`, or any `Parallel::` executor to spawn further child processes. Hibla
+enforces a configurable nesting limit (default 5) to prevent runaway recursive
+spawning — a fork bomb — from exhausting system resources.
+
+### The nested closure problem
+
+Hibla serializes closures using
+[opis/closure](https://github.com/opis/closure), which locates a closure by
+its **line number** in the source file. When two `parallel()` calls share the
+same source line, the serializer extracts the outer closure instead of the inner
+one. The child worker deserializes and runs the outer call — spawning another
+outer process — which does the same thing again indefinitely. This is a fork
+bomb.
+
+Beyond the fork bomb risk, short closures (`fn() => ...`) implicitly capture
+the **entire parent scope by value**. In a large application this can silently
+serialize megabytes of unintended data into the task payload.
+
+Hibla automatically detects the most dangerous patterns and throws a
+`TaskPayloadException` before any process is spawned. The examples below show
+what to avoid and what to use instead, ordered from most dangerous to safest.
+
+### Closure safety levels
+
+**DANGEROUS — single-line nested short closures**
+
+The serializer sees one line, extracts the outer closure, and the worker
+re-spawns the outer call infinitely:
 ```php
-use Hibla\Parallel\Parallel;
-
-// Laravel example
-$pool = Parallel::pool(8)
-    ->withBootstrap(__DIR__ . '/bootstrap/app.php', function(string $file) {
-        $app = require $file;
-        $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-    });
-
-$pool->run(fn() => config('app.name'));
-```
-```php
-// Symfony example
-$pool = Parallel::pool(8)
-    ->withBootstrap(__DIR__ . '/config/bootstrap.php', function(string $file) {
-        require $file;
-    });
-```
-
-You can also set a system-wide default bootstrap so every task uses it automatically — see [Global Configuration](#global-configuration).
-
----
-
-## Autoloading & Code Availability
-
-Hibla workers run in isolated PHP processes with a clean slate. Any code you want to execute in a worker must be available to that process.
-
-### Use Namespaces & Autoloading
-
-The most reliable approach is to manage all classes and functions through Composer's autoloader:
-```php
-use App\Tasks\HeavyTask;
-
-parallel([HeavyTask::class, 'run']);
+parallel(fn() => await(parallel(fn() => doWork())));
+spawn(fn() => await(spawn(fn() => doWork())));
 ```
 
-### Named Functions vs. Closures
+**RISKY — multi-line nested short closures**
 
-Named functions (string callables like `'App\Tasks\myFunction'`) must exist in the worker via the autoloader or a bootstrap file. Closures are serialized by Hibla and transmitted to the worker — no autoloading is needed for the closure code itself, but any classes or functions called inside it must still be available.
+Splitting across lines avoids AST corruption, but `fn()` still captures the
+entire parent scope. Auto-formatters (Pint, PHP-CS-Fixer) may also collapse
+multi-line short closures back to one line on the next run:
 ```php
-// Works without autoloader — the closure body is serialized and sent to the worker
-parallel(function() {
-    return "I am self-contained logic";
-});
-```
-
-### Manual Bootstrapping for Legacy Code
-
-For legacy functions or global state that lives outside Composer's autoloader:
-```php
-use Hibla\Parallel\Parallel;
-
-$pool = Parallel::pool(4)
-    ->withBootstrap(__DIR__ . '/includes/legacy_functions.php');
-
-$pool->run(fn() => legacy_calculate());
-$pool->shutdown();
-```
-
----
-
-## Global Configuration
-
-Create a `hibla_parallel.php` in your project root to set system-wide defaults. Every value can be overridden per-task or per-pool using the fluent API.
-
-The quickest way to get started is to publish the pre-commented config file directly from the package:
-```bash
-cp vendor/hiblaphp/parallel/hibla_parallel.php hibla_parallel.php
-```
-
-Then open the file and adjust the values for your environment. Alternatively, create it from scratch:
-```php
-// hibla_parallel.php
-use function Rcalicdan\env;
-
-return [
-    /*
-    |--------------------------------------------------------------------------
-    | Maximum Nesting Level
-    |--------------------------------------------------------------------------
-    | The maximum number of parallel() calls that can be nested inside each
-    | other. Acts as a fork-bomb safety valve.
-    |
-    | .env variable: HIBLA_PARALLEL_MAX_NESTING_LEVEL
-    */
-    'max_nesting_level' => env('HIBLA_PARALLEL_MAX_NESTING_LEVEL', 5),
-
-    /*
-    |--------------------------------------------------------------------------
-    | Standard Process Settings (parallel() / Parallel::task() / Parallel::pool())
-    |--------------------------------------------------------------------------
-    | .env variables:
-    |   HIBLA_PARALLEL_PROCESS_MEMORY_LIMIT
-    |   HIBLA_PARALLEL_PROCESS_TIMEOUT
-    */
-    'process' => [
-        'memory_limit' => env('HIBLA_PARALLEL_PROCESS_MEMORY_LIMIT', '512M'),
-        'timeout' => env('HIBLA_PARALLEL_PROCESS_TIMEOUT', 60),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Background Process Settings (spawn() / Parallel::background())
-    |--------------------------------------------------------------------------
-    | 'spawn_limit_per_second': Prevents fork bombs by capping how many
-    |   background tasks can be spawned per second. Default is 50.
-    |
-    | .env variables:
-    |   HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT
-    |   HIBLA_PARALLEL_BACKGROUND_PROCESS_TIMEOUT
-    |   HIBLA_PARALLEL_BACKGROUND_SPAWN_LIMIT
-    */
-    'background_process' => [
-        'memory_limit' => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT', '512M'),
-        'timeout' => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_TIMEOUT', 600),
-        'spawn_limit_per_second' => env('HIBLA_PARALLEL_BACKGROUND_SPAWN_LIMIT', 50, true),
-    ],
-
-    /*
-    |--------------------------------------------------------------------------
-    | Framework Bootstrap Configuration
-    |--------------------------------------------------------------------------
-    | Set a default bootstrap so every worker automatically loads your
-    | framework without calling withBootstrap() on every executor.
-    |
-    | Laravel example:
-    | 'bootstrap' => [
-    |     'file' => __DIR__ . '/bootstrap/app.php',
-    |     'callback' => function(string $bootstrapFile) {
-    |         $app = require $bootstrapFile;
-    |         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
-    |     },
-    | ],
-    |
-    | Symfony example:
-    | 'bootstrap' => [
-    |     'file'     => __DIR__ . '/config/bootstrap.php',
-    |     'callback' => function(string $bootstrapFile) {
-    |         require $bootstrapFile;
-    |     },
-    | ],
-    */
-    'bootstrap' => null,
-];
-```
-
----
-
-## Real-time Output & Messaging
-
-### Console Streaming
-
-Everything printed inside a worker is streamed to the parent console instantly via non-blocking buffers:
-```php
-use function Hibla\parallel;
-
-parallel(function() {
-    echo "Starting process...\n";
-    sleep(1);
-    echo "50% complete...\n";
-    sleep(1);
-    echo "Finished!\n";
-});
-// Parent sees messages in real-time as they are printed
-```
-
-### Structured Messaging with `emit()`
-
-Use `emit()` to send structured data back to the parent without finishing the task. The parent receives a `WorkerMessage` object with `$msg->data` containing the emitted value and `$msg->pid` containing the worker's process ID.
-
-`emit()` supports any serializable PHP value — scalars, arrays, and objects all cross the process boundary transparently. This means you can emit typed value objects and use `instanceof` checks in your `onMessage` handler to branch on message type, giving you a clean and expressive messaging protocol without string-based type flags:
-```php
-use Hibla\Parallel\Parallel;
-use App\Messages\ProgressUpdate;
-use App\Messages\ValidationError;
-use App\Messages\StageComplete;
-use function Hibla\emit;
-
-$executor = Parallel::task()
-    ->onMessage(function($msg) {
-        if ($msg->data instanceof ProgressUpdate) {
-            printf("Worker %d: %d%% complete\n", $msg->pid, $msg->data->percent);
-        } elseif ($msg->data instanceof ValidationError) {
-            printf("Validation failed on row %d: %s\n", $msg->data->row, $msg->data->reason);
-        } elseif ($msg->data instanceof StageComplete) {
-            printf("Stage '%s' finished in %.2fs\n", $msg->data->name, $msg->data->duration);
-        }
-    })
-    ->run(function() {
-        emit(new ProgressUpdate(percent: 25));
-
-        foreach (loadRows() as $i => $row) {
-            if (! validate($row)) {
-                emit(new ValidationError(row: $i, reason: 'missing required field'));
-                continue;
-            }
-            process($row);
-        }
-
-        emit(new StageComplete(name: 'processing', duration: 1.42));
-        emit(new ProgressUpdate(percent: 100));
-    });
-```
-
-For this to work, the message classes must be autoloaded in both the worker and the parent — define them in your application's namespace and let Composer handle the rest.
-
-> **Important:** Calling `emit()` inside a fire-and-forget worker spawned via `spawn()` or `spawnFn()` is a **silent no-op**. Those workers redirect stdout to `/dev/null`, so message passing is unavailable. Use `parallel()` or a pool if you need `emit()`.
-
-### Pool-Level vs. Per-Task Message Handlers
-
-You can register message handlers at two levels. They compose without conflict — the per-task handler fires first, followed by the pool-level handler, and both run concurrently as async fibers:
-```php
-$pool = Parallel::pool(size: 4)
-    ->onMessage(function($msg) {
-        // Pool-level handler — fires for every task's messages.
-        // Use this for cross-cutting concerns: logging, metrics, dashboards.
-        Logger::info("Worker {$msg->pid} emitted", ['data' => $msg->data]);
-    });
-
-$pool->run(
-    function() {
-        Hibla\emit(new ProgressUpdate(percent: 50));
-        Hibla\emit(new ProgressUpdate(percent: 100));
-    },
-    onMessage: function($msg) {
-        // Per-task handler — fires only for this task's messages, before pool-level.
-        if ($msg->data instanceof ProgressUpdate) {
-            echo "This task is {$msg->data->percent}% done\n";
-        }
-    }
+parallel(
+    fn() => await(
+        parallel(
+            fn() => doWork()
+        )
+    )
 );
-
-$pool->shutdown();
 ```
 
-The same two-level composition is available on `Parallel::task()` using `->onMessage()` for the executor level and the second argument to `->run()` for the per-task level.
+**SAFER — regular closures with explicit `use`**
+
+Only the variables you name are serialized. Nothing implicit, nothing surprising:
+```php
+parallel(function () {
+    return await(parallel(function () {
+        return doWork();
+    }));
+});
+```
+
+**SAFEST — non-closure callables (recommended for all nested tasks)**
+
+Nothing to serialize beyond the class or function name. No AST parsing, no
+scope capture. Classes and functions must be available via Composer autoloading:
+```php
+parallel([MyTask::class, 'run']);           // static method
+parallel([new MyTask($id), 'execute']);     // instance method
+parallel(new MyInvokableTask($id));         // __invoke class
+parallel('App\Tasks\processItem');          // namespaced function
+```
+
+### Always `await()` nested calls
+
+Always `await()` the result of a nested `parallel()` or `spawn()` call inside
+a worker. An un-awaited nested task may be killed by the OS if the parent
+worker exits first, and nesting limit enforcement depends on the promise being
+tracked.
+
+### Configuring the nesting limit
+
+The default of 5 is sufficient for virtually all real workloads. If you
+genuinely need deeper nesting, raise it per-executor or globally in config.
+The hard ceiling is 10:
+```php
+// Per-executor
+Parallel::task()
+    ->withMaxNestingLevel(8)
+    ->run(fn() => deeplyNestedWork());
+
+// Global — hibla_parallel.php
+'max_nesting_level' => 8,
+```
 
 ---
 
 ## Distributed Exception Teleportation
 
-Hibla Parallel "teleports" exceptions from workers back to the parent. It re-instantiates the original exception type and **merges stack traces** so you see exactly where the error originated.
+Hibla Parallel teleports exceptions from workers back to the parent. It
+re-instantiates the original exception type and merges stack traces so you see
+exactly where the error originated:
 ```php
 use function Hibla\{parallel, await};
 
@@ -1021,7 +1320,9 @@ try {
 
 ## Abnormal Termination Detection
 
-If a worker hits a segmentation fault, runs out of memory, or calls `exit()`, Hibla Parallel detects the silent death and rejects the promise with a `ProcessCrashedException`.
+If a worker hits a segmentation fault, runs out of memory, or calls `exit()`,
+Hibla Parallel detects the silent death and rejects the promise with a
+`ProcessCrashedException`:
 ```php
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use function Hibla\{parallel, await};
@@ -1037,7 +1338,8 @@ try {
 
 ## Task Cancellation & Management
 
-Cancelling a task promise forcefully kills the underlying OS process and, for pools, immediately respawns a replacement worker to maintain capacity.
+Cancelling a task promise forcefully kills the underlying OS process and, for
+pools, immediately respawns a replacement worker to maintain capacity.
 ```php
 use Hibla\Parallel\Parallel;
 
@@ -1052,32 +1354,29 @@ $promise->cancel();
 $pool->shutdown();
 ```
 
----
+**Cancellation in a pool kills the entire worker, not just the task.**
 
-## Pool Monitoring
+When you cancel a task promise, Hibla terminates the entire worker process for
+that slot — not just the in-flight task. The cancelled task is killed immediately
+and the worker process is torn down. A fresh replacement worker is spawned to
+restore pool capacity, and any tasks still waiting in the pool's global queue
+are dispatched to workers as normal — they are not affected by the cancellation.
 
-Inspect a live pool to understand its current state. Useful for health checks, dashboards, and debugging.
-```php
-use Hibla\Parallel\Parallel;
+The distinction matters for one specific case: if the cancelled task was
+mid-execution and the worker held any state that other code depended on, that
+state is gone with the process. The cancellation blast radius is one worker slot
+and its single in-flight task — nothing wider.
 
-$pool = Parallel::pool(size: 4);
-
-// Number of worker processes currently alive
-echo $pool->getWorkerCount(); // 4
-
-// OS-level PIDs as self-reported by workers via the READY frame —
-// matches getmypid() inside worker tasks on all platforms
-$pids = $pool->getWorkerPids(); // [12345, 12346, 12347, 12348]
-echo implode(', ', $pids);
-
-$pool->shutdown();
-```
+For one-off tasks spawned via `Parallel::task()`, cancellation only kills that
+single worker process and has no wider effect.
 
 ---
 
 ## Exception Reference
 
-All exceptions extend `Hibla\Parallel\Exceptions\ParallelException`, which extends `\RuntimeException`. Catch the base class to handle any Hibla-specific error generically, or catch specific types for granular handling.
+All exceptions extend `Hibla\Parallel\Exceptions\ParallelException`, which
+extends `\RuntimeException`. Catch the base class to handle any Hibla-specific
+error generically, or catch specific types for granular handling.
 
 | Exception Class | When it is thrown |
 | :--- | :--- |
@@ -1109,9 +1408,173 @@ try {
 
 ---
 
+## Framework Bootstrapping
+
+Load Laravel, Symfony, or any custom environment inside your workers:
+```php
+use Hibla\Parallel\Parallel;
+
+// Laravel example
+$pool = Parallel::pool(8)
+    ->withBootstrap(__DIR__ . '/bootstrap/app.php', function (string $file) {
+        $app = require $file;
+        $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    });
+
+$pool->run(fn() => config('app.name'));
+```
+```php
+// Symfony example
+$pool = Parallel::pool(8)
+    ->withBootstrap(__DIR__ . '/config/bootstrap.php', function (string $file) {
+        require $file;
+    });
+```
+
+You can also set a system-wide default bootstrap so every task uses it
+automatically — see [Global Configuration](#global-configuration).
+
+---
+
+## Autoloading & Code Availability
+
+Hibla workers run in isolated PHP processes with a clean slate. Any code you
+want to execute in a worker must be available to that process.
+
+### Use namespaces and autoloading
+
+The most reliable approach is to manage all classes and functions through
+Composer's autoloader:
+```php
+use App\Tasks\HeavyTask;
+
+parallel([HeavyTask::class, 'run']);
+```
+
+### Named functions vs. closures
+
+Named functions (string callables like `'App\Tasks\myFunction'`) must exist in
+the worker via the autoloader or a bootstrap file. Closures are serialized by
+Hibla and transmitted to the worker — no autoloading is needed for the closure
+code itself, but any classes or functions called inside it must still be
+available:
+```php
+// Works without autoloader — the closure body is serialized and sent to the worker
+parallel(function () {
+    return "I am self-contained logic";
+});
+```
+
+### Manual bootstrapping for legacy code
+
+For legacy functions or global state that lives outside Composer's autoloader:
+```php
+use Hibla\Parallel\Parallel;
+
+$pool = Parallel::pool(4)
+    ->withBootstrap(__DIR__ . '/includes/legacy_functions.php');
+
+$pool->run(fn() => legacy_calculate());
+$pool->shutdown();
+```
+
+---
+
+## Global Configuration
+
+Create a `hibla_parallel.php` in your project root to set system-wide defaults.
+Every value can be overridden per-task or per-pool using the fluent API.
+
+The quickest way to get started is to publish the pre-commented config file
+directly from the package:
+```bash
+cp vendor/hiblaphp/parallel/hibla_parallel.php hibla_parallel.php
+```
+
+Then open the file and adjust the values for your environment. Alternatively,
+create it from scratch:
+```php
+// hibla_parallel.php
+use function Rcalicdan\env;
+
+return [
+    /*
+    |--------------------------------------------------------------------------
+    | Maximum Nesting Level
+    |--------------------------------------------------------------------------
+    | The maximum number of parallel() calls that can be nested inside each
+    | other. Acts as a fork-bomb safety valve.
+    |
+    | .env variable: HIBLA_PARALLEL_MAX_NESTING_LEVEL
+    */
+    'max_nesting_level' => env('HIBLA_PARALLEL_MAX_NESTING_LEVEL', 5),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Standard Process Settings (parallel() / Parallel::task() / Parallel::pool())
+    |--------------------------------------------------------------------------
+    | .env variables:
+    |   HIBLA_PARALLEL_PROCESS_MEMORY_LIMIT
+    |   HIBLA_PARALLEL_PROCESS_TIMEOUT
+    */
+    'process' => [
+        'memory_limit' => env('HIBLA_PARALLEL_PROCESS_MEMORY_LIMIT', '512M'),
+        'timeout'      => env('HIBLA_PARALLEL_PROCESS_TIMEOUT', 60),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Background Process Settings (spawn() / Parallel::background())
+    |--------------------------------------------------------------------------
+    | 'spawn_limit_per_second': Prevents fork bombs by capping how many
+    |   background tasks can be spawned per second. Default is 50.
+    |
+    | .env variables:
+    |   HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT
+    |   HIBLA_PARALLEL_BACKGROUND_PROCESS_TIMEOUT
+    |   HIBLA_PARALLEL_BACKGROUND_SPAWN_LIMIT
+    */
+    'background_process' => [
+        'memory_limit'          => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT', '512M'),
+        'timeout'               => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_TIMEOUT', 600),
+        'spawn_limit_per_second' => env('HIBLA_PARALLEL_BACKGROUND_SPAWN_LIMIT', 50, true),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Framework Bootstrap Configuration
+    |--------------------------------------------------------------------------
+    | Set a default bootstrap so every worker automatically loads your
+    | framework without calling withBootstrap() on every executor.
+    |
+    | Laravel example:
+    | 'bootstrap' => [
+    |     'file'     => __DIR__ . '/bootstrap/app.php',
+    |     'callback' => function(string $bootstrapFile) {
+    |         $app = require $bootstrapFile;
+    |         $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+    |     },
+    | ],
+    |
+    | Symfony example:
+    | 'bootstrap' => [
+    |     'file'     => __DIR__ . '/config/bootstrap.php',
+    |     'callback' => function(string $bootstrapFile) {
+    |         require $bootstrapFile;
+    |     },
+    | ],
+    */
+    'bootstrap' => null,
+];
+```
+
+---
+
 ## Architecture & Testability
 
-Hibla Parallel is designed with testability in mind. The `Parallel` facade provides a clean entry point to three independent strategies, each backed by a dedicated interface and a concrete implementation.
+Hibla Parallel is designed with testability in mind. The `Parallel` facade
+provides a clean entry point to three independent strategies, each backed by a
+dedicated interface and a concrete implementation.
 
 ### Strategy Map
 
