@@ -217,7 +217,7 @@ describe('Parallel Feature Test', function () {
             $pool->run(fn() => getmypid()),
         ]));
 
-        await(delay(0.1));
+        await(delay(1));
 
         $initialPids = $pool->getWorkerPids();
         sort($initialPids);
