@@ -1175,20 +1175,37 @@ Hibla Parallel provides a unified concurrency model. While `async/await` handles
 non-blocking I/O, `parallel()` offloads actual blocking PHP functions (like
 `sleep()`, legacy database drivers, or CPU-heavy work) to separate processes.
 
-Because every worker is a smart worker with its own event loop, you can mix
-these models recursively until the maximum process nesting limit. The following
-block finishes in exactly 1 second:
+This is not limited to the `parallel()` helper. Every execution strategy —
+`Parallel::task()`, `Parallel::pool()`, `Parallel::background()`, and their
+`runFn`/`spawnFn` factory variants — participates in the same model. You can
+freely mix pool tasks, one-off tasks, background spawns, and fiber-based async
+work in a single `Promise::all()` and they all run concurrently, each
+contributing its result when ready.
+
+Because every worker is a smart worker with its own event loop, you can also
+mix these models recursively until the maximum process nesting limit — a worker
+can itself spawn further parallel tasks or run async fibers internally. The
+following block demonstrates this and finishes in exactly 1 second:
 ```php
+use Hibla\Parallel\Parallel;
 use Hibla\Promise\Promise;
 use function Hibla\{parallel, async, await, delay};
+
+$pool = Parallel::pool(size: 2);
 
 $start = microtime(true);
 
 Promise::all([
+    // One-off task via global helper
     parallel(fn() => sleep(1)),
 
-    parallel(fn() => sleep(1)),
+    // One-off task via fluent executor
+    Parallel::task()->run(fn() => sleep(1)),
 
+    // Pool task — dispatched to a persistent worker
+    $pool->run(fn() => sleep(1)),
+
+    // Worker that internally mixes parallel tasks with async fibers
     parallel(function () {
         await(Promise::all([
             async(fn() => await(delay(1))),
@@ -1197,13 +1214,22 @@ Promise::all([
         return "Hybrid Done";
     }),
 
+    // Pure fiber-based async — no process spawn at all
     async(fn() => await(delay(1))),
 ])->wait();
 
+$pool->shutdown();
+
 $duration = microtime(true) - $start;
-echo "Executed ~4 seconds of work in: {$duration} seconds!";
-// Output: Executed ~4 seconds of work in: 1.04 seconds!
+echo "Executed ~5 seconds of work in: {$duration} seconds!";
+// Output: Executed ~5 seconds of work in: 1.04 seconds!
 ```
+
+The event loop does not care whether a given unit of work is a process-backed
+promise from a pool worker or a fiber-backed promise from `async()` — it drives
+all of them forward concurrently on the same tick cycle. The result is a single
+composable concurrency model rather than two separate systems you have to
+coordinate manually.
 
 ---
 
