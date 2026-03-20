@@ -136,7 +136,7 @@ final class ParallelExecutor implements ParallelExecutorInterface
     {
         $source = new CancellationTokenSource();
 
-        $configTimeout = Config::loadFromRoot('hibla_parallel', 'background_process.timeout', 600);
+        $configTimeout = Config::loadFromRoot('hibla_parallel', 'process.timeout', 60);
         assert(\is_int($configTimeout));
         $timeout = $this->timeoutSeconds ?? $configTimeout;
         $finalTimeout = $this->unlimitedTimeout ? 0 : $timeout;

@@ -12,6 +12,7 @@ use Hibla\Parallel\Handlers\ExceptionHandler;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
+use Hibla\Stream\Exceptions\StreamException;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
 
@@ -57,8 +58,7 @@ final class PersistentProcess
         private readonly PromiseWritableStreamInterface $stdin,
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr
-    ) {
-    }
+    ) {}
 
     /**
      * @param callable(self): void $onReadyCallback
@@ -161,7 +161,7 @@ final class PersistentProcess
 
                             // Track handler fiber under its task ID so the terminal
                             // frame can await all handlers for this specific task.
-                            $pendingHandlers[$taskId][] = async(fn () => $onMessage($message));
+                            $pendingHandlers[$taskId][] = async(fn() => $onMessage($message));
                         }
                     } elseif ($status === 'COMPLETED') {
                         $result = $data['result'] ?? null;
@@ -193,9 +193,15 @@ final class PersistentProcess
                         $promise->reject($exception);
                     }
                 }
+            } catch (StreamException $e) {
+                $status = proc_get_status($this->processResource);
+                
+                if ($status === false || !$status['running']) {
+                    $pendingHandlers = [];
+                    $this->terminate();
+                    ($this->onCrashCallback)($this);
+                }
             } catch (\Throwable $e) {
-                // Stream closed unexpectedly or any other error — treat as a crash
-                // and clear all pending handler references before crashing.
                 $pendingHandlers = [];
                 $this->terminate();
                 ($this->onCrashCallback)($this);
