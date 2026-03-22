@@ -107,4 +107,26 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      * @return static A new instance with the respawn handler configured.
      */
     public function onWorkerRespawn(callable $handler): static;
+
+    /**
+     * Pre-warms the pool by spawning all workers immediately, before any task
+     * is submitted. Useful when you want to pay the worker boot cost upfront
+     * (e.g. during app startup) so the first run() call dispatches to an
+     * already-idle worker with zero spawn latency.
+     *
+     * Without calling boot(), the underlying pool manager is initialized lazily
+     * on the first run() call. This means even with eager spawning (the default),
+     * all N workers are still spawned on that first run() call — the first task
+     * will always incur the full pool boot cost unless boot() is called explicitly
+     * beforehand.
+     *
+     * Calling boot() on a lazy pool (withLazySpawning()) forces the manager to
+     * initialize, but workers still spawn one-by-one on each submit() inside the
+     * manager rather than all at once — boot() does not override that behaviour.
+     *
+     * Safe to call multiple times — subsequent calls are no-ops.
+     *
+     * @return static The same instance (not a clone) for fluent chaining after configuration.
+     */
+    public function boot(): static;
 }

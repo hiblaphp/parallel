@@ -132,6 +132,7 @@ Choose the right tool for your use case:
 | `->withMaxExecutionsPerWorker(int $n)` | *(Pool only)* Retire and replace workers after N tasks |
 | `->onMessage(callable $handler)` | *(Task/Pool)* Register a handler for `emit()` messages from workers |
 | `->onWorkerRespawn(callable $handler)` | *(Pool only)* Called whenever a worker exits and a replacement is spawned |
+| `->boot()` | *(Pool only)* Pre-warm all workers immediately before the first `run()` call |
 
 ---
 
@@ -772,9 +773,27 @@ predictable cadence — important for pools that run for hours or days.
 
 ### Lazy vs. Eager Spawning
 
-By default, pools spawn all workers eagerly at construction time. Workers are
-immediately ready for the first task with zero dispatch latency, and bootstrap
-errors surface at construction rather than silently on first use.
+By default, pools use eager spawning — all workers are spawned together when
+the pool manager is first initialized. However, the pool manager itself is
+initialized lazily on the first `run()` call. This means even with eager
+spawning (the default), all N workers are still spawned on that first `run()`
+call — the first task will always incur the full pool boot cost unless `boot()`
+is called explicitly beforehand.
+
+Call `boot()` to pre-warm the pool at a convenient moment before any tasks
+arrive — such as during application startup — so the first `run()` dispatches
+to an already-idle worker with zero spawn latency:
+```php
+$pool = Parallel::pool(size: 4)
+    ->withBootstrap('bootstrap.php')
+    ->boot(); // Workers spawn here — pay the cost upfront
+
+// Later — workers are guaranteed warm, no spawn latency
+$pool->run($task);
+```
+
+`boot()` is safe to call multiple times — subsequent calls are no-ops. It
+returns the same instance (not a clone) for fluent chaining after configuration.
 
 Use lazy spawning when the pool is conditional or short-lived and workers may
 never be needed:
@@ -783,9 +802,14 @@ $pool = Parallel::pool(size: 4)
     ->withLazySpawning();
 ```
 
-The trade-off: the first batch of tasks will incur worker boot latency
-(~50–100ms per worker), and bootstrap errors surface on first task submission
-rather than at construction.
+With lazy spawning, workers are spawned one-by-one as tasks are submitted
+rather than all at once. Calling `boot()` on a lazy pool forces the pool
+manager to initialize, but workers still spawn individually on each `run()`
+call — `boot()` does not override that behaviour.
+
+The trade-off for lazy spawning: the first batch of tasks will incur worker
+boot latency (~50–100ms per worker), and bootstrap errors surface on first
+task submission rather than at construction.
 
 ---
 

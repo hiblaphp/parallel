@@ -207,6 +207,16 @@ final class ProcessPool implements ProcessPoolInterface
     }
 
     /**
+     * @inheritdoc
+     */
+    public function boot(): static
+    {
+        $this->getPool();
+
+        return $this;
+    }
+
+    /**
      * @template TResult
      * @inheritdoc
      * @return PromiseInterface<TResult>
