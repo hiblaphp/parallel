@@ -81,6 +81,15 @@ function write_frame(array $data): void
  */
 function drain_and_wait(): void
 {
+    // Drain-and-wait is only necessary on Windows. When a process exits,
+    // Windows instantly destroys its socket descriptors, which can wipe out
+    // bytes still in the OS transmit buffer before the parent reads them.
+    // On Unix, anonymous pipes are kernel-buffered and survive the writer
+    // exiting — the parent will always drain the remaining bytes safely.
+    if (PHP_OS_FAMILY !== 'Windows') {
+        return;
+    }
+
     global $stdin, $stdout;
 
     if (is_resource($stdout)) {
@@ -170,7 +179,10 @@ if (! $bootPayload) {
 }
 
 $bootData = json_decode($bootPayload, true);
-ini_set('memory_limit', $bootData['memory_limit'] ?? '512M');
+$timeoutSeconds = $taskData['timeout_seconds'] ?? 60;
+$memoryLimit    = $taskData['memory_limit']    ?? '512M';
+set_time_limit($timeoutSeconds);
+ini_set('memory_limit', $memoryLimit);
 
 if (! empty($bootData['autoload_path']) && file_exists($bootData['autoload_path'])) {
     require_once $bootData['autoload_path'];

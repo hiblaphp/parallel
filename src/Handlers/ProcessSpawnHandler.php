@@ -290,6 +290,7 @@ class ProcessSpawnHandler
         ?string $memoryLimit = null,
         int $maxNestingLevel = 5,
         ?int $maxExecutionsPerWorker = null,
+        ?int $timeoutSeconds = null
     ): PersistentProcess {
         $phpBinary = $this->systemUtils->getPhpBinary();
         $workerScript = $this->getWorkerPath('worker_persistent.php');
@@ -328,6 +329,7 @@ class ProcessSpawnHandler
             $serializationManager,
             $memoryLimit ?? $this->defaultProcessMemoryLimit,
             $maxExecutionsPerWorker,
+            $timeoutSeconds,
         );
         $stdin->writeAsync($bootPayload . PHP_EOL);
 
@@ -355,6 +357,7 @@ class ProcessSpawnHandler
         CallbackSerializationManager $serializationManager,
         string|int $memoryLimit,
         ?int $maxExecutionsPerWorker = null,
+        ?int $timeoutSeconds = null
     ): string {
         $serializedBootstrapCallback = null;
         if (isset($frameworkInfo['bootstrap_callback']) && is_callable($frameworkInfo['bootstrap_callback'])) {
@@ -366,6 +369,7 @@ class ProcessSpawnHandler
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
             'framework_bootstrap_callback' => $serializedBootstrapCallback,
             'memory_limit' => $memoryLimit,
+            'timeout_seconds' => $timeoutSeconds,
             'max_executions_per_worker' => $maxExecutionsPerWorker,
         ];
 

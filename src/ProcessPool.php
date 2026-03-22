@@ -320,6 +320,7 @@ final class ProcessPool implements ProcessPoolInterface
                 spawnEagerly: $this->spawnEagerly,
                 maxExecutionsPerWorker: $this->maxExecutionsPerWorker,
                 onWorkerRespawn: $internalRespawnHandler,
+                timeoutSeconds: $this->timeoutSeconds,
             );
         }
 

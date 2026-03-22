@@ -125,6 +125,15 @@ function write_status_to_stdout(array $data): void
  */
 function drain_and_wait(): void
 {
+    // Drain-and-wait is only necessary on Windows. When a process exits,
+    // Windows instantly destroys its socket descriptors, which can wipe out
+    // bytes still in the OS transmit buffer before the parent reads them.
+    // On Unix, anonymous pipes are kernel-buffered and survive the writer
+    // exiting — the parent will always drain the remaining bytes safely.
+    if (PHP_OS_FAMILY !== 'Windows') {
+        return;
+    }
+
     global $stdin, $stdout;
 
     if (is_resource($stdout)) {
@@ -136,7 +145,7 @@ function drain_and_wait(): void
     }
 
     // Explicitly set non-blocking. $stdin was set to blocking at the top of
-    // the file. If we leave it blocking and the parent crashes, fread() here
+    // the file. If its blocking and the parent crashes, fread() here
     // will hang indefinitely and zombie the child process.
     @stream_set_blocking($stdin, false);
 
@@ -233,7 +242,6 @@ while (is_resource($stdin) && ! feof($stdin) && ! $taskProcessed) {
         $memoryLimit = $taskData['memory_limit'] ?? '512M';
 
         ini_set('memory_limit', $memoryLimit);
-        ini_set('max_execution_time', (string)$timeoutSeconds);
         set_time_limit($timeoutSeconds);
 
         if (function_exists('pcntl_alarm') && function_exists('pcntl_signal')) {

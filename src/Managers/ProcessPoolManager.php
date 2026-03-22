@@ -84,6 +84,7 @@ final class ProcessPoolManager
         ?int $maxExecutionsPerWorker = null,
         /** @var callable(): void|null */
         private $onWorkerRespawn = null,
+        private readonly ?int $timeoutSeconds = null,
     ) {
         // Pre-flight check: prevent pool creation if exceeds the max nesting level
         $currentLevel = (int)((($env = getenv('DEFER_NESTING_LEVEL')) !== false) ? $env : 0);
@@ -390,6 +391,7 @@ final class ProcessPoolManager
             $this->memoryLimit,
             $this->maxNestingLevel,
             $this->maxExecutionsPerWorker,
+            $this->timeoutSeconds,
         );
 
         $workerId = spl_object_id($process);
