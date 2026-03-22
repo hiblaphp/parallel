@@ -40,8 +40,6 @@ final class BackgroundProcess
                 exec("pkill -9 -P {$this->pid} 2>/dev/null; kill -9 {$this->pid} 2>/dev/null");
             }
         }
-
-        $this->close();
     }
 
     /**
@@ -75,10 +73,6 @@ final class BackgroundProcess
             }
         }
 
-        if (! $running) {
-            $this->close();
-        }
-
         return $running;
     }
 
@@ -90,38 +84,5 @@ final class BackgroundProcess
     public function getPid(): int
     {
         return $this->pid;
-    }
-
-    /**
-     * Close the process resource handle and mark this instance as closed.
-     *
-     * Safe to call multiple times — guarded by the closed flag so subsequent
-     * calls are no-ops. proc_close() will not block here because by the time
-     * it is called the child has either been killed or exited naturally, so it
-     * simply reaps the zombie entry from the OS process table.
-     *
-     * @return void
-     */
-    private function close(): void
-    {
-        if ($this->closed) {
-            return;
-        }
-
-        $this->closed = true;
-
-        if (\is_resource($this->processResource)) {
-            @proc_close($this->processResource);
-        }
-    }
-
-    /**
-     * Release the process resource handle if it was never explicitly closed.
-     * This is a safety net for cases where terminate() was never called and
-     * isRunning() never observed the process exit on its own.
-     */
-    public function __destruct()
-    {
-        $this->close();
     }
 }
