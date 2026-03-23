@@ -9,6 +9,7 @@ use function Hibla\await;
 
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
+use Hibla\Parallel\Utilities\ProcessKiller;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
@@ -277,7 +278,15 @@ final class PersistentProcess
     }
 
     /**
-     * Sends a kill signal to the worker process without blocking on Windows.
+     * Sends a kill signal to the worker process without blocking.
+     *
+     * On Windows, proc_open() is called with bypass_shell => true in
+     * ProcessSpawnHandler, so the resource maps directly to the PHP worker.
+     * proc_terminate() calls TerminateProcess() internally which is
+     * non-blocking and returns immediately — no popen/cmd.exe needed.
+     *
+     * On Unix, pkill/kill cover the child tree since proc_terminate() only
+     * signals the direct process.
      */
     public function signalTerminate(): void
     {
@@ -287,15 +296,7 @@ final class PersistentProcess
 
         $this->handleCrash();
 
-        if (PHP_OS_FAMILY === 'Windows') {
-            $handle = popen("start /B cmd /C \"taskkill /F /T /PID {$this->getWorkerPid()} >nul 2>nul\"", 'r');
-
-            if ($handle !== false) {
-                pclose($handle);
-            }
-        } else {
-            exec("pkill -9 -P {$this->getWorkerPid()} 2>/dev/null; kill -9 {$this->getWorkerPid()} 2>/dev/null");
-        }
+       ProcessKiller::killTree($this->pid, $this->processResource);
     }
 
     /**

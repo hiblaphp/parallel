@@ -10,6 +10,7 @@ use function Hibla\await;
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
+use Hibla\Parallel\Utilities\ProcessKiller;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
@@ -45,8 +46,7 @@ final class Process
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr,
         private readonly string $sourceLocation = 'unknown'
-    ) {
-    }
+    ) {}
 
     /**
      * Get the result of the background process.
@@ -93,9 +93,17 @@ final class Process
     /**
      * Terminate the process forcefully.
      *
-     * Sends a force-kill signal to the worker process and any child processes
-     * it may have spawned. Safe to call multiple times — subsequent calls are
-     * no-ops once the process has already stopped.
+     * On Windows, proc_open() is called with bypass_shell => true in
+     * ProcessSpawnHandler, which means the process resource maps directly
+     * to the PHP worker with no cmd.exe wrapper. proc_terminate() therefore
+     * calls TerminateProcess() on the correct PID immediately — no external
+     * process (taskkill/cmd.exe) needs to be spawned.
+     *
+     * On Unix, pkill/kill cover the child tree since proc_terminate() only
+     * signals the direct process.
+     *
+     * Safe to call multiple times — subsequent calls are no-ops once
+     * isSystemRunning is false.
      *
      * @return void
      */
@@ -105,13 +113,7 @@ final class Process
             return;
         }
 
-        if ($this->isRunning()) {
-            if (PHP_OS_FAMILY === 'Windows') {
-                exec("taskkill /F /T /PID {$this->pid} 2>nul");
-            } else {
-                exec("pkill -9 -P {$this->pid} 2>/dev/null; kill -9 {$this->pid} 2>/dev/null");
-            }
-        }
+        ProcessKiller::killTree($this->pid, $this->processResource);
 
         $this->close();
     }
@@ -229,7 +231,7 @@ final class Process
                                 data: $data,
                                 pid: \is_int($status['pid']) ? $status['pid'] : $this->pid,
                             );
-                            $pendingHandlers[] = async(fn () => $onMessage($message));
+                            $pendingHandlers[] = async(fn() => $onMessage($message));
                         }
                     } elseif ($statusType === 'COMPLETED') {
                         $result = $status['result'] ?? null;
