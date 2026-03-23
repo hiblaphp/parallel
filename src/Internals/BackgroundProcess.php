@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Internals;
 
+use Hibla\Parallel\Utilities\ProcessKiller;
+
 /**
  * @internal
  *
@@ -29,17 +31,24 @@ final class BackgroundProcess
     /**
      * Terminate the background process forcefully.
      *
+     * On Windows, proc_open() is called with bypass_shell => true in
+     * ProcessSpawnHandler, so the resource maps directly to the PHP worker
+     * with no cmd.exe wrapper. proc_terminate() calls TerminateProcess()
+     * internally which is non-blocking and returns immediately — no external
+     * process (taskkill/cmd.exe) needs to be spawned.
+     *
+     * On Unix, pkill/kill cover the child tree since proc_terminate() only
+     * signals the direct process.
+     *
      * @return void
      */
     public function terminate(): void
     {
-        if ($this->isRunning()) {
-            if (PHP_OS_FAMILY === 'Windows') {
-                exec("taskkill /F /T /PID {$this->pid} 2>nul");
-            } else {
-                exec("pkill -9 -P {$this->pid} 2>/dev/null; kill -9 {$this->pid} 2>/dev/null");
-            }
+        if ($this->closed) {
+            return;
         }
+
+        ProcessKiller::killTree($this->pid, $this->processResource);
     }
 
     /**

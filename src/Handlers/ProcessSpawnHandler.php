@@ -39,7 +39,7 @@ class ProcessSpawnHandler
     ) {
         $requiredFunctions = PHP_OS_FAMILY !== 'Windows'
             ? ['proc_open', 'exec', 'shell_exec']
-            : ['proc_open', 'exec', 'shell_exec', 'popen', 'pclose'];
+            : ['proc_open', 'exec', 'shell_exec'];
 
         $missingFunctions = array_filter($requiredFunctions, static function (string $function): bool {
             // @phpstan-ignore-next-line the functions are checked at runtime
@@ -72,6 +72,11 @@ class ProcessSpawnHandler
      * instead of anonymous pipes ensures true non-blocking I/O on all platforms including
      * Windows, where anonymous pipes do not support non-blocking mode.
      *
+     * On Windows, bypass_shell is set to true so proc_open() spawns PHP directly
+     * without a cmd.exe wrapper. This ensures proc_get_status()['pid'] and
+     * proc_terminate() both target the actual PHP worker rather than a shell
+     * wrapper process, enabling reliable and immediate process termination.
+     *
      * @template TResult
      * @param callable(): TResult $callback The callback function to execute in the worker
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
@@ -100,21 +105,15 @@ class ProcessSpawnHandler
         // Use socket descriptors on Windows since anonymous pipes ignore
         // stream_set_blocking(false) at the kernel level, starving the event loop.
         // On Unix, anonymous pipes are used instead as they are ~15% faster for
-        // small messages and properly support non-blocking mode and reliable in production environment.
+        // small messages and properly support non-blocking mode.
         $descriptorSpec = PHP_OS_FAMILY === 'Windows'
-            ? [
-                0 => ['socket'],
-                1 => ['socket'],
-                2 => ['socket'],
-            ]
-            : [
-                0 => ['pipe', 'r'],
-                1 => ['pipe', 'w'],
-                2 => ['pipe', 'w'],
-            ];
+            ? [0 => ['socket'], 1 => ['socket'], 2 => ['socket']]
+            : [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+
+        $options = PHP_OS_FAMILY === 'Windows' ? ['bypass_shell' => true] : [];
 
         $pipes = [];
-        $processResource = @proc_open($command, $descriptorSpec, $pipes);
+        $processResource = @proc_open($command, $descriptorSpec, $pipes, null, null, $options);
 
         if (! \is_resource($processResource)) {
             $error = error_get_last();
@@ -199,8 +198,12 @@ class ProcessSpawnHandler
             2 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
         ];
 
+        // bypass_shell on Windows so the resource maps to the actual PHP worker,
+        // not a cmd.exe wrapper — same reasoning as spawnStreamedTask.
+        $options = PHP_OS_FAMILY === 'Windows' ? ['bypass_shell' => true] : [];
+
         $pipes = [];
-        $processResource = @proc_open($command, $descriptorSpec, $pipes);
+        $processResource = @proc_open($command, $descriptorSpec, $pipes, null, null, $options);
 
         if (! \is_resource($processResource)) {
             $error = error_get_last();
@@ -247,7 +250,18 @@ class ProcessSpawnHandler
         int $timeoutSeconds,
         string|int $memoryLimit
     ): string {
-        $serializedCallback = $serializationManager->serializeCallback($callback);
+        try {
+            $serializedCallback = $serializationManager->serializeCallback($callback);
+        } catch (\Throwable $e) {
+            $message = $e->getMessage();
+            if ($e instanceof \TypeError || str_contains($message, 'getCallableForm') || str_contains($message, 'serialize')) {
+                throw new TaskPayloadException(
+                    "Failed to serialize task payload: The closure likely captures an unserializable object (e.g., ProcessPool, Stream, or PDO). Ensure you are not passing active OS resources into the closure via 'use (...)'. Underlying error: " . $message
+                );
+            }
+
+            throw new TaskPayloadException('Failed to serialize task payload: ' . $message);
+        }
 
         $serializedBootstrapCallback = null;
         $bootstrapCallback = $frameworkInfo['bootstrap_callback'] ?? null;
@@ -277,6 +291,10 @@ class ProcessSpawnHandler
     /**
      * Spawns a persistent worker process for long-running tasks.
      *
+     * On Windows, bypass_shell is set to true for the same reason as
+     * spawnStreamedTask — prevents cmd.exe wrapping so proc_terminate()
+     * targets the actual PHP worker PID directly.
+     *
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param string|null $memoryLimit Custom memory limit for this specific process
@@ -298,19 +316,14 @@ class ProcessSpawnHandler
         $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string)$maxNestingLevel);
 
         $descriptorSpec = PHP_OS_FAMILY === 'Windows'
-            ? [
-                0 => ['socket'],
-                1 => ['socket'],
-                2 => ['socket'],
-            ]
-            : [
-                0 => ['pipe', 'r'],
-                1 => ['pipe', 'w'],
-                2 => ['pipe', 'w'],
-            ];
+            ? [0 => ['socket'], 1 => ['socket'], 2 => ['socket']]
+            : [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+
+        $options = PHP_OS_FAMILY === 'Windows' ? ['bypass_shell' => true] : [];
 
         $pipes = [];
-        $processResource = @proc_open($command, $descriptorSpec, $pipes);
+        $processResource = @proc_open($command, $descriptorSpec, $pipes, null, null, $options);
+
         if (! \is_resource($processResource)) {
             throw new ProcessSpawnException('Failed to spawn persistent worker process.');
         }

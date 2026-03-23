@@ -37,9 +37,12 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level cluster p
   - [Automatic garbage collection between tasks](#automatic-garbage-collection-between-tasks)
   - [Why `withMaxExecutionsPerWorker`](#why-withmaxexecutionsperworker)
   - [Lazy vs. Eager Spawning](#lazy-vs-eager-spawning)
+    - [Pre-warming with `boot()`](#pre-warming-with-boot)
+    - [Lazy Spawning](#lazy-spawning)
 - [Self-Healing & Supervisor Pattern](#self-healing--supervisor-pattern)
   - [Complete example: chaos server](#complete-example-chaos-server)
 - [Pool Monitoring](#pool-monitoring)
+  - [PID accuracy and `boot()`](#pid-accuracy-and-boot)
 
 **Real-time communication**
 - [Real-time Output & Messaging](#real-time-output--messaging)
@@ -129,7 +132,7 @@ Choose the right tool for your use case:
 
 | Method | Effect |
 | :--- | :--- |
-| `->withTimeout(int $seconds)` | Reject with `TimeoutException` after N seconds and terminate the worker |
+| `->withTimeout(int $seconds)` | Reject with `TimeoutException` after N seconds, terminate the worker and its full process tree |
 | `->withoutTimeout()` | Disable the timeout entirely |
 | `->withMemoryLimit(string $limit)` | Set worker memory limit (e.g. `'256M'`, `'1G'`) |
 | `->withUnlimitedMemory()` | Set memory limit to `-1` |
@@ -783,83 +786,44 @@ predictable cadence — important for pools that run for hours or days.
 
 ### Lazy vs. Eager Spawning
 
-By default, pools use eager spawning — all workers are spawned together when
-the pool manager is first initialized. However, the pool manager itself is
-initialized lazily on the first `run()` call. This means even with eager
-spawning (the default), all N workers are still spawned on that first `run()`
-call — the first task will always incur the full pool boot cost unless `boot()`
-or `bootAsync()` is called explicitly beforehand.
+By default, pools use **eager spawning**—all workers are spawned together when the pool manager is initialized. However, the pool manager itself is initialized lazily on the first `run()` call. This means even with eager spawning (the default), the first task submitted to the pool will incur the full cost of booting every worker process unless `boot()` is called explicitly beforehand.
 
-**`boot()` vs `bootAsync()`**
+#### Pre-warming with `boot()`
 
-Both methods pre-warm the pool before the first `run()` call, but they give
-different guarantees:
+The `boot()` method pre-warms the pool and guarantees that every worker is genuinely ready to accept tasks before it returns. It is **context-aware**: if called inside an async fiber, it suspends the fiber without blocking the event loop; if called in a synchronous script, it blocks execution and pumps the event loop until the pool is ready.
 
-`boot()` triggers the process spawning synchronously and returns immediately —
-it does not wait for the worker bootstrap phase to complete. Workers are being
-spawned, but they may not have finished loading the autoloader, running the
-framework bootstrap, and sending their READY frame yet. `getWorkerPids()` called
-immediately after `boot()` may return shell wrapper PIDs rather than the real
-PHP process PIDs.
+Once `boot()` returns:
+- **Zero Spawn Latency:** Every worker has completed its bootstrap phase (autoloader, framework initialization, etc.). The first `run()` call will dispatch to an idle worker instantly.
+- **Accurate PIDs:** `getWorkerPids()` is guaranteed to return the real PHP process PIDs (from `getmypid()` inside the worker), not temporary shell wrapper PIDs.
+- **Idempotency:** Calling `boot()` multiple times is a safe no-op.
 
-`bootAsync()` returns a `Promise<static>` that resolves only after every worker
-has sent its READY frame. Once the promise resolves, all workers have completed
-their bootstrap phase, are genuinely idle and ready to accept tasks, and
-`getWorkerPids()` returns the real PHP PIDs as reported by `getmypid()` inside
-each worker.
-
-Use `boot()` when you want to pay the spawn cost upfront but do not need PID
-accuracy or a hard guarantee that all workers are warm before you begin
-submitting tasks:
+**Synchronous Usage:**
 ```php
-$pool = Parallel::pool(size: 4)
-    ->withBootstrap('bootstrap.php')
-    ->boot(); // Workers are spawning — pay the cost upfront
+$pool = Parallel::pool(size: 4)->boot(); 
+// Blocks until all 4 workers send their READY frame.
 
-// Later — workers will be ready by the time tasks arrive in practice,
-// but there is no hard guarantee at this exact line
-$pool->run($task);
-```
-
-Use `bootAsync()` when you need to know that every worker is genuinely ready —
-for example, when accurate PIDs are required for monitoring, when you want to
-assert readiness before a health check passes, or when the first `run()` call
-must dispatch with zero latency:
-```php
-// Workers are guaranteed warm and PIDs are accurate after this line
-$pool = await(
-    Parallel::pool(size: 4)
-        ->withBootstrap('bootstrap.php')
-        ->bootAsync()
-);
-
-// getWorkerPids() returns real PHP PIDs — matches getmypid() inside tasks
-echo implode(', ', $pool->getWorkerPids());
-
-// First run() dispatches instantly — no spawn latency
 $result = await($pool->run(fn() => heavyWork()));
 ```
 
-Both `boot()` and `bootAsync()` are safe to call multiple times — subsequent
-calls are no-ops. Both return the same pool instance (not a clone) for fluent
-chaining after configuration.
-
-Use lazy spawning when the pool is conditional or short-lived and workers may
-never be needed:
+**Asynchronous Usage:**
 ```php
-$pool = Parallel::pool(size: 4)
-    ->withLazySpawning();
+async(function() use ($pool) {
+    $pool->boot(); // Suspends this fiber non-blocking
+    $result = await($pool->run(fn() => heavyWork()));
+});
 ```
 
-With lazy spawning, workers are spawned one-by-one as tasks are submitted
-rather than all at once. Calling `boot()` or `bootAsync()` on a lazy pool
-forces the pool manager to initialize, but workers still spawn individually on
-each `run()` call — neither method overrides that behaviour. For lazy pools,
-`bootAsync()` resolves immediately since there is no pre-boot phase.
+#### Lazy Spawning
 
-The trade-off for lazy spawning: the first batch of tasks will incur worker
-boot latency (~50–100ms per worker), and bootstrap errors surface on first
-task submission rather than at construction.
+Use **lazy spawning** when the pool is conditional or short-lived and workers may never be needed. Workers are spawned one-by-one only as tasks are submitted.
+
+```php
+$pool = Parallel::pool(size: 4)->withLazySpawning();
+```
+
+Calling `boot()` on a lazy pool forces the manager to initialize, but workers still spawn individually on each `run()` call. For lazy pools, `boot()` returns immediately since there is no pre-boot phase.
+
+**The trade-off:** The first batch of tasks will incur worker boot latency (~50–100ms per worker), and bootstrap errors (like syntax errors in your bootstrap file) will surface during task submission rather than during pool setup.
 
 ---
 
@@ -1043,10 +1007,9 @@ with no manual intervention and no restart of the master process.
 
 ---
 
-## Pool Monitoring
+### Pool Monitoring
 
-Inspect a live pool to understand its current state. Useful for health checks,
-dashboards, and debugging.
+Inspect a live pool to understand its current state. Useful for health checks, dashboards, and debugging.
 ```php
 use Hibla\Parallel\Parallel;
 use function Hibla\await;
@@ -1056,51 +1019,20 @@ $pool = Parallel::pool(size: 4);
 echo $pool->getWorkerCount(); // 4
 ```
 
-### PID accuracy and `bootAsync()`
+#### PID accuracy and `boot()`
 
-`getWorkerPids()` returns the real PHP process PIDs as self-reported by each
-worker in its READY frame — these always match what `getmypid()` returns inside
-a running task on every platform, including Windows.
+`getWorkerPids()` returns the real PHP process PIDs as self-reported by each worker in its `READY` frame. These match exactly what `getmypid()` returns inside a running task on every platform, including Windows.
 
-However, there is a timing subtlety. Each worker goes through two phases after
-`proc_open()`:
+Because workers go through a "Shell Wrapper" phase before the PHP binary fully initializes, calling `getWorkerPids()` immediately after constructing a pool may return temporary PIDs. 
 
-1. **Shell wrapper phase** — the OS creates the process and `proc_get_status()`
-   becomes available, but the PHP binary has not started yet. At this point
-   `getWorkerPids()` falls back to the shell wrapper PID, which does not match
-   the PHP process.
-2. **Ready phase** — the worker finishes loading the autoloader and any
-   framework bootstrap, sends its READY frame with `getmypid()`, and is
-   genuinely available for tasks.
+To guarantee PID accuracy for monitoring or health checks, **always call `boot()` first**. Because `boot()` now waits for every worker to signal readiness, the PIDs are guaranteed to be authoritative the moment the method returns:
 
-If you call `getWorkerPids()` between these two phases — for example,
-immediately after `boot()` — you may receive shell wrapper PIDs. For most
-workloads this does not matter because tasks are submitted after some event-loop
-ticks have passed, by which time the READY frames have already arrived.
-
-When PID accuracy matters — monitoring dashboards, health checks, integration
-tests, or any code that correlates `getWorkerPids()` with task PIDs — use
-`bootAsync()` to guarantee you are past phase 2 before reading PIDs:
 ```php
 // Workers are guaranteed to have sent READY frames — PIDs are authoritative
-$pool = await(
-    Parallel::pool(size: 4)->bootAsync()
-);
+$pool = Parallel::pool(size: 4)->boot();
 
-// These PIDs are accurate on all platforms including Windows
+// These PIDs are accurate and match getmypid() inside tasks
 $pids = $pool->getWorkerPids(); // [12345, 12346, 12347, 12348]
-echo implode(', ', $pids);
-
-// PIDs match exactly what getmypid() returns inside tasks
-$taskPids = await(Promise::all([
-    $pool->run(fn() => getmypid()),
-    $pool->run(fn() => getmypid()),
-    $pool->run(fn() => getmypid()),
-    $pool->run(fn() => getmypid()),
-]));
-
-// These two sets are always identical after bootAsync()
-assert(array_diff($pids, $taskPids) === []);
 
 $pool->shutdown();
 ```
@@ -1354,7 +1286,9 @@ coordinate manually.
 Workers are real OS processes and each one can itself call `parallel()`,
 `spawn()`, or any `Parallel::` executor to spawn further child processes. Hibla
 enforces a configurable nesting limit (default 5) to prevent runaway recursive
-spawning — a fork bomb — from exhausting system resources.
+spawning — a fork bomb — from exhausting system resources. Cancellation
+propagates through the full tree — cancelling a parent worker also terminates
+all nested workers it spawned, at any depth, on both Linux and Windows.
 
 ### The nested closure problem
 
@@ -1371,7 +1305,7 @@ the **entire parent scope by value**. In a large application this can silently
 serialize megabytes of unintended data into the task payload.
 
 Hibla automatically detects the most dangerous patterns and throws a
-`TaskPayloadException` before any process is spawned. The examples below show
+`NestingLimitException` before any process is spawned. The examples below show
 what to avoid and what to use instead, ordered from most dangerous to safest.
 
 ### Closure safety levels
@@ -1491,8 +1425,10 @@ try {
 
 ## Task Cancellation & Management
 
-Cancelling a task promise forcefully kills the underlying OS process and, for
-pools, immediately respawns a replacement worker to maintain capacity.
+Cancelling a task promise forcefully kills the underlying OS process **and its
+entire descendant tree** — including any nested `parallel()` workers spawned
+inside the cancelled worker. For pools, a fresh replacement worker is
+immediately respawned to maintain capacity.
 ```php
 use Hibla\Parallel\Parallel;
 
@@ -1500,28 +1436,86 @@ $pool = Parallel::pool(size: 4);
 $promise = $pool->run(fn() => sleep(100));
 
 $promise->cancel();
-// 1. Hibla kills the OS process via SIGKILL / taskkill.
+// 1. Hibla kills the OS process and all its descendants via full tree kill.
 // 2. The pool respawns a fresh replacement worker.
 // 3. The promise is settled as cancelled.
 
 $pool->shutdown();
 ```
 
-**Cancellation in a pool kills the entire worker, not just the task.**
+### Full process tree cancellation
+
+Cancellation is not limited to the direct worker. If a worker itself spawned
+nested `parallel()` calls — which is fully supported up to `max_nesting_level`
+— all of those child and grandchild processes are terminated together with
+their parent. No orphaned workers survive a cancel.
+```php
+$promise = parallel(function () {
+    // These nested workers are also killed if the parent is cancelled
+    await(Promise::all([
+        parallel(fn() => writeToDatabase()),
+        parallel(fn() => writeToDatabase()),
+    ]));
+});
+
+$promise->cancel();
+// The parent worker AND both nested workers are all terminated.
+// Neither database write completes — cancellation is a hard guarantee.
+```
+
+This matters because a cancellation API that does not propagate to descendants
+is not a real cancellation — the work continues in orphaned background processes
+with no owner, no handle, and no way to stop them. Hibla treats full tree kill
+as non-negotiable.
+
+### Windows cancellation trade-off
+
+On Linux, Hibla Parallel walks the process tree recursively using `pgrep` and sends
+`kill -9` bottom-up before killing the parent. This is fast — the entire tree
+is killed in-process with no external commands for the common flat case.
+
+On Windows, full tree kill requires `taskkill /F /T`, which must run
+**synchronously before** the parent process dies. This is a hard Windows
+constraint: once the parent is terminated, the OS breaks the parent-child link
+in the process table and `taskkill /T` can no longer enumerate or reach
+grandchildren. Running it synchronously ensures the full tree is walked and
+killed before `proc_close()` returns.
+
+The cost is approximately **~100–300ms per cancelled worker** on Windows:
+
+| Scenario | Linux | Windows |
+| :--- | :--- | :--- |
+| Cancel 1 worker | ~1.0s | ~1.3s |
+| Cancel 3 workers | ~1.05s | ~1.85s |
+| Tree correctly killed | ✅ | ✅ |
+
+This overhead only applies at **cancellation time** — which is an exceptional
+code path, not the happy path. Normal task execution, result retrieval, and
+pool throughput are completely unaffected on both platforms.
+
+The alternative — using `proc_terminate()` alone on Windows for instant kill —
+leaves all descendant workers running as zombies. Because Hibla explicitly
+supports and advertises nested `parallel()` execution up to 10 levels deep,
+silently orphaning grandchildren on cancel is not an acceptable trade-off.
+Correctness wins over the ~800ms difference.
+
+### Cancellation in a pool kills the entire worker, not just the task
 
 When you cancel a task promise, Hibla terminates the entire worker process for
 that slot — not just the in-flight task. The cancelled task is killed immediately
-and the worker process is torn down. A fresh replacement worker is spawned to
-restore pool capacity, and any tasks still waiting in the pool's global queue
-are dispatched to workers as normal — they are not affected by the cancellation.
+and the worker process is torn down along with any nested children it spawned.
+A fresh replacement worker is spawned to restore pool capacity, and any tasks
+still waiting in the pool's global queue are dispatched to workers as normal —
+they are not affected by the cancellation.
 
 The distinction matters for one specific case: if the cancelled task was
 mid-execution and the worker held any state that other code depended on, that
-state is gone with the process. The cancellation blast radius is one worker slot
-and its single in-flight task — nothing wider.
+state is gone with the process. The cancellation blast radius is one worker slot,
+its single in-flight task, and any nested workers that task had spawned —
+nothing wider.
 
 For one-off tasks spawned via `Parallel::task()`, cancellation only kills that
-single worker process and has no wider effect.
+single worker tree and has no wider effect.
 
 ---
 
