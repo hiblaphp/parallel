@@ -28,7 +28,9 @@ final class BackgroundExecutor implements BackgroundExecutorInterface
 
     private bool $unlimitedTimeout = false;
 
-    public function __construct() {}
+    public function __construct()
+    {
+    }
 
     /**
      * @inheritdoc
@@ -129,7 +131,7 @@ final class BackgroundExecutor implements BackgroundExecutorInterface
     public function spawnFn(callable $task): callable
     {
         return function (mixed ...$args) use ($task): PromiseInterface {
-            return $this->spawn(static fn() => $task(...$args));
+            return $this->spawn(static fn () => $task(...$args));
         };
     }
 }

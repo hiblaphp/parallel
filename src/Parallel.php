@@ -32,7 +32,9 @@ use Hibla\Parallel\Interfaces\ProcessPoolInterface;
  */
 final class Parallel
 {
-    private function __construct() {}
+    private function __construct()
+    {
+    }
 
     /**
      * Create a fluent builder for a one-off parallel task or background process.

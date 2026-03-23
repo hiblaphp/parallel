@@ -180,7 +180,7 @@ if (! $bootPayload) {
 
 $bootData = json_decode($bootPayload, true);
 $timeoutSeconds = $bootData['timeout_seconds'] ?? 60;
-$memoryLimit    = $bootData['memory_limit']    ?? '512M';
+$memoryLimit = $bootData['memory_limit'] ?? '512M';
 set_time_limit($timeoutSeconds);
 ini_set('memory_limit', $memoryLimit);
 

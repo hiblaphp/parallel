@@ -38,7 +38,7 @@ describe('Parallel Feature Test', function () {
 
     it('successfully executes a basic task', function () {
         $result = await(
-            Parallel::task()->run(fn() => 'Success')
+            Parallel::task()->run(fn () => 'Success')
         );
 
         expect($result)->toBe('Success');
@@ -48,7 +48,7 @@ describe('Parallel Feature Test', function () {
         await(
             Parallel::task()
                 ->withTimeout(1)
-                ->run(fn() => sleep(5))
+                ->run(fn () => sleep(5))
         );
     })->throws(TimeoutException::class);
 
@@ -70,7 +70,7 @@ describe('Parallel Feature Test', function () {
         await(
             Parallel::task()
                 ->withMemoryLimit('16M')
-                ->run(fn() => str_repeat('a', 32 * 1024 * 1024))
+                ->run(fn () => str_repeat('a', 32 * 1024 * 1024))
         );
     })->throws(\Exception::class, 'Allowed memory size');
 
@@ -78,7 +78,7 @@ describe('Parallel Feature Test', function () {
         $result = await(
             Parallel::task()
                 ->withUnlimitedMemory()
-                ->run(fn() => strlen(str_repeat('a', 10 * 1024 * 1024)))
+                ->run(fn () => strlen(str_repeat('a', 10 * 1024 * 1024)))
         );
 
         expect($result)->toBe(10 * 1024 * 1024);
@@ -93,7 +93,7 @@ describe('Parallel Feature Test', function () {
         $result = await(
             Parallel::task()
                 ->withBootstrap($bootstrapFile)
-                ->run(fn() => defined('BOOTSTRAP_EXECUTED') ? BOOTSTRAP_EXECUTED : 'no')
+                ->run(fn () => defined('BOOTSTRAP_EXECUTED') ? BOOTSTRAP_EXECUTED : 'no')
         );
 
         expect($result)->toBe('yes');
@@ -145,15 +145,15 @@ describe('Parallel Feature Test', function () {
         putenv('DEFER_NESTING_LEVEL=2');
 
         expect(
-            fn() => Parallel::background()
+            fn () => Parallel::background()
                 ->withMaxNestingLevel(2)
-                ->spawn(fn() => true)
+                ->spawn(fn () => true)
         )->toThrow(\RuntimeException::class, 'Already at maximum nesting level');
 
         $process = await(
             Parallel::background()
                 ->withMaxNestingLevel(3)
-                ->spawn(fn() => true)
+                ->spawn(fn () => true)
         );
 
         expect($process)->toBeInstanceOf(BackgroundProcess::class);
@@ -169,14 +169,15 @@ describe('Parallel Feature Test', function () {
     });
 
     it('pool() throws when size is less than 1', function () {
-        expect(fn() => Parallel::pool(size: 0))
-            ->toThrow(\InvalidArgumentException::class, 'Pool size must be at least 1');
+        expect(fn () => Parallel::pool(size: 0))
+            ->toThrow(\InvalidArgumentException::class, 'Pool size must be at least 1')
+        ;
     });
 
     it('persistent pool executes a basic task', function () {
         $pool = Parallel::pool(size: 2);
 
-        $result = await($pool->run(fn() => 'hello from pool'));
+        $result = await($pool->run(fn () => 'hello from pool'));
 
         expect($result)->toBe('hello from pool');
         $pool->shutdown();
@@ -186,9 +187,9 @@ describe('Parallel Feature Test', function () {
         $pool = Parallel::pool(size: 3);
 
         $results = await(Promise::all([
-            $pool->run(fn() => 'task-1'),
-            $pool->run(fn() => 'task-2'),
-            $pool->run(fn() => 'task-3'),
+            $pool->run(fn () => 'task-1'),
+            $pool->run(fn () => 'task-2'),
+            $pool->run(fn () => 'task-3'),
         ]));
 
         expect($results)->toBe(['task-1', 'task-2', 'task-3']);
@@ -197,24 +198,26 @@ describe('Parallel Feature Test', function () {
 
     it('persistent pool respects custom timeout', function () {
         $pool = Parallel::pool(size: 2)
-            ->withTimeout(1);
+            ->withTimeout(1)
+        ;
 
-        await($pool->run(fn() => sleep(5)));
+        await($pool->run(fn () => sleep(5)));
     })->throws(TimeoutException::class);
 
     it('persistent pool respects custom memory limit', function () {
         $pool = Parallel::pool(size: 2)
-            ->withMemoryLimit('16M');
+            ->withMemoryLimit('16M')
+        ;
 
-        await($pool->run(fn() => str_repeat('a', 32 * 1024 * 1024)));
+        await($pool->run(fn () => str_repeat('a', 32 * 1024 * 1024)));
     })->throws(\Exception::class, 'Allowed memory size');
 
     it('persistent pool reuses worker processes across batches', function () {
         $pool = Parallel::pool(size: 2);
 
         await(Promise::all([
-            $pool->run(fn() => getmypid()),
-            $pool->run(fn() => getmypid()),
+            $pool->run(fn () => getmypid()),
+            $pool->run(fn () => getmypid()),
         ]));
 
         await(delay(1));
@@ -223,8 +226,8 @@ describe('Parallel Feature Test', function () {
         sort($initialPids);
 
         $batch2 = await(Promise::all([
-            $pool->run(fn() => getmypid()),
-            $pool->run(fn() => getmypid()),
+            $pool->run(fn () => getmypid()),
+            $pool->run(fn () => getmypid()),
         ]));
 
         $reusedPids = array_unique($batch2);
@@ -239,7 +242,7 @@ describe('Parallel Feature Test', function () {
         $pool->shutdown();
 
         $results = await(Promise::allSettled([
-            $pool->run(fn() => 'should not run'),
+            $pool->run(fn () => 'should not run'),
         ]));
 
         expect($results[0]->isRejected())->toBeTrue();
@@ -253,10 +256,11 @@ describe('Parallel Feature Test', function () {
         file_put_contents($bootstrapFile, "<?php define('POOL_BOOTSTRAP', 'pool_yes');");
 
         $pool = Parallel::pool(size: 2)
-            ->withBootstrap($bootstrapFile);
+            ->withBootstrap($bootstrapFile)
+        ;
 
         $result = await($pool->run(
-            fn() => defined('POOL_BOOTSTRAP') ? POOL_BOOTSTRAP : 'no'
+            fn () => defined('POOL_BOOTSTRAP') ? POOL_BOOTSTRAP : 'no'
         ));
 
         expect($result)->toBe('pool_yes');
@@ -285,11 +289,12 @@ describe('Parallel Feature Test', function () {
 
     it('persistent pool BLOCKS a nested task that exceeds the max nesting level', function () {
         $pool = Parallel::pool(size: 1)
-            ->withMaxNestingLevel(1);
+            ->withMaxNestingLevel(1)
+        ;
 
         $task = function () {
             await(
-                Parallel::task()->run(fn() => 'This should not execute')
+                Parallel::task()->run(fn () => 'This should not execute')
             );
         };
 
@@ -302,11 +307,12 @@ describe('Parallel Feature Test', function () {
 
     it('persistent pool ALLOWS a nested task when within the max nesting level', function () {
         $pool = Parallel::pool(size: 1)
-            ->withMaxNestingLevel(2);
+            ->withMaxNestingLevel(2)
+        ;
 
         $task = function () {
             return await(
-                Parallel::task()->run(fn() => 'Nested success')
+                Parallel::task()->run(fn () => 'Nested success')
             );
         };
 

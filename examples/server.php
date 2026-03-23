@@ -20,7 +20,7 @@ echo 'Master Supervising Cluster (PID: ' . getmypid() . ")\n";
 echo "Simulating simulated I/O latency per request...\n";
 
 $startAcceptor = function () use (&$startAcceptor, $pool) {
-    $pool->run(function ()  {
+    $pool->run(function () {
         $pid = getmypid();
         $router = new Router();
 

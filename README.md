@@ -82,7 +82,14 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level cluster p
 ```bash
 composer require hiblaphp/parallel
 ```
+**Requirements:**
+- PHP 8.3+
 
+
+- `hiblaphp/event-loop`
+- `hiblaphp/promise`
+- `hiblaphp/stream`
+- `hiblaphp/async`
 ---
 
 ## Quick Start
@@ -132,7 +139,8 @@ Choose the right tool for your use case:
 | `->withMaxExecutionsPerWorker(int $n)` | *(Pool only)* Retire and replace workers after N tasks |
 | `->onMessage(callable $handler)` | *(Task/Pool)* Register a handler for `emit()` messages from workers |
 | `->onWorkerRespawn(callable $handler)` | *(Pool only)* Called whenever a worker exits and a replacement is spawned |
-| `->boot()` | *(Pool only)* Pre-warm all workers immediately before the first `run()` call |
+| `->boot()` | *(Pool only)* Pre-warm all workers immediately; returns before workers are ready — see `bootAsync()` |
+| `->bootAsync()` | *(Pool only)* Pre-warm all workers and return a `Promise<static>` that resolves only once all workers are genuinely ready |
 
 ---
 
@@ -425,7 +433,9 @@ is:
 The worker reports its own PID (`getmypid()`) in the READY frame because
 `proc_get_status()['pid']` returns the shell wrapper's PID on some platforms
 rather than the actual PHP process PID. The self-reported PID is used for
-`SIGKILL` / `taskkill` on cancellation.
+`SIGKILL` / `taskkill` on cancellation and is what `getWorkerPids()` returns
+once the READY frame has been received — see [Pool Monitoring](#pool-monitoring)
+for the full detail on PID accuracy.
 
 ---
 
@@ -778,22 +788,61 @@ the pool manager is first initialized. However, the pool manager itself is
 initialized lazily on the first `run()` call. This means even with eager
 spawning (the default), all N workers are still spawned on that first `run()`
 call — the first task will always incur the full pool boot cost unless `boot()`
-is called explicitly beforehand.
+or `bootAsync()` is called explicitly beforehand.
 
-Call `boot()` to pre-warm the pool at a convenient moment before any tasks
-arrive — such as during application startup — so the first `run()` dispatches
-to an already-idle worker with zero spawn latency:
+**`boot()` vs `bootAsync()`**
+
+Both methods pre-warm the pool before the first `run()` call, but they give
+different guarantees:
+
+`boot()` triggers the process spawning synchronously and returns immediately —
+it does not wait for the worker bootstrap phase to complete. Workers are being
+spawned, but they may not have finished loading the autoloader, running the
+framework bootstrap, and sending their READY frame yet. `getWorkerPids()` called
+immediately after `boot()` may return shell wrapper PIDs rather than the real
+PHP process PIDs.
+
+`bootAsync()` returns a `Promise<static>` that resolves only after every worker
+has sent its READY frame. Once the promise resolves, all workers have completed
+their bootstrap phase, are genuinely idle and ready to accept tasks, and
+`getWorkerPids()` returns the real PHP PIDs as reported by `getmypid()` inside
+each worker.
+
+Use `boot()` when you want to pay the spawn cost upfront but do not need PID
+accuracy or a hard guarantee that all workers are warm before you begin
+submitting tasks:
 ```php
 $pool = Parallel::pool(size: 4)
     ->withBootstrap('bootstrap.php')
-    ->boot(); // Workers spawn here — pay the cost upfront
+    ->boot(); // Workers are spawning — pay the cost upfront
 
-// Later — workers are guaranteed warm, no spawn latency
+// Later — workers will be ready by the time tasks arrive in practice,
+// but there is no hard guarantee at this exact line
 $pool->run($task);
 ```
 
-`boot()` is safe to call multiple times — subsequent calls are no-ops. It
-returns the same instance (not a clone) for fluent chaining after configuration.
+Use `bootAsync()` when you need to know that every worker is genuinely ready —
+for example, when accurate PIDs are required for monitoring, when you want to
+assert readiness before a health check passes, or when the first `run()` call
+must dispatch with zero latency:
+```php
+// Workers are guaranteed warm and PIDs are accurate after this line
+$pool = await(
+    Parallel::pool(size: 4)
+        ->withBootstrap('bootstrap.php')
+        ->bootAsync()
+);
+
+// getWorkerPids() returns real PHP PIDs — matches getmypid() inside tasks
+echo implode(', ', $pool->getWorkerPids());
+
+// First run() dispatches instantly — no spawn latency
+$result = await($pool->run(fn() => heavyWork()));
+```
+
+Both `boot()` and `bootAsync()` are safe to call multiple times — subsequent
+calls are no-ops. Both return the same pool instance (not a clone) for fluent
+chaining after configuration.
 
 Use lazy spawning when the pool is conditional or short-lived and workers may
 never be needed:
@@ -803,9 +852,10 @@ $pool = Parallel::pool(size: 4)
 ```
 
 With lazy spawning, workers are spawned one-by-one as tasks are submitted
-rather than all at once. Calling `boot()` on a lazy pool forces the pool
-manager to initialize, but workers still spawn individually on each `run()`
-call — `boot()` does not override that behaviour.
+rather than all at once. Calling `boot()` or `bootAsync()` on a lazy pool
+forces the pool manager to initialize, but workers still spawn individually on
+each `run()` call — neither method overrides that behaviour. For lazy pools,
+`bootAsync()` resolves immediately since there is no pre-boot phase.
 
 The trade-off for lazy spawning: the first batch of tasks will incur worker
 boot latency (~50–100ms per worker), and bootstrap errors surface on first
@@ -999,16 +1049,58 @@ Inspect a live pool to understand its current state. Useful for health checks,
 dashboards, and debugging.
 ```php
 use Hibla\Parallel\Parallel;
-
-$pool = Parallel::pool(size: 4);
+use function Hibla\await;
 
 // Number of worker processes currently alive
+$pool = Parallel::pool(size: 4);
 echo $pool->getWorkerCount(); // 4
+```
 
-// OS-level PIDs as self-reported by workers via the READY frame —
-// matches getmypid() inside worker tasks on all platforms
+### PID accuracy and `bootAsync()`
+
+`getWorkerPids()` returns the real PHP process PIDs as self-reported by each
+worker in its READY frame — these always match what `getmypid()` returns inside
+a running task on every platform, including Windows.
+
+However, there is a timing subtlety. Each worker goes through two phases after
+`proc_open()`:
+
+1. **Shell wrapper phase** — the OS creates the process and `proc_get_status()`
+   becomes available, but the PHP binary has not started yet. At this point
+   `getWorkerPids()` falls back to the shell wrapper PID, which does not match
+   the PHP process.
+2. **Ready phase** — the worker finishes loading the autoloader and any
+   framework bootstrap, sends its READY frame with `getmypid()`, and is
+   genuinely available for tasks.
+
+If you call `getWorkerPids()` between these two phases — for example,
+immediately after `boot()` — you may receive shell wrapper PIDs. For most
+workloads this does not matter because tasks are submitted after some event-loop
+ticks have passed, by which time the READY frames have already arrived.
+
+When PID accuracy matters — monitoring dashboards, health checks, integration
+tests, or any code that correlates `getWorkerPids()` with task PIDs — use
+`bootAsync()` to guarantee you are past phase 2 before reading PIDs:
+```php
+// Workers are guaranteed to have sent READY frames — PIDs are authoritative
+$pool = await(
+    Parallel::pool(size: 4)->bootAsync()
+);
+
+// These PIDs are accurate on all platforms including Windows
 $pids = $pool->getWorkerPids(); // [12345, 12346, 12347, 12348]
 echo implode(', ', $pids);
+
+// PIDs match exactly what getmypid() returns inside tasks
+$taskPids = await(Promise::all([
+    $pool->run(fn() => getmypid()),
+    $pool->run(fn() => getmypid()),
+    $pool->run(fn() => getmypid()),
+    $pool->run(fn() => getmypid()),
+]));
+
+// These two sets are always identical after bootAsync()
+assert(array_diff($pids, $taskPids) === []);
 
 $pool->shutdown();
 ```
@@ -1596,8 +1688,8 @@ return [
     |   HIBLA_PARALLEL_BACKGROUND_SPAWN_LIMIT
     */
     'background_process' => [
-        'memory_limit'          => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT', '512M'),
-        'timeout'               => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_TIMEOUT', 600),
+        'memory_limit'           => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_MEMORY_LIMIT', '512M'),
+        'timeout'                => env('HIBLA_PARALLEL_BACKGROUND_PROCESS_TIMEOUT', 600),
         'spawn_limit_per_second' => env('HIBLA_PARALLEL_BACKGROUND_SPAWN_LIMIT', 50, true),
     ],
 

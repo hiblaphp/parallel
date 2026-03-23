@@ -1,5 +1,7 @@
 <?php
 
+declare(strict_types=1);
+
 use Hibla\Parallel\Parallel;
 use Hibla\Promise\Promise;
 
@@ -11,23 +13,23 @@ for ($i = 0; $i < 3; $i++) {
     echo "Iteration: $i\n";
     Promise::all([
         $pool->run(function () {
-            echo "Pid: " . getmypid() . "\n";
+            echo 'Pid: ' . getmypid() . "\n";
             sleep(1);
         }),
         $pool->run(function () {
-            echo "Pid: " . getmypid() . "\n";
+            echo 'Pid: ' . getmypid() . "\n";
             sleep(1);
         }),
         $pool->run(function () {
-            echo "Pid: " . getmypid() . "\n";
+            echo 'Pid: ' . getmypid() . "\n";
             sleep(1);
         }),
         $pool->run(function () {
-            echo "Pid: " . getmypid() . "\n";
+            echo 'Pid: ' . getmypid() . "\n";
             sleep(1);
         }),
         $pool->run(function () {
-            echo "Pid: " . getmypid() . "\n";
+            echo 'Pid: ' . getmypid() . "\n";
             sleep(1);
         }),
     ])->wait();

@@ -57,6 +57,24 @@ final class ProcessPoolManager
     private bool $isShuttingDownGracefully = false;
 
     /**
+     * Resolves when all initial workers have sent their first READY frame.
+     * Null when spawnEagerly is false (lazy pools resolve immediately on first submit).
+     *
+     * @var Promise<void>|null
+     */
+    private ?Promise $bootPromise = null;
+
+    /**
+     * Number of initial workers that have sent their first READY frame.
+     */
+    private int $initialReadyCount = 0;
+
+    /**
+     * Whether the initial boot phase has completed.
+     */
+    private bool $bootCompleted = false;
+
+    /**
      * Maximum number of tasks a single worker executes before retiring and
      * being replaced by a fresh worker. Null means unlimited — workers run
      * indefinitely until the pool is shut down or a worker crashes.
@@ -104,8 +122,34 @@ final class ProcessPoolManager
         $this->taskQueue = new SplQueue();
 
         if ($this->spawnEagerly) {
+            // Create the boot promise before initializing so spawnWorker()'s
+            // onReady callbacks can resolve it as workers check in.
+            /** @var Promise<void> $bootPromise */
+            $bootPromise = new Promise();
+            $this->bootPromise = $bootPromise;
             $this->initialize();
+        } else {
+            // Lazy pools have no boot phase — treat as immediately ready.
+            $this->bootCompleted = true;
         }
+    }
+
+    /**
+     * Returns a Promise that resolves once all initial workers have sent their
+     * first READY frame, meaning getWorkerPids() will return the real PHP PIDs
+     * (from getmypid() inside the worker) rather than shell wrapper PIDs.
+     *
+     * For lazy pools this resolves immediately since there is no boot phase.
+     *
+     * @return PromiseInterface<void>
+     */
+    public function waitUntilReady(): PromiseInterface
+    {
+        if ($this->bootCompleted || $this->bootPromise === null) {
+            return Promise::resolved();
+        }
+
+        return $this->bootPromise;
     }
 
     /**
@@ -127,6 +171,10 @@ final class ProcessPoolManager
      * Returns the actual PHP process PIDs of all currently alive worker processes
      * as reported by the workers themselves via READY frames. These match the
      * values returned by getmypid() inside worker tasks on all platforms.
+     *
+     * Note: for eager pools, PIDs are only guaranteed accurate after the Promise
+     * returned by waitUntilReady() has resolved. Before that point, some entries
+     * may still reflect the shell wrapper PID from proc_get_status().
      *
      * @return array<int, int>
      */
@@ -244,6 +292,14 @@ final class ProcessPoolManager
         $this->isShutdown = true;
         $this->isShuttingDownGracefully = false; // Override graceful state
 
+        // Reject the boot promise if shutdown happens before all workers are ready.
+        if (! $this->bootCompleted && $this->bootPromise !== null) {
+            $this->bootCompleted = true;
+            if (! $this->bootPromise->isFulfilled() && ! $this->bootPromise->isRejected()) {
+                $this->bootPromise->reject(new PoolShutdownException('Pool was shut down before all workers finished booting.'));
+            }
+        }
+
         // On Windows each signalTerminate() fires "start /B taskkill" and returns
         // immediately, so all workers receive their kill signal before we begin
         // closing any pipes — avoiding sequential N × exec() blocking.
@@ -352,6 +408,14 @@ final class ProcessPoolManager
         $this->isShutdown = true;
         $this->isShuttingDownGracefully = false;
 
+        // Reject the boot promise so callers awaiting bootAsync() get the error.
+        if (! $this->bootCompleted && $this->bootPromise !== null) {
+            $this->bootCompleted = true;
+            if (! $this->bootPromise->isFulfilled() && ! $this->bootPromise->isRejected()) {
+                $this->bootPromise->reject($e);
+            }
+        }
+
         foreach ($this->allWorkers as $worker) {
             $worker->signalTerminate();
         }
@@ -400,7 +464,21 @@ final class ProcessPoolManager
         $workerIsReady = false;
 
         $onReady = function (PersistentProcess $worker) use (&$workerIsReady): void {
+            // Capture whether this is the first READY from this worker before
+            // flipping the flag — subsequent READY frames (sent after each task
+            // completes) must not increment the boot counter again.
+            $isFirstReady = ! $workerIsReady;
             $workerIsReady = true;
+
+            // Resolve the boot promise once every initial worker has checked in.
+            // Only the first READY per worker counts toward the boot threshold.
+            if ($isFirstReady && ! $this->bootCompleted && $this->bootPromise !== null) {
+                $this->initialReadyCount++;
+                if ($this->initialReadyCount >= $this->size) {
+                    $this->bootCompleted = true;
+                    $this->bootPromise->resolve(null);
+                }
+            }
 
             if ($this->isShutdown && ! $this->isShuttingDownGracefully) {
                 $worker->terminate();

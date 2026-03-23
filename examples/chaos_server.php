@@ -6,7 +6,6 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use function Hibla\asyncFn;
 
-use Hibla\EventLoop\Loop;
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 use Hibla\Parallel\Parallel;
 use Hibla\Socket\SocketServer;
@@ -24,7 +23,6 @@ $routerClass = new class () {
         return isset($this->static[$method][$uri]) ? ($this->static[$method][$uri])() : '404 Not Found';
     }
 };
-
 
 $serverTask = function () use ($routerClass) {
     $pid = getmypid();

@@ -36,17 +36,14 @@ describe('BackgroundProcess', function () {
 
         $bp = new BackgroundProcess($pid);
 
-        // Should be running immediately
         expect($bp->isRunning())->toBeTrue();
 
-        // Kill it manually
         if (PHP_OS_FAMILY === 'Windows') {
             exec("taskkill /F /PID $pid 2>nul");
         } else {
             posix_kill($pid, 9);
         }
 
-        // Reap the zombie process so the PID is removed from the OS table
         proc_close($resource);
 
         expect($bp->isRunning())->toBeFalse();
@@ -60,8 +57,7 @@ describe('BackgroundProcess', function () {
         expect($bp->isRunning())->toBeTrue();
 
         $bp->terminate();
-
-        // Reap the zombie
+        
         proc_close($resource);
 
         expect($bp->isRunning())->toBeFalse();

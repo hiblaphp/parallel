@@ -110,15 +110,18 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
 
     /**
      * Pre-warms the pool by spawning all workers immediately, before any task
-     * is submitted. Useful when you want to pay the worker boot cost upfront
-     * (e.g. during app startup) so the first run() call dispatches to an
-     * already-idle worker with zero spawn latency.
+     * is submitted. Returns immediately without waiting for workers to finish
+     * booting — getWorkerPids() may still return shell wrapper PIDs at this point.
      *
-     * Without calling boot(), the underlying pool manager is initialized lazily
-     * on the first run() call. This means even with eager spawning (the default),
-     * all N workers are still spawned on that first run() call — the first task
-     * will always incur the full pool boot cost unless boot() is called explicitly
-     * beforehand.
+     * Useful when you want to pay the worker boot cost upfront (e.g. during app
+     * startup) so the first run() call dispatches to an already-idle worker with
+     * zero spawn latency.
+     *
+     * Without calling boot() or bootAsync(), the underlying pool manager is
+     * initialized lazily on the first run() call. This means even with eager
+     * spawning (the default), all N workers are still spawned on that first
+     * run() call — the first task will always incur the full pool boot cost
+     * unless boot() or bootAsync() is called explicitly beforehand.
      *
      * Calling boot() on a lazy pool (withLazySpawning()) forces the manager to
      * initialize, but workers still spawn one-by-one on each submit() inside the
@@ -126,7 +129,43 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      *
      * Safe to call multiple times — subsequent calls are no-ops.
      *
+     * Prefer bootAsync() when you need accurate PIDs or a guarantee that all
+     * workers are ready to accept tasks before proceeding.
+     *
      * @return static The same instance (not a clone) for fluent chaining after configuration.
      */
     public function boot(): static;
+
+    /**
+     * Pre-warms the pool and returns a Promise that resolves only after all
+     * workers have sent their READY frame.
+     *
+     * Unlike boot(), which returns immediately after spawning processes,
+     * bootAsync() waits for every worker to complete its bootstrap phase and
+     * signal readiness. Once the returned Promise resolves:
+     * - getWorkerPids() returns the real PHP PIDs from getmypid() inside the
+     *   worker, not the shell wrapper PIDs that proc_get_status() may report.
+     * - All workers are genuinely idle and ready to accept tasks with zero
+     *   additional spawn latency.
+     *
+     * For lazy pools (withLazySpawning()) this resolves immediately since
+     * there is no pre-boot phase.
+     *
+     * Safe to call multiple times — subsequent calls return the same resolved
+     * Promise after the initial boot has completed.
+     *
+     * Usage:
+     * ```php
+     * $pool = await(Parallel::pool(4)->bootAsync());
+     *
+     * // getWorkerPids() now returns real PHP PIDs
+     * $pids = $pool->getWorkerPids();
+     *
+     * // Workers are guaranteed ready — no spawn latency on first run()
+     * $result = await($pool->run(fn() => heavyWork()));
+     * ```
+     *
+     * @return PromiseInterface<static> A Promise resolving to this pool instance once all workers are ready.
+     */
+    public function bootAsync(): PromiseInterface;
 }

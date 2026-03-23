@@ -18,8 +18,8 @@ describe('Promise Combinators Integration', function () {
         $start = microtime(true);
 
         $promises = [
-            parallel(fn() => 10),
-            parallel(fn() => 20),
+            parallel(fn () => 10),
+            parallel(fn () => 20),
             parallel(function () {
                 usleep(200000);
 
@@ -42,18 +42,19 @@ describe('Promise Combinators Integration', function () {
 
                 return 'slow';
             }),
-            parallel(fn() => throw new Exception('Fail Fast')),
+            parallel(fn () => throw new Exception('Fail Fast')),
         ];
 
-        expect(fn() => await(Promise::all($promises)))
-            ->toThrow(Exception::class, 'Fail Fast');
+        expect(fn () => await(Promise::all($promises)))
+            ->toThrow(Exception::class, 'Fail Fast')
+        ;
     });
 
     test('Promise::allSettled: waits for all tasks regardless of outcome', function () {
         $promises = [
-            parallel(fn() => 'Success'),
-            parallel(fn() => throw new RuntimeException('Oops')),
-            parallel(fn() => 'Another Success'),
+            parallel(fn () => 'Success'),
+            parallel(fn () => throw new RuntimeException('Oops')),
+            parallel(fn () => 'Another Success'),
         ];
 
         $results = await(Promise::allSettled($promises));
@@ -98,7 +99,7 @@ describe('Promise Combinators Integration', function () {
 
     test('Promise::any: resolves with the first successful task (ignoring failures)', function () {
         $promises = [
-            parallel(fn() => throw new Exception('Bad 1')),
+            parallel(fn () => throw new Exception('Bad 1')),
 
             parallel(function () {
                 usleep(50000);
@@ -120,8 +121,8 @@ describe('Promise Combinators Integration', function () {
 
     test('Promise::any: throws AggregateException if all tasks fail', function () {
         $promises = [
-            parallel(fn() => throw new Exception('Err 1')),
-            parallel(fn() => throw new Exception('Err 2')),
+            parallel(fn () => throw new Exception('Err 1')),
+            parallel(fn () => throw new Exception('Err 2')),
         ];
 
         try {
@@ -161,12 +162,12 @@ describe('Promise Combinators Integration', function () {
     test('integration: combinators work seamlessly inside async() fibers', function () {
         $finalResult = await(async(function () {
             $batch1 = await(Promise::all([
-                parallel(fn() => 1),
-                parallel(fn() => 2),
+                parallel(fn () => 1),
+                parallel(fn () => 2),
             ]));
             $sum = array_sum($batch1);
 
-            $result = await(parallel(fn() => $sum * 10));
+            $result = await(parallel(fn () => $sum * 10));
 
             return $result;
         }));
@@ -178,7 +179,7 @@ describe('Promise Combinators Integration', function () {
         $task = Parallel::task();
 
         $result = await(
-            Promise::map(["paris", "london"], $task->runFn(function ($item) {
+            Promise::map(['paris', 'london'], $task->runFn(function ($item) {
                 return strtoupper($item);
             }))
         );
@@ -187,11 +188,11 @@ describe('Promise Combinators Integration', function () {
         expect($result[1])->toBe('LONDON');
     });
 
-    test("Promise::map work on Pool task that returns a callable", function () {
+    test('Promise::map work on Pool task that returns a callable', function () {
         $pool = Parallel::pool(2);
 
         $result = await(
-            Promise::map(["paris", "london"], $pool->runFn(function ($item) {
+            Promise::map(['paris', 'london'], $pool->runFn(function ($item) {
                 return strtoupper($item);
             }))
         );

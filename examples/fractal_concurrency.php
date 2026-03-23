@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 require __DIR__ . '/../vendor/autoload.php';
 
-use Hibla\Promise\Promise;
-
 use function Hibla\async;
+
 use function Hibla\await;
 use function Hibla\delay;
 use function Hibla\parallel;
+
+use Hibla\Promise\Promise;
 
 $start = microtime(true);
 
@@ -29,7 +30,7 @@ Promise::all([
                 await(parallel(function () {
                     sleep(1);
                 }));
-            })
+            }),
         ]));
     }),
     parallel(function () {
