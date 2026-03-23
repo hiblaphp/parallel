@@ -250,7 +250,18 @@ class ProcessSpawnHandler
         int $timeoutSeconds,
         string|int $memoryLimit
     ): string {
-        $serializedCallback = $serializationManager->serializeCallback($callback);
+        try {
+            $serializedCallback = $serializationManager->serializeCallback($callback);
+        } catch (\Throwable $e) {
+            $message = $e->getMessage();
+            if ($e instanceof \TypeError || str_contains($message, 'getCallableForm') || str_contains($message, 'serialize')) {
+                throw new TaskPayloadException(
+                    "Failed to serialize task payload: The closure likely captures an unserializable object (e.g., ProcessPool, Stream, or PDO). Ensure you are not passing active OS resources into the closure via 'use (...)'. Underlying error: " . $message
+                );
+            }
+
+            throw new TaskPayloadException('Failed to serialize task payload: ' . $message);
+        }
 
         $serializedBootstrapCallback = null;
         $bootstrapCallback = $frameworkInfo['bootstrap_callback'] ?? null;

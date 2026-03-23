@@ -572,7 +572,15 @@ final class ProcessPoolManager
             $serializedTask = $this->serializer->serializeCallback($task);
         } catch (\Throwable $e) {
             if (! $promise->isCancelled()) {
-                $promise->reject(new TaskPayloadException('Failed to serialize task payload: ' . $e->getMessage(), 0, $e));
+                $message = $e->getMessage();
+
+                if ($e instanceof \TypeError || str_contains($message, 'getCallableForm') || str_contains($message, 'serialize')) {
+                    $promise->reject(new TaskPayloadException(
+                        "Failed to serialize task payload: The closure likely captures an unserializable object (e.g., ProcessPool, Stream, or PDO). Ensure you are not passing active OS resources into the closure via 'use (...)'. Underlying error: " . $message
+                    ));
+                } else {
+                    $promise->reject(new TaskPayloadException('Failed to serialize task payload: ' . $message));
+                }
             }
             $this->idleWorkers->enqueue($worker);
 
