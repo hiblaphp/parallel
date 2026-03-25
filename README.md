@@ -41,6 +41,10 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level cluster p
     - [Lazy Spawning](#lazy-spawning)
 - [Self-Healing & Supervisor Pattern](#self-healing--supervisor-pattern)
   - [Complete example: chaos server](#complete-example-chaos-server)
+- [Respawn Rate Limiting](#respawn-rate-limiting)        ← new
+  - [Fail-fast, not slow-fail](#fail-fast-not-slow-fail) ← new
+  - [Choosing the right limit](#choosing-the-right-limit) ← new
+  - [Interaction with `onWorkerRespawn`](#interaction-with-onworkerrespawn) ← new
 - [Pool Monitoring](#pool-monitoring)
   - [PID accuracy and `boot()`](#pid-accuracy-and-boot)
 
@@ -140,6 +144,7 @@ Choose the right tool for your use case:
 | `->withMaxNestingLevel(int $level)` | Override the fork-bomb safety limit (1–10) |
 | `->withLazySpawning()` | *(Pool only)* Spawn workers on first `run()` call instead of at construction |
 | `->withMaxExecutionsPerWorker(int $n)` | *(Pool only)* Retire and replace workers after N tasks |
+| `->withMaxRestartPerSecond(int $n)` | *(Pool only)* Limit respawn rate to N workers per second |
 | `->onMessage(callable $handler)` | *(Task/Pool)* Register a handler for `emit()` messages from workers |
 | `->onWorkerRespawn(callable $handler)` | *(Pool only)* Called whenever a worker exits and a replacement is spawned |
 | `->boot()` | *(Pool only)* Pre-warm all workers immediately; returns before workers are ready — see `bootAsync()` |
@@ -1007,6 +1012,107 @@ with no manual intervention and no restart of the master process.
 
 ---
 
+## Respawn Rate Limiting
+
+By default, the pool will respawn a crashed worker immediately and without
+limit. This is the right behavior for isolated, one-off crashes — a bad task
+payload, a transient fault, or a single worker OOM kill. The replacement is up
+and running before the next task even notices.
+
+However, if the root cause is not transient — a broken bootstrap file, a fatal
+error in every task, or an unserializable payload submitted in a loop — every
+replacement worker will crash for the exact same reason. Without a circuit
+breaker, the pool enters an uncontrolled crash loop: spawning, crashing, and
+re-spawning at full speed until either the OS runs out of resources or the
+process table fills up.
+
+`withMaxRestartPerSecond()` is that circuit breaker. It counts worker respawns
+in a one-second sliding window and shuts the pool down with a
+`RespawnRateLimitException` the moment the threshold is crossed:
+```php
+use Hibla\Parallel\Parallel;
+use Hibla\Parallel\Exceptions\RespawnRateLimitException;
+use function Hibla\await;
+
+$pool = Parallel::pool(size: 4)
+    ->withMaxRestartPerSecond(5);
+
+try {
+    await($pool->run(fn() => riskyWork()));
+} catch (RespawnRateLimitException $e) {
+    // Pool detected a crash loop and shut itself down.
+    // All pending and queued tasks have been rejected.
+    echo $e->getMessage();
+}
+```
+
+### Fail-fast, not slow-fail
+
+When the limit is exceeded, the pool does not pause and retry — it shuts down
+immediately and rejects every pending promise. This is intentional.
+
+A rapid crash loop is almost never a transient problem. The 5th respawn will
+fail for the exact same reason as the 1st. Slowing down the respawn rate with
+backoff just delays the inevitable while leaving the task queue growing with
+unprocessed work and giving callers false hope that the pool is still
+functional. Failing fast means:
+
+- Every caller is notified immediately via a rejected promise
+- No resources are wasted on doomed respawns
+- The root cause surfaces sooner rather than being obscured by retry noise
+
+### Choosing the right limit
+
+The library does not set a default. Your workload determines what "too many
+restarts" looks like, and a wrong default is worse than no default — too tight
+and you kill a healthy pool, too loose and the protection is meaningless.
+
+Use these factors to guide your choice:
+
+| Factor | Consideration |
+| :--- | :--- |
+| **Pool size** | A pool of 8 workers retiring via `withMaxExecutionsPerWorker` will naturally respawn more often than a pool of 2. Account for planned retirements. |
+| **Task duration** | Short tasks cycle workers faster. A limit that works for 10-second tasks may be too tight for 50ms tasks with high throughput. |
+| **Expected crash rate** | If occasional worker crashes are normal for your workload, set the limit above your expected noise floor. |
+| **Environment stability** | Development environments with frequent code changes crash more often than production. Consider separate configs. |
+
+A reasonable starting point for most production pools is `3`–`5`. This
+comfortably absorbs occasional one-off crashes while still catching a true
+crash loop within a second.
+```php
+// Conservative — any sustained crash loop trips immediately
+$pool = Parallel::pool(size: 4)
+    ->withMaxRestartPerSecond(3);
+
+// More tolerant — useful for larger pools or higher-churn workloads  
+$pool = Parallel::pool(size: 16)
+    ->withMaxRestartPerSecond(10);
+```
+
+### Interaction with `onWorkerRespawn`
+
+`onWorkerRespawn` fires on every successful respawn — including the ones counted
+toward the rate limit. Once the limit is exceeded and the pool shuts down, the
+hook will no longer fire. Design your respawn handler accordingly: do not assume
+it will always be called, and do not use it as the sole mechanism for detecting
+a crash loop.
+```php
+$pool = Parallel::pool(size: 4)
+    ->withMaxRestartPerSecond(5)
+    ->onWorkerRespawn(function (ProcessPoolInterface $pool) use ($task) {
+        // This fires for each individual respawn within the limit.
+        // It will NOT fire once RespawnRateLimitException shuts the pool down.
+        $pool->run($task);
+    });
+```
+
+> **Note:** `withMaxRestartPerSecond` is opt-in and `null` by default. If you
+> do not set it, the pool will respawn crashed workers indefinitely with no
+> rate check. For any long-running pool in production, setting an explicit limit
+> is strongly recommended.
+
+---
+
 ### Pool Monitoring
 
 Inspect a live pool to understand its current state. Useful for health checks, dashboards, and debugging.
@@ -1534,6 +1640,7 @@ error generically, or catch specific types for granular handling.
 | `PoolShutdownException` | A task is submitted to (or was queued in) a pool that has been shut down |
 | `TaskPayloadException` | The task callback cannot be serialized, or the JSON payload encoding fails |
 | `ProcessSpawnException` | The OS fails to spawn a new process, or required functions are disabled in `php.ini` |
+| `RateLimitException` | More than `max_restart_per_second` workers are respawned in one second |
 ```php
 use Hibla\Parallel\Exceptions\{
     ParallelException,
