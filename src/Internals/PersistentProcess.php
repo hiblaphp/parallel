@@ -41,13 +41,6 @@ final class PersistentProcess
     private bool $isBusy = true;
 
     /**
-     * The actual PHP process PID as reported by the worker itself via the
-     * READY frame. On both Windows and Linux, proc_get_status()['pid'] may
-     * return a shell wrapper PID rather than the actual PHP process PID.
-     * The worker's own getmypid() is always the authoritative source.
-     *
-     * Null until the first READY frame is received.
-     *
      * @var int|null
      */
     private ?int $workerPid = null;
@@ -71,9 +64,6 @@ final class PersistentProcess
         $this->onCrashCallback = $onCrashCallback;
 
         async(function () {
-            // Tracks in-flight handler fibers per task ID so COMPLETED/ERROR
-            // can await all handlers for that specific task before resolving
-            // its promise — prevents callers being released before handlers finish.
             /** @var array<string, list<PromiseInterface<mixed>>> $pendingHandlers */
             $pendingHandlers = [];
 
@@ -101,10 +91,6 @@ final class PersistentProcess
                     }
 
                     if ($status === 'RETIRING') {
-                        $executions = isset($data['executions']) && \is_int($data['executions'])
-                            ? $data['executions']
-                            : 'unknown';
-
                         $this->terminate();
                         ($this->onCrashCallback)($this);
 
@@ -112,9 +98,6 @@ final class PersistentProcess
                     }
 
                     if ($status === 'READY') {
-                        // Store the real PHP process PID from the worker's self-report.
-                        // proc_get_status()['pid'] returns a shell wrapper PID on both
-                        // Windows and Linux — the worker's own getmypid() is authoritative.
                         if (isset($data['pid']) && \is_int($data['pid'])) {
                             $this->workerPid = $data['pid'];
                         }
@@ -207,33 +190,18 @@ final class PersistentProcess
         });
     }
 
-    /**
-     * Get the process ID from proc_get_status() — may be a shell wrapper
-     * PID on some platforms.
-     *
-     * @return int
-     */
     public function getPid(): int
     {
         return $this->pid;
     }
 
-    /**
-     * Returns the actual PHP process PID of this worker as reported by the
-     * worker itself via the READY frame. Falls back to the proc_get_status()
-     * PID if the worker has not yet sent a READY frame.
-     *
-     * @return int
-     */
     public function getWorkerPid(): int
     {
         return $this->workerPid ?? $this->pid;
     }
 
     /**
-     * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
-     *        The handler promise is tracked by startReadLoop() and awaited before the task
-     *        promise resolves — callers are never released before handlers finish.
+     * @param callable(WorkerMessage): void|null $onMessage
      * @return PromiseInterface<mixed>
      */
     public function submitTask(string $taskId, string $payload, string $sourceLocation = 'unknown', ?callable $onMessage = null): PromiseInterface
@@ -251,16 +219,12 @@ final class PersistentProcess
 
         async(function () use ($payload) {
             try {
-                // If the process was terminated before the event loop
-                // ran this closure, we skip the write entirely.
                 if (! $this->isAlive) {
                     return;
                 }
 
                 await($this->stdin->writeAsync($payload . PHP_EOL));
             } catch (\Hibla\Stream\Exceptions\StreamException) {
-                // Ignore: This happens if the process is killed (via cancellation)
-                // while this asynchronous write is still in the event loop queue.
             }
         });
 
@@ -278,17 +242,12 @@ final class PersistentProcess
     }
 
     /**
-     * Sends a kill signal to the worker process without blocking.
+     * Sends a termination signal to the worker process without blocking.
      *
-     * On Windows, proc_open() is called with bypass_shell => true in
-     * ProcessSpawnHandler, so the resource maps directly to the PHP worker.
-     * proc_terminate() calls TerminateProcess() internally which is
-     * non-blocking and returns immediately — no popen/cmd.exe needed.
-     *
-     * On Unix, pkill/kill cover the child tree since proc_terminate() only
-     * signals the direct process.
+     * @param bool $executeOsKill If true, issues the OS command to kill the tree. If false,
+     *                            only internal state is updated (used during batched pool shutdown).
      */
-    public function signalTerminate(): void
+    public function signalTerminate(bool $executeOsKill = true): void
     {
         if (! $this->isAlive) {
             return;
@@ -296,21 +255,30 @@ final class PersistentProcess
 
         $this->handleCrash();
 
-       ProcessKiller::killTree($this->pid, $this->processResource);
+        if ($executeOsKill) {
+            ProcessKiller::killTreesAsync([$this->pid]);
+        }
     }
 
     /**
-     * Closes all I/O streams and releases the proc resource for this worker.
+     * Closes all I/O streams and optionally releases the proc resource.
+     *
+     * @param bool $closeProcessResource If false, the proc_open resource is left alive
+     *                                   so the Windows tree structure isn't broken.
      */
-    public function cleanupResources(): void
+    public function cleanupResources(bool $closeProcessResource = true): void
     {
         $this->stdin->close();
         $this->stdout->close();
         $this->stderr->close();
 
-        if (\is_resource($this->processResource)) {
-            @proc_terminate($this->processResource);
-            @proc_close($this->processResource);
+        if ($closeProcessResource && \is_resource($this->processResource)) {
+            if (PHP_OS_FAMILY === 'Windows') {
+                @proc_terminate($this->processResource);
+            } else {
+                @proc_terminate($this->processResource);
+                @proc_close($this->processResource);
+            }
         }
     }
 
@@ -323,8 +291,8 @@ final class PersistentProcess
             return;
         }
 
-        $this->signalTerminate();
-        $this->cleanupResources();
+        $this->signalTerminate(true);
+        $this->cleanupResources(PHP_OS_FAMILY !== 'Windows');
     }
 
     private function handleCrash(): void

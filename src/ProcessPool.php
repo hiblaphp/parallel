@@ -4,15 +4,16 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel;
 
+use function Hibla\await;
+
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\Managers\ProcessPoolManager;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
-use Rcalicdan\ConfigLoader\Config;
 
-use function Hibla\await;
+use Rcalicdan\ConfigLoader\Config;
 
 /**
  * Class for managing a pool of persistent worker processes.
@@ -67,7 +68,9 @@ final class ProcessPool implements ProcessPoolInterface
      */
     private $onRespawnHandler = null;
 
-    public function __construct(private readonly int $size) {}
+    public function __construct(private readonly int $size)
+    {
+    }
 
     /**
      * @inheritdoc
@@ -291,7 +294,7 @@ final class ProcessPool implements ProcessPoolInterface
     public function runFn(callable $task, ?callable $onMessage = null): callable
     {
         return function (mixed ...$args) use ($task, $onMessage): PromiseInterface {
-            return $this->run(static fn() => $task(...$args), $onMessage);
+            return $this->run(static fn () => $task(...$args), $onMessage);
         };
     }
 

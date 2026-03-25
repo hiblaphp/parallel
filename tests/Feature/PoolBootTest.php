@@ -41,7 +41,7 @@ describe('Pool Boot', function () {
 
         expect($reportedPids)->toHaveCount($size);
 
-        $actualWorkerPid = await($pool->run(fn() => getmypid()));
+        $actualWorkerPid = await($pool->run(fn () => getmypid()));
 
         expect($reportedPids)->toContain($actualWorkerPid);
 

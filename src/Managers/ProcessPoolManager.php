@@ -13,12 +13,12 @@ use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Internals\PersistentProcess;
 use Hibla\Parallel\Traits\MessageHandlerComposer;
+use Hibla\Parallel\Utilities\ProcessKiller;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Rcalicdan\Serializer\CallbackSerializationManager;
-
 use SplQueue;
 
 /**
@@ -44,7 +44,7 @@ final class ProcessPoolManager
     private array $allWorkers = [];
 
     /**
-     * @var array<int, array<string, Promise<mixed>>> Worker ID -> Task ID -> Promise
+     * @var array<int, array<string, Promise<mixed>>>
      */
     private array $activeTasks = [];
 
@@ -54,9 +54,6 @@ final class ProcessPoolManager
     private ?Promise $shutdownPromise = null;
 
     /**
-     * Resolves when all initial workers have sent their first READY frame.
-     * Null when spawnEagerly is false (lazy pools resolve immediately on first submit).
-     *
      * @var Promise<void>|null
      */
     private ?Promise $bootPromise = null;
@@ -87,10 +84,9 @@ final class ProcessPoolManager
     /**
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(): mixed)|null} $frameworkInfo
      * @param array<int, callable(WorkerMessage): void> $onMessageHandlers
-     * @param bool $spawnEagerly
-     * @param int<1, max>|null $maxExecutionsPerWorker Maximum tasks per worker before retirement. Null means unlimited.
-     * @param int<1, max>|null $maxRestartPerSecond Maximum respawns per second. Null means unlimited.
-     * @param callable(): void|null $onWorkerRespawn Internal respawn hook passed from ProcessPool.
+     * @param int<1, max>|null $maxExecutionsPerWorker
+     * @param int<1, max>|null $maxRestartPerSecond
+     * @param callable(): void|null $onWorkerRespawn
      */
     public function __construct(
         private readonly int $size,
@@ -119,14 +115,12 @@ final class ProcessPoolManager
         }
 
         $this->maxExecutionsPerWorker = $maxExecutionsPerWorker;
-        $this->maxRestartPerSecond    = $maxRestartPerSecond;
+        $this->maxRestartPerSecond = $maxRestartPerSecond;
 
         $this->idleWorkers = new SplQueue();
-        $this->taskQueue   = new SplQueue();
+        $this->taskQueue = new SplQueue();
 
         if ($this->spawnEagerly) {
-            // Create the boot promise before initializing so spawnWorker()'s
-            // onReady callbacks can resolve it as workers check in.
             /** @var Promise<void> $bootPromise */
             $bootPromise = new Promise();
             $this->bootPromise = $bootPromise;
@@ -135,6 +129,7 @@ final class ProcessPoolManager
             $this->bootCompleted = true;
         }
     }
+
     /**
      * @return PromiseInterface<void>
      */
@@ -147,9 +142,6 @@ final class ProcessPoolManager
         return $this->bootPromise;
     }
 
-    /**
-     * @return int
-     */
     public function getWorkerCount(): int
     {
         return \count($this->allWorkers);
@@ -273,8 +265,20 @@ final class ProcessPoolManager
             }
         }
 
+        // BATCH ASYNC KILL OPTIMIZATION
+        // This launches the detached killer in the background instantly (0.001s).
+        $pids = [];
         foreach ($this->allWorkers as $worker) {
-            $worker->signalTerminate();
+            $pids[] = $worker->getPid();
+        }
+
+        if (\count($pids) > 0) {
+            ProcessKiller::killTreesAsync($pids);
+        }
+
+        // Signal all workers but DO NOT perform individual OS kills
+        foreach ($this->allWorkers as $worker) {
+            $worker->signalTerminate(false);
         }
 
         while (! $this->taskQueue->isEmpty()) {
@@ -294,11 +298,13 @@ final class ProcessPoolManager
             }
         }
 
+        // Close streams, but leave the Windows process handles open so the tree
+        // stays intact for the background killer.
         foreach ($this->allWorkers as $worker) {
-            $worker->cleanupResources();
+            $worker->cleanupResources(PHP_OS_FAMILY !== 'Windows');
         }
 
-        $this->allWorkers  = [];
+        $this->allWorkers = [];
         $this->activeTasks = [];
         $this->idleWorkers = new SplQueue();
 
@@ -327,7 +333,6 @@ final class ProcessPoolManager
 
         return \count($this->respawnTimestamps) >= $this->maxRestartPerSecond;
     }
-
 
     private function initialize(): void
     {
@@ -364,22 +369,31 @@ final class ProcessPoolManager
             return;
         }
 
-        // Wait for all active tasks to complete
         foreach ($this->activeTasks as $tasks) {
             if (\count($tasks) > 0) {
                 return;
             }
         }
 
+        // All tasks completed, initiate async background shutdown
+        $pids = [];
         foreach ($this->allWorkers as $worker) {
-            $worker->signalTerminate();
+            $pids[] = $worker->getPid();
+        }
+
+        if (\count($pids) > 0) {
+            ProcessKiller::killTreesAsync($pids);
         }
 
         foreach ($this->allWorkers as $worker) {
-            $worker->cleanupResources();
+            $worker->signalTerminate(false);
         }
 
-        $this->allWorkers  = [];
+        foreach ($this->allWorkers as $worker) {
+            $worker->cleanupResources(PHP_OS_FAMILY !== 'Windows');
+        }
+
+        $this->allWorkers = [];
         $this->activeTasks = [];
         $this->idleWorkers = new SplQueue();
 
@@ -400,11 +414,21 @@ final class ProcessPoolManager
             }
         }
 
+        $pids = [];
         foreach ($this->allWorkers as $worker) {
-            $worker->signalTerminate();
+            $pids[] = $worker->getPid();
         }
 
-        $this->allWorkers = [];
+        if (\count($pids) > 0) {
+            ProcessKiller::killTreesAsync($pids);
+        }
+
+        foreach ($this->allWorkers as $worker) {
+            $worker->signalTerminate(false);
+        }
+
+        $workersToCleanup = $this->allWorkers;
+        $this->allWorkers  = [];
 
         while (! $this->taskQueue->isEmpty()) {
             $taskData = $this->taskQueue->dequeue();
@@ -415,12 +439,16 @@ final class ProcessPoolManager
             }
         }
 
-        foreach ($this->activeTasks as $workerId => $tasks) {
+        foreach ($this->activeTasks as $tasks) {
             foreach ($tasks as $promise) {
                 if (! $promise->isCancelled()) {
                     $promise->reject($e);
                 }
             }
+        }
+
+        foreach ($workersToCleanup as $worker) {
+            $worker->cleanupResources(PHP_OS_FAMILY !== 'Windows');
         }
 
         $this->activeTasks = [];
@@ -443,16 +471,14 @@ final class ProcessPoolManager
         );
 
         $workerId = spl_object_id($process);
-        $this->allWorkers[$workerId]  = $process;
+        $this->allWorkers[$workerId] = $process;
         $this->activeTasks[$workerId] = [];
         $workerIsReady = false;
 
         $onReady = function (PersistentProcess $worker) use (&$workerIsReady): void {
-            $isFirstReady  = ! $workerIsReady;
+            $isFirstReady = ! $workerIsReady;
             $workerIsReady = true;
 
-            // Resolve the boot promise once every initial worker has checked in.
-            // Only the first READY per worker counts toward the boot threshold.
             if ($isFirstReady && ! $this->bootCompleted && $this->bootPromise !== null) {
                 $this->initialReadyCount++;
                 if ($this->initialReadyCount >= $this->size) {
@@ -537,8 +563,6 @@ final class ProcessPoolManager
                 return;
             }
 
-            // Record this respawn event *after* the limit check so the worker
-            // that triggered the check is counted toward the next window.
             $this->recordRespawn();
 
             if (\count($this->allWorkers) < $this->size) {
@@ -583,7 +607,7 @@ final class ProcessPoolManager
         }
 
         $payload = [
-            'task_id'             => $taskId,
+            'task_id' => $taskId,
             'serialized_callback' => $serializedTask,
         ];
 
@@ -601,11 +625,6 @@ final class ProcessPoolManager
         $workerId = spl_object_id($worker);
         $this->activeTasks[$workerId][$taskId] = $promise;
 
-        // Compose per-task and pool-level handlers into a single callable.
-        // Per-task fires first (scheduled first onto the event loop), then
-        // pool-level. Both are wrapped in async() inside PersistentProcess
-        // so they run as independent fibers — neither blocks the read loop
-        // and neither waits for the other to complete.
         $composedHandler = $this->composeMessageHandlers($this->onMessageHandlers, $onMessage);
 
         $executionPromise = $worker->submitTask($taskId, $jsonPayload, $sourceLocation, $composedHandler);

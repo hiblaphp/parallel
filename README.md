@@ -1574,40 +1574,9 @@ is not a real cancellation — the work continues in orphaned background process
 with no owner, no handle, and no way to stop them. Hibla treats full tree kill
 as non-negotiable.
 
-### Windows cancellation trade-off
-
-On Linux, Hibla Parallel walks the process tree recursively using `pgrep` and sends
-`kill -9` bottom-up before killing the parent. This is fast — the entire tree
-is killed in-process with no external commands for the common flat case.
-
-On Windows, full tree kill requires `taskkill /F /T`, which must run
-**synchronously before** the parent process dies. This is a hard Windows
-constraint: once the parent is terminated, the OS breaks the parent-child link
-in the process table and `taskkill /T` can no longer enumerate or reach
-grandchildren. Running it synchronously ensures the full tree is walked and
-killed before `proc_close()` returns.
-
-The cost is approximately **~100–300ms per cancelled worker** on Windows:
-
-| Scenario | Linux | Windows |
-| :--- | :--- | :--- |
-| Cancel 1 worker | ~1.0s | ~1.3s |
-| Cancel 3 workers | ~1.05s | ~1.85s |
-| Tree correctly killed | ✅ | ✅ |
-
-This overhead only applies at **cancellation time** — which is an exceptional
-code path, not the happy path. Normal task execution, result retrieval, and
-pool throughput are completely unaffected on both platforms.
-
-The alternative — using `proc_terminate()` alone on Windows for instant kill —
-leaves all descendant workers running as zombies. Because Hibla explicitly
-supports and advertises nested `parallel()` execution up to 10 levels deep,
-silently orphaning grandchildren on cancel is not an acceptable trade-off.
-Correctness wins over the ~800ms difference.
-
 ### Cancellation in a pool kills the entire worker, not just the task
 
-When you cancel a task promise, Hibla terminates the entire worker process for
+When you cancel a task promise, Hibla Parallel terminates the entire worker process for
 that slot — not just the in-flight task. The cancelled task is killed immediately
 and the worker process is torn down along with any nested children it spawned.
 A fresh replacement worker is spawned to restore pool capacity, and any tasks

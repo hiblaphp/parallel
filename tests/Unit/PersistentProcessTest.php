@@ -26,8 +26,8 @@ function createPersistentProcess(array $outputLines, int $pid = 1234): Persisten
     $stdin->shouldReceive('close')->andReturnNull();
 
     $stdout = Mockery::mock(PromiseReadableStreamInterface::class);
-    $returns = array_map(fn($line) => Promise::resolved($line), $outputLines);
-    $returns[] = Promise::resolved(null); 
+    $returns = array_map(fn ($line) => Promise::resolved($line), $outputLines);
+    $returns[] = Promise::resolved(null);
     $stdout->shouldReceive('readLineAsync')->andReturn(...$returns);
     $stdout->shouldReceive('close')->andReturnNull();
 
@@ -43,7 +43,7 @@ function createPersistentProcess(array $outputLines, int $pid = 1234): Persisten
  */
 function submitPersistentTask(PersistentProcess $process, string $taskId = 'task-abc'): PromiseInterface
 {
-    $process->startReadLoop(fn() => null, fn() => null);
+    $process->startReadLoop(fn () => null, fn () => null);
 
     return $process->submitTask($taskId, json_encode(['task_id' => $taskId]));
 }
@@ -53,7 +53,7 @@ describe('PersistentProcess', function () {
         Mockery::close();
     });
     it('fires onReadyCallback when a READY frame arrives', function () {
-        $readyFired  = false;
+        $readyFired = false;
         $reportedPid = null;
 
         $lines = [
@@ -63,10 +63,10 @@ describe('PersistentProcess', function () {
         $process = createPersistentProcess($lines, 1234);
         $process->startReadLoop(
             function (PersistentProcess $p) use (&$readyFired, &$reportedPid) {
-                $readyFired  = true;
+                $readyFired = true;
                 $reportedPid = $p->getWorkerPid();
             },
-            fn() => null
+            fn () => null
         );
 
         await(delay(0.05));
@@ -79,7 +79,7 @@ describe('PersistentProcess', function () {
         $lines = [json_encode(['status' => 'READY', 'pid' => 9999])];
 
         $process = createPersistentProcess($lines, 1234);
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
 
         await(delay(0.05));
 
@@ -99,7 +99,7 @@ describe('PersistentProcess', function () {
         $process = createPersistentProcess($lines);
         expect($process->isBusy())->toBeTrue();
 
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
         await(delay(0.05));
 
         expect($process->isBusy())->toBeFalse();
@@ -107,7 +107,7 @@ describe('PersistentProcess', function () {
 
     it('resolves the task promise with a scalar result', function () {
         $taskId = 'task-1';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'COMPLETED', 'task_id' => $taskId, 'result' => 'hello', 'result_serialized' => false]),
         ];
@@ -119,7 +119,7 @@ describe('PersistentProcess', function () {
 
     it('resolves the task promise with an integer result', function () {
         $taskId = 'task-int';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'COMPLETED', 'task_id' => $taskId, 'result' => 42, 'result_serialized' => false]),
         ];
@@ -131,7 +131,7 @@ describe('PersistentProcess', function () {
 
     it('resolves the task promise with null', function () {
         $taskId = 'task-null';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'COMPLETED', 'task_id' => $taskId, 'result' => null, 'result_serialized' => false]),
         ];
@@ -143,13 +143,13 @@ describe('PersistentProcess', function () {
 
     it('deserializes a serialized object result', function () {
         $taskId = 'task-obj';
-        $date   = new DateTime('2024-06-01');
-        $lines  = [
+        $date = new DateTime('2024-06-01');
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode([
-                'status'            => 'COMPLETED',
-                'task_id'           => $taskId,
-                'result'            => base64_encode(serialize($date)),
+                'status' => 'COMPLETED',
+                'task_id' => $taskId,
+                'result' => base64_encode(serialize($date)),
                 'result_serialized' => true,
             ]),
         ];
@@ -162,42 +162,44 @@ describe('PersistentProcess', function () {
 
     it('rejects the task promise with the teleported exception class', function () {
         $taskId = 'task-err';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode([
-                'status'      => 'ERROR',
-                'task_id'     => $taskId,
-                'class'       => 'InvalidArgumentException',
-                'message'     => 'Bad input',
-                'code'        => 0,
-                'file'        => '/worker.php',
-                'line'        => 10,
+                'status' => 'ERROR',
+                'task_id' => $taskId,
+                'class' => 'InvalidArgumentException',
+                'message' => 'Bad input',
+                'code' => 0,
+                'file' => '/worker.php',
+                'line' => 10,
                 'stack_trace' => '#0 ...',
             ]),
         ];
 
-        expect(fn() => await(submitPersistentTask(createPersistentProcess($lines), $taskId)))
-            ->toThrow(InvalidArgumentException::class, 'Bad input');
+        expect(fn () => await(submitPersistentTask(createPersistentProcess($lines), $taskId)))
+            ->toThrow(InvalidArgumentException::class, 'Bad input')
+        ;
     });
 
     it('rejects with RuntimeException when the exception class is unknown', function () {
         $taskId = 'task-unknown-err';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode([
-                'status'      => 'ERROR',
-                'task_id'     => $taskId,
-                'class'       => 'App\\Exceptions\\SomeObscureException',
-                'message'     => 'Unknown error occurred',
-                'code'        => 0,
-                'file'        => '/worker.php',
-                'line'        => 20,
+                'status' => 'ERROR',
+                'task_id' => $taskId,
+                'class' => 'App\\Exceptions\\SomeObscureException',
+                'message' => 'Unknown error occurred',
+                'code' => 0,
+                'file' => '/worker.php',
+                'line' => 20,
                 'stack_trace' => '#0 ...',
             ]),
         ];
 
-        expect(fn() => await(submitPersistentTask(createPersistentProcess($lines), $taskId)))
-            ->toThrow(\RuntimeException::class, 'Unknown error occurred');
+        expect(fn () => await(submitPersistentTask(createPersistentProcess($lines), $taskId)))
+            ->toThrow(RuntimeException::class, 'Unknown error occurred')
+        ;
     });
 
     // =========================================================================
@@ -206,7 +208,7 @@ describe('PersistentProcess', function () {
 
     it('echoes OUTPUT frames to the console', function () {
         $taskId = 'task-output';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'OUTPUT', 'task_id' => $taskId, 'output' => 'Hello from worker']),
             json_encode(['status' => 'COMPLETED', 'task_id' => $taskId, 'result' => null, 'result_serialized' => false]),
@@ -221,7 +223,7 @@ describe('PersistentProcess', function () {
 
     it('echoes multiple OUTPUT frames in order', function () {
         $taskId = 'task-multi-output';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'OUTPUT', 'task_id' => $taskId, 'output' => 'line 1']),
             json_encode(['status' => 'OUTPUT', 'task_id' => $taskId, 'output' => 'line 2']),
@@ -241,7 +243,7 @@ describe('PersistentProcess', function () {
     // =========================================================================
 
     it('fires the onMessage handler when a MESSAGE frame arrives', function () {
-        $taskId   = 'task-msg';
+        $taskId = 'task-msg';
         $received = [];
 
         $lines = [
@@ -251,7 +253,7 @@ describe('PersistentProcess', function () {
         ];
 
         $process = createPersistentProcess($lines);
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
 
         $promise = $process->submitTask(
             $taskId,
@@ -268,24 +270,24 @@ describe('PersistentProcess', function () {
     });
 
     it('deserializes serialized MESSAGE data', function () {
-        $taskId   = 'task-ser-msg';
-        $date     = new DateTime('2025-01-01');
+        $taskId = 'task-ser-msg';
+        $date = new DateTime('2025-01-01');
         $received = [];
 
         $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode([
-                'status'          => 'MESSAGE',
-                'task_id'         => $taskId,
-                'pid'             => 1234,
-                'data'            => base64_encode(serialize($date)),
+                'status' => 'MESSAGE',
+                'task_id' => $taskId,
+                'pid' => 1234,
+                'data' => base64_encode(serialize($date)),
                 'data_serialized' => true,
             ]),
             json_encode(['status' => 'COMPLETED', 'task_id' => $taskId, 'result' => null, 'result_serialized' => false]),
         ];
 
         $process = createPersistentProcess($lines);
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
 
         $promise = $process->submitTask(
             $taskId,
@@ -303,7 +305,7 @@ describe('PersistentProcess', function () {
     });
 
     it('WorkerMessage carries the correct pid from the MESSAGE frame', function () {
-        $taskId  = 'task-pid-check';
+        $taskId = 'task-pid-check';
         $msgPids = [];
 
         $lines = [
@@ -313,7 +315,7 @@ describe('PersistentProcess', function () {
         ];
 
         $process = createPersistentProcess($lines);
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
 
         $promise = $process->submitTask(
             $taskId,
@@ -331,7 +333,7 @@ describe('PersistentProcess', function () {
 
     it('task promise resolves only after all MESSAGE handlers have finished', function () {
         $taskId = 'task-handler-order';
-        $log    = [];
+        $log = [];
 
         $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
@@ -340,7 +342,7 @@ describe('PersistentProcess', function () {
         ];
 
         $process = createPersistentProcess($lines);
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
 
         $promise = $process->submitTask(
             $taskId,
@@ -353,7 +355,7 @@ describe('PersistentProcess', function () {
         );
 
         $result = await($promise);
-        $log[]  = 'promise-resolved';
+        $log[] = 'promise-resolved';
 
         expect($log)->toBe(['handler-done', 'promise-resolved']);
         expect($result)->toBe('done');
@@ -369,7 +371,7 @@ describe('PersistentProcess', function () {
 
         $process = createPersistentProcess($lines);
         $process->startReadLoop(
-            fn() => null,
+            fn () => null,
             function (PersistentProcess $p) use (&$crashFired) {
                 $crashFired = true;
             }
@@ -382,23 +384,24 @@ describe('PersistentProcess', function () {
 
     it('rejects pending task promises with ProcessCrashedException on CRASHED frame', function () {
         $taskId = 'task-crash';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode([
-                'status'      => 'ERROR',
-                'task_id'     => $taskId,
-                'class'       => ProcessCrashedException::class,
-                'message'     => 'Worker crashed mid-task',
-                'code'        => 0,
-                'file'        => '/worker.php',
-                'line'        => 1,
+                'status' => 'ERROR',
+                'task_id' => $taskId,
+                'class' => ProcessCrashedException::class,
+                'message' => 'Worker crashed mid-task',
+                'code' => 0,
+                'file' => '/worker.php',
+                'line' => 1,
                 'stack_trace' => '',
             ]),
             json_encode(['status' => 'CRASHED']),
         ];
 
-        expect(fn() => await(submitPersistentTask(createPersistentProcess($lines), $taskId)))
-            ->toThrow(ProcessCrashedException::class);
+        expect(fn () => await(submitPersistentTask(createPersistentProcess($lines), $taskId)))
+            ->toThrow(ProcessCrashedException::class)
+        ;
     });
 
     it('marks the worker as dead after a CRASHED frame', function () {
@@ -408,7 +411,7 @@ describe('PersistentProcess', function () {
         ];
 
         $process = createPersistentProcess($lines);
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
 
         await(delay(0.05));
 
@@ -425,7 +428,7 @@ describe('PersistentProcess', function () {
 
         $process = createPersistentProcess($lines);
         $process->startReadLoop(
-            fn() => null,
+            fn () => null,
             function (PersistentProcess $p) use (&$retireFired) {
                 $retireFired = true;
             }
@@ -443,7 +446,7 @@ describe('PersistentProcess', function () {
         ];
 
         $process = createPersistentProcess($lines);
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
 
         await(delay(0.05));
 
@@ -459,7 +462,8 @@ describe('PersistentProcess', function () {
 
         $stdout = Mockery::mock(PromiseReadableStreamInterface::class);
         $stdout->shouldReceive('readLineAsync')
-            ->andThrow(new \RuntimeException('Stream closed unexpectedly'));
+            ->andThrow(new RuntimeException('Stream closed unexpectedly'))
+        ;
         $stdout->shouldReceive('close')->andReturnNull();
 
         $stderr = Mockery::mock(PromiseReadableStreamInterface::class);
@@ -467,7 +471,7 @@ describe('PersistentProcess', function () {
 
         $process = new PersistentProcess(1234, null, $stdin, $stdout, $stderr);
         $process->startReadLoop(
-            fn() => null,
+            fn () => null,
             function (PersistentProcess $p) use (&$crashFired) {
                 $crashFired = true;
             }
@@ -480,7 +484,7 @@ describe('PersistentProcess', function () {
 
     it('marks the worker as dead when the stdout stream closes with a clean EOF', function () {
         $process = createPersistentProcess([]);
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
 
         await(delay(0.05));
 
@@ -498,7 +502,7 @@ describe('PersistentProcess', function () {
         $lines = [json_encode(['status' => 'READY', 'pid' => 1234])];
 
         $process = createPersistentProcess($lines);
-        $process->startReadLoop(fn() => null, fn() => null);
+        $process->startReadLoop(fn () => null, fn () => null);
 
         await(delay(0.05));
         expect($process->isBusy())->toBeFalse();
@@ -511,7 +515,7 @@ describe('PersistentProcess', function () {
 
     it('silently ignores blank lines in the stream', function () {
         $taskId = 'task-blanks';
-        $lines  = [
+        $lines = [
             '',
             '   ',
             json_encode(['status' => 'READY', 'pid' => 1234]),
@@ -526,7 +530,7 @@ describe('PersistentProcess', function () {
 
     it('silently ignores malformed JSON lines', function () {
         $taskId = 'task-malformed';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             'this is not json {{{',
             json_encode(['status' => 'COMPLETED', 'task_id' => $taskId, 'result' => 'ok', 'result_serialized' => false]),
@@ -539,7 +543,7 @@ describe('PersistentProcess', function () {
 
     it('silently ignores frames with an unknown task_id', function () {
         $taskId = 'task-known';
-        $lines  = [
+        $lines = [
             json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'COMPLETED', 'task_id' => 'unknown-id', 'result' => 'ignored', 'result_serialized' => false]),
             json_encode(['status' => 'COMPLETED', 'task_id' => $taskId, 'result' => 'correct', 'result_serialized' => false]),

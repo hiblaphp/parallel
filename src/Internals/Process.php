@@ -46,7 +46,8 @@ final class Process
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr,
         private readonly string $sourceLocation = 'unknown'
-    ) {}
+    ) {
+    }
 
     /**
      * Get the result of the background process.
@@ -113,9 +114,9 @@ final class Process
             return;
         }
 
-        ProcessKiller::killTree($this->pid, $this->processResource);
+        ProcessKiller::killTreesAsync([$this->pid]);
 
-        $this->close();
+        $this->close(PHP_OS_FAMILY !== 'Windows');
     }
 
     /**
@@ -231,7 +232,7 @@ final class Process
                                 data: $data,
                                 pid: \is_int($status['pid']) ? $status['pid'] : $this->pid,
                             );
-                            $pendingHandlers[] = async(fn() => $onMessage($message));
+                            $pendingHandlers[] = async(fn () => $onMessage($message));
                         }
                     } elseif ($statusType === 'COMPLETED') {
                         $result = $status['result'] ?? null;
@@ -308,7 +309,7 @@ final class Process
      *
      * @return void
      */
-    private function close(): void
+    private function close(bool $closeProcessResource = true): void
     {
         if (! $this->isSystemRunning) {
             return;
@@ -318,7 +319,7 @@ final class Process
         $this->stdout->close();
         $this->stderr->close();
 
-        if (\is_resource($this->processResource)) {
+        if ($closeProcessResource && \is_resource($this->processResource)) {
             proc_close($this->processResource);
         }
 

@@ -39,7 +39,7 @@ class ProcessSpawnHandler
     ) {
         $requiredFunctions = PHP_OS_FAMILY !== 'Windows'
             ? ['proc_open', 'exec', 'shell_exec']
-            : ['proc_open', 'exec', 'shell_exec'];
+            : ['proc_open', 'exec', 'shell_exec', 'posix_kill'];
 
         $missingFunctions = array_filter($requiredFunctions, static function (string $function): bool {
             // @phpstan-ignore-next-line the functions are checked at runtime

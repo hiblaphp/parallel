@@ -13,4 +13,6 @@ namespace Hibla\Parallel\Exceptions;
  *
  * @see \Hibla\Parallel\Interfaces\ProcessPoolInterface::withMaxRestartPerSecond()
  */
-final class RespawnRateLimitException extends \RuntimeException {}
+final class RespawnRateLimitException extends \RuntimeException
+{
+}

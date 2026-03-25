@@ -57,7 +57,7 @@ describe('BackgroundProcess', function () {
         expect($bp->isRunning())->toBeTrue();
 
         $bp->terminate();
-        
+
         proc_close($resource);
 
         expect($bp->isRunning())->toBeFalse();

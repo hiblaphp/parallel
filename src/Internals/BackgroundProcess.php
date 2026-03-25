@@ -48,7 +48,14 @@ final class BackgroundProcess
             return;
         }
 
-        ProcessKiller::killTree($this->pid, $this->processResource);
+        ProcessKiller::killTreesAsync([$this->pid]);
+
+        if (PHP_OS_FAMILY !== 'Windows' && \is_resource($this->processResource)) {
+            @proc_terminate($this->processResource);
+            @proc_close($this->processResource);
+        }
+
+        $this->closed = true;
     }
 
     /**

@@ -16,66 +16,239 @@ namespace Hibla\Parallel\Utilities;
 final class ProcessKiller
 {
     /**
-     * Kill a process and its entire descendant tree.
+     * Kill multiple process trees simultaneously.
      *
-     * On Windows, taskkill /F /T is run synchronously BEFORE proc_close().
-     * proc_terminate() cannot be called first — it kills the parent instantly,
-     * breaking the parent-child link in the Windows process table so taskkill /T
-     * can no longer enumerate and reach the grandchildren (nested workers).
-     * By running taskkill /T first (blocking), the full tree is killed before
-     * proc_close() is called, which then returns immediately since the process
-     * is already dead.
+     * On Windows, launches a fire-and-forget background process executing
+     * `taskkill /T`, returning instantly (~0.01s) without blocking.
      *
-     * On Linux, recursively walks the process tree using pgrep before killing
-     * the parent — children must be killed first or they become orphans when
-     * the parent dies and get re-parented to init.
+     * On Linux, performs a single /proc scan to build PID and PGID maps, then
+     * kills by process group (atomic, race-free) when possible, falling back
+     * to a bottom-up tree walk for processes sharing the parent's PGID.
      *
-     * @param int $pid The process ID to kill
-     * @param mixed $processResource The proc_open resource handle, if available
+     * On macOS/BSD, uses pgrep for recursive tree discovery (~30ms).
+     *
+     * @param list<int> $pids
      */
-    public static function killTree(int $pid, mixed $processResource = null): void
+    public static function killTreesAsync(array $pids): void
     {
-        if (PHP_OS_FAMILY === 'Windows') {
-            // taskkill /T must run BEFORE the parent process dies — once the parent
-            // is dead its children are orphaned and re-parented, breaking the tree
-            // walk. Running synchronously ensures the full tree is dead before
-            // proc_close() is called, so proc_close() returns immediately.
-            exec("taskkill /F /T /PID {$pid} >nul 2>nul");
+        if (\count($pids) === 0) {
+            return;
+        }
 
-            // Signal the resource handle after taskkill has already killed the
-            // process — this is a no-op for an already-dead process but ensures
-            // the proc resource is properly marked as terminated for proc_close().
-            if (\is_resource($processResource)) {
-                @proc_terminate($processResource);
-            }
-        } else {
-            self::killTreeLinux($pid);
+        match (true) {
+            PHP_OS_FAMILY === 'Windows' => self::killTreesWindows($pids),
+            PHP_OS_FAMILY === 'Linux' && is_dir('/proc') => self::killTreesLinux($pids),
+            default => self::killTreesUnixFallback($pids),
+        };
+    }
+
+    /**
+     * @param list<int> $pids
+     */
+    private static function killTreesWindows(array $pids): void
+    {
+        foreach (array_chunk($pids, 50) as $chunk) {
+            self::killTreesWindowsChunk($chunk);
         }
     }
 
     /**
-     * Recursively kill a process tree on Linux, bottom-up.
+     * Fire-and-forget taskkill for a chunk of PIDs, respecting the Windows
+     * command-line length limit by capping chunks at 50 PIDs.
      *
-     * Uses pgrep to find direct children, recurses into each before killing
-     * the parent. This ensures grandchildren (e.g. sub-workers spawned inside
-     * a worker) are terminated before their parent disappears.
-     *
-     * @param int $pid Root of the subtree to kill
+     * @param list<int> $chunk
      */
-    private static function killTreeLinux(int $pid): void
+    private static function killTreesWindowsChunk(array $chunk): void
     {
-        // Find direct children before killing the parent — once the parent
-        // dies the children get re-parented and pgrep -P would miss them.
-        $output = shell_exec("pgrep -P {$pid} 2>/dev/null");
+        $pidArgs = implode(' ', array_map(static fn (int $pid) => "/PID {$pid}", $chunk));
+        $cmd = "cmd /c start /B taskkill /F /T {$pidArgs} >nul 2>nul";
+
+        $descriptorSpec = [
+            0 => ['pipe', 'r'],
+            1 => ['file', 'NUL', 'w'],
+            2 => ['file', 'NUL', 'w'],
+        ];
+
+        $pipes = [];
+        $process = @proc_open($cmd, $descriptorSpec, $pipes, null, null, ['bypass_shell' => true]);
+
+        if (\is_resource($process)) {
+            @fclose($pipes[0]);
+            @proc_close($process);
+        }
+    }
+
+    /**
+     * Single-pass /proc scan: build parentMap and pgidMap, then kill each
+     * target either by process group (atomic) or by tree walk (fallback).
+     *
+     * @param list<int> $pids
+     */
+    private static function killTreesLinux(array $pids): void
+    {
+        [$parentMap, $pgidMap] = self::buildProcMaps();
+
+        $killedPgids = [];
+
+        foreach ($pids as $pid) {
+            $pgid = $pgidMap[$pid] ?? null;
+
+            if ($pgid !== null && $pgid === $pid) {
+                if (! \in_array($pgid, $killedPgids, true)) {
+                    $killedPgids[] = $pgid;
+                    self::sendSignalToGroup($pgid, SIGKILL);
+                }
+            } else {
+                $descendants = self::collectDescendants($pid, $parentMap);
+                foreach (array_reverse($descendants) as $descendantPid) {
+                    self::sendSignal($descendantPid, SIGKILL);
+                }
+            }
+        }
+    }
+
+    /**
+     * Scan /proc once and return two maps: [pid => ppid] and [pid => pgid].
+     *
+     * Uses strrpos(')') to find the end of the comm field, which is robust
+     * against process names containing spaces or parentheses.
+     *
+     * @return array{array<int, int>, array<int, int>}  [$parentMap, $pgidMap]
+     */
+    private static function buildProcMaps(): array
+    {
+        $parentMap = [];
+        $pgidMap = [];
+
+        $dh = @opendir('/proc');
+        if ($dh === false) {
+            return [$parentMap, $pgidMap];
+        }
+
+        while (($entry = readdir($dh)) !== false) {
+            if (! ctype_digit($entry)) {
+                continue;
+            }
+
+            $stat = @file_get_contents("/proc/$entry/stat");
+            if ($stat === false) {
+                continue;
+            }
+
+            $parsed = self::parseProcStat($stat);
+            if ($parsed === null) {
+                continue;
+            }
+
+            [$pid, $ppid, $pgid] = $parsed;
+
+            $parentMap[$pid] = $ppid;
+            $pgidMap[$pid] = $pgid;
+        }
+
+        closedir($dh);
+
+        return [$parentMap, $pgidMap];
+    }
+
+    /**
+     * Parse a /proc/$pid/stat line into [pid, ppid, pgid].
+     *
+     * Stat fields after the comm: state(0), ppid(1), pgrp(2), ...
+     *
+     * @return array{int, int, int}|null
+     */
+    private static function parseProcStat(string $stat): ?array
+    {
+        $rp = strrpos($stat, ')');
+        if ($rp === false) {
+            return null;
+        }
+
+        $fields = explode(' ', ltrim(substr($stat, $rp + 1)));
+
+        if (\count($fields) < 3) {
+            return null;
+        }
+
+        $pid = (int) strtok($stat, ' ');
+        $ppid = (int) $fields[1];
+        $pgid = (int) $fields[2];
+
+        return [$pid, $ppid, $pgid];
+    }
+
+    /**
+     * @param  int $pid
+     * @param  array<int, int> $parentMap  [pid => ppid]
+     * @return list<int>
+     */
+    private static function collectDescendants(int $pid, array $parentMap): array
+    {
+        $childMap = [];
+        foreach ($parentMap as $child => $parent) {
+            $childMap[$parent][] = $child;
+        }
+
+        $result = [];
+        $queue = [$pid];
+
+        while ($queue !== []) {
+            $current = array_shift($queue);
+            $result[] = $current;
+            foreach ($childMap[$current] ?? [] as $child) {
+                $queue[] = $child;
+            }
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param list<int> $pids
+     */
+    private static function killTreesUnixFallback(array $pids): void
+    {
+        foreach ($pids as $pid) {
+            self::killTreeUnixFallback($pid);
+        }
+    }
+
+    /**
+     * Recursive pgrep-based tree kill for Unix systems without /proc (~30ms).
+     */
+    private static function killTreeUnixFallback(int $pid): void
+    {
+        $output = @shell_exec("pgrep -P {$pid} 2>/dev/null");
 
         if (\is_string($output) && $output !== '') {
             foreach (explode("\n", trim($output)) as $childPid) {
-                if (ctype_digit($childPid) && (int)$childPid > 0) {
-                    self::killTreeLinux((int)$childPid);
+                if (ctype_digit($childPid) && (int) $childPid > 0) {
+                    self::killTreeUnixFallback((int) $childPid);
                 }
             }
         }
 
-        exec("kill -9 {$pid} 2>/dev/null");
+        self::sendSignal($pid, SIGKILL);
+    }
+
+    /**
+     * Send a signal to a single process.
+     */
+    private static function sendSignal(int $pid, int $signal): void
+    {
+        \function_exists('posix_kill')
+            ? @posix_kill($pid, $signal)
+            : @exec("kill -{$signal} {$pid} 2>/dev/null");
+    }
+
+    /**
+     * Send a signal to an entire process group (negative PID).
+     */
+    private static function sendSignalToGroup(int $pgid, int $signal): void
+    {
+        \function_exists('posix_kill')
+            ? @posix_kill(-$pgid, $signal)
+            : @exec("kill -{$signal} -{$pgid} 2>/dev/null");
     }
 }
