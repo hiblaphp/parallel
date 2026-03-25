@@ -55,6 +55,14 @@ final class ProcessPool implements ProcessPoolInterface
     private ?int $maxExecutionsPerWorker = null;
 
     /**
+     * Maximum number of worker respawns allowed in any one-second sliding
+     * window. Null means unlimited (default — opt-in).
+     *
+     * @var int<1, max>|null
+     */
+    private ?int $maxRestartPerSecond = null;
+
+    /**
      * @var callable(ProcessPoolInterface): void|null
      */
     private $onRespawnHandler = null;
@@ -200,6 +208,24 @@ final class ProcessPool implements ProcessPoolInterface
     /**
      * @inheritdoc
      */
+    public function withMaxRestartPerSecond(int $maxRestartsPerSecond): static
+    {
+        if ($maxRestartsPerSecond < 1) {
+            throw new \InvalidArgumentException(
+                'Max restarts per second must be at least 1. Got: ' . $maxRestartsPerSecond
+            );
+        }
+
+        $clone = clone $this;
+        /** @var int<1, max> $maxRestartsPerSecond */
+        $clone->maxRestartPerSecond = $maxRestartsPerSecond;
+
+        return $clone;
+    }
+
+    /**
+     * @inheritdoc
+     */
     public function onWorkerRespawn(callable $handler): static
     {
         $clone = clone $this;
@@ -309,7 +335,6 @@ final class ProcessPool implements ProcessPoolInterface
         if ($this->pool === null) {
             $manager = ProcessManager::getGlobal();
 
-            // Wrap the handler to inject the pool instance safely without memory leaks
             $internalRespawnHandler = null;
             if ($this->onRespawnHandler !== null) {
                 $weakThis = \WeakReference::create($this);
@@ -333,6 +358,7 @@ final class ProcessPool implements ProcessPoolInterface
                 onMessageHandlers: $this->onMessageHandlers,
                 spawnEagerly: $this->spawnEagerly,
                 maxExecutionsPerWorker: $this->maxExecutionsPerWorker,
+                maxRestartPerSecond: $this->maxRestartPerSecond,
                 onWorkerRespawn: $internalRespawnHandler,
                 timeoutSeconds: $this->timeoutSeconds,
             );

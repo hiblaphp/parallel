@@ -7,6 +7,7 @@ namespace Hibla\Parallel\Managers;
 use Hibla\Parallel\Exceptions\NestingLimitException;
 use Hibla\Parallel\Exceptions\PoolShutdownException;
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
+use Hibla\Parallel\Exceptions\RespawnRateLimitException;
 use Hibla\Parallel\Exceptions\TaskPayloadException;
 use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
@@ -52,10 +53,6 @@ final class ProcessPoolManager
      */
     private ?Promise $shutdownPromise = null;
 
-    private bool $isShutdown = false;
-
-    private bool $isShuttingDownGracefully = false;
-
     /**
      * Resolves when all initial workers have sent their first READY frame.
      * Null when spawnEagerly is false (lazy pools resolve immediately on first submit).
@@ -65,29 +62,34 @@ final class ProcessPoolManager
     private ?Promise $bootPromise = null;
 
     /**
-     * Number of initial workers that have sent their first READY frame.
-     */
-    private int $initialReadyCount = 0;
-
-    /**
-     * Whether the initial boot phase has completed.
-     */
-    private bool $bootCompleted = false;
-
-    /**
-     * Maximum number of tasks a single worker executes before retiring and
-     * being replaced by a fresh worker. Null means unlimited — workers run
-     * indefinitely until the pool is shut down or a worker crashes.
-     *
      * @var int<1, max>|null
      */
     private readonly ?int $maxExecutionsPerWorker;
+
+    /**
+     * @var int<1, max>|null
+     */
+    private readonly ?int $maxRestartPerSecond;
+
+    /**
+     * @var list<int>
+     */
+    private array $respawnTimestamps = [];
+
+    private int $initialReadyCount = 0;
+
+    private bool $bootCompleted = false;
+
+    private bool $isShutdown = false;
+
+    private bool $isShuttingDownGracefully = false;
 
     /**
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: (callable(): mixed)|null} $frameworkInfo
      * @param array<int, callable(WorkerMessage): void> $onMessageHandlers
      * @param bool $spawnEagerly
      * @param int<1, max>|null $maxExecutionsPerWorker Maximum tasks per worker before retirement. Null means unlimited.
+     * @param int<1, max>|null $maxRestartPerSecond Maximum respawns per second. Null means unlimited.
      * @param callable(): void|null $onWorkerRespawn Internal respawn hook passed from ProcessPool.
      */
     public function __construct(
@@ -100,11 +102,11 @@ final class ProcessPoolManager
         private readonly array $onMessageHandlers = [],
         private readonly bool $spawnEagerly = true,
         ?int $maxExecutionsPerWorker = null,
+        ?int $maxRestartPerSecond = null,
         /** @var callable(): void|null */
         private $onWorkerRespawn = null,
         private readonly ?int $timeoutSeconds = null,
     ) {
-        // Pre-flight check: prevent pool creation if exceeds the max nesting level
         $currentLevel = (int)((($env = getenv('DEFER_NESTING_LEVEL')) !== false) ? $env : 0);
 
         if ($currentLevel >= $this->maxNestingLevel) {
@@ -117,9 +119,10 @@ final class ProcessPoolManager
         }
 
         $this->maxExecutionsPerWorker = $maxExecutionsPerWorker;
+        $this->maxRestartPerSecond    = $maxRestartPerSecond;
 
         $this->idleWorkers = new SplQueue();
-        $this->taskQueue = new SplQueue();
+        $this->taskQueue   = new SplQueue();
 
         if ($this->spawnEagerly) {
             // Create the boot promise before initializing so spawnWorker()'s
@@ -129,18 +132,10 @@ final class ProcessPoolManager
             $this->bootPromise = $bootPromise;
             $this->initialize();
         } else {
-            // Lazy pools have no boot phase — treat as immediately ready.
             $this->bootCompleted = true;
         }
     }
-
     /**
-     * Returns a Promise that resolves once all initial workers have sent their
-     * first READY frame, meaning getWorkerPids() will return the real PHP PIDs
-     * (from getmypid() inside the worker) rather than shell wrapper PIDs.
-     *
-     * For lazy pools this resolves immediately since there is no boot phase.
-     *
      * @return PromiseInterface<void>
      */
     public function waitUntilReady(): PromiseInterface
@@ -153,13 +148,6 @@ final class ProcessPoolManager
     }
 
     /**
-     * Returns the number of worker processes currently alive in the pool.
-     *
-     * For eager pools this equals the configured pool size under normal conditions.
-     * For lazy pools this reflects how many workers have been spawned so far.
-     * The count may temporarily drop below the configured size while a crashed
-     * worker's replacement is booting.
-     *
      * @return int
      */
     public function getWorkerCount(): int
@@ -168,14 +156,6 @@ final class ProcessPoolManager
     }
 
     /**
-     * Returns the actual PHP process PIDs of all currently alive worker processes
-     * as reported by the workers themselves via READY frames. These match the
-     * values returned by getmypid() inside worker tasks on all platforms.
-     *
-     * Note: for eager pools, PIDs are only guaranteed accurate after the Promise
-     * returned by waitUntilReady() has resolved. Before that point, some entries
-     * may still reflect the shell wrapper PID from proc_get_status().
-     *
      * @return array<int, int>
      */
     public function getWorkerPids(): array
@@ -192,9 +172,7 @@ final class ProcessPoolManager
     /**
      * @template TValue
      * @param callable(): TValue $task
-     * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
-     *        Fires before the pool-level handler. Both are wrapped in async() and run
-     *        concurrently — no completion ordering is guaranteed between them.
+     * @param callable(WorkerMessage): void|null $onMessage
      * @return PromiseInterface<TValue>
      */
     public function submit(callable $task, int $timeoutSeconds, string $sourceLocation = 'unknown', ?callable $onMessage = null): PromiseInterface
@@ -260,10 +238,6 @@ final class ProcessPoolManager
     }
 
     /**
-     * Gracefully shuts down the pool.
-     *
-     * This method will wait for all active tasks to complete before shutting down the pool.
-     *
      * @return PromiseInterface<void>
      */
     public function shutdownAsync(): PromiseInterface
@@ -290,9 +264,8 @@ final class ProcessPoolManager
         }
 
         $this->isShutdown = true;
-        $this->isShuttingDownGracefully = false; // Override graceful state
+        $this->isShuttingDownGracefully = false;
 
-        // Reject the boot promise if shutdown happens before all workers are ready.
         if (! $this->bootCompleted && $this->bootPromise !== null) {
             $this->bootCompleted = true;
             if (! $this->bootPromise->isFulfilled() && ! $this->bootPromise->isRejected()) {
@@ -300,9 +273,6 @@ final class ProcessPoolManager
             }
         }
 
-        // On Windows each signalTerminate() fires "start /B taskkill" and returns
-        // immediately, so all workers receive their kill signal before we begin
-        // closing any pipes — avoiding sequential N × exec() blocking.
         foreach ($this->allWorkers as $worker) {
             $worker->signalTerminate();
         }
@@ -328,7 +298,7 @@ final class ProcessPoolManager
             $worker->cleanupResources();
         }
 
-        $this->allWorkers = [];
+        $this->allWorkers  = [];
         $this->activeTasks = [];
         $this->idleWorkers = new SplQueue();
 
@@ -336,6 +306,28 @@ final class ProcessPoolManager
             $this->shutdownPromise->resolve(null);
         }
     }
+
+    private function recordRespawn(): void
+    {
+        $this->respawnTimestamps[] = (int) hrtime(true);
+    }
+
+    private function isRespawnRateLimitExceeded(): bool
+    {
+        if ($this->maxRestartPerSecond === null) {
+            return false;
+        }
+
+        $now = hrtime(true);
+        $cutoff = $now - 1_000_000_000;
+
+        $this->respawnTimestamps = array_values(
+            array_filter($this->respawnTimestamps, static fn(int $t): bool => $t > $cutoff)
+        );
+
+        return \count($this->respawnTimestamps) >= $this->maxRestartPerSecond;
+    }
+
 
     private function initialize(): void
     {
@@ -379,18 +371,15 @@ final class ProcessPoolManager
             }
         }
 
-        // All tasks have drained — shut down workers using the two-phase approach.
-        // Phase 1: Signal all workers concurrently before touching any pipes.
         foreach ($this->allWorkers as $worker) {
             $worker->signalTerminate();
         }
 
-        // Phase 2: Clean up pipes and proc handles after all signals are in-flight.
         foreach ($this->allWorkers as $worker) {
             $worker->cleanupResources();
         }
 
-        $this->allWorkers = [];
+        $this->allWorkers  = [];
         $this->activeTasks = [];
         $this->idleWorkers = new SplQueue();
 
@@ -399,16 +388,11 @@ final class ProcessPoolManager
         }
     }
 
-    /**
-     * Emergency shutdown triggered when a fatal, unrecoverable error is detected
-     * (e.g. a worker crashes during boot before it has sent a READY frame).
-     */
     private function shutdownDueToFatalError(\Throwable $e): void
     {
         $this->isShutdown = true;
         $this->isShuttingDownGracefully = false;
 
-        // Reject the boot promise so callers awaiting bootAsync() get the error.
         if (! $this->bootCompleted && $this->bootPromise !== null) {
             $this->bootCompleted = true;
             if (! $this->bootPromise->isFulfilled() && ! $this->bootPromise->isRejected()) {
@@ -459,15 +443,12 @@ final class ProcessPoolManager
         );
 
         $workerId = spl_object_id($process);
-        $this->allWorkers[$workerId] = $process;
+        $this->allWorkers[$workerId]  = $process;
         $this->activeTasks[$workerId] = [];
         $workerIsReady = false;
 
         $onReady = function (PersistentProcess $worker) use (&$workerIsReady): void {
-            // Capture whether this is the first READY from this worker before
-            // flipping the flag — subsequent READY frames (sent after each task
-            // completes) must not increment the boot counter again.
-            $isFirstReady = ! $workerIsReady;
+            $isFirstReady  = ! $workerIsReady;
             $workerIsReady = true;
 
             // Resolve the boot promise once every initial worker has checked in.
@@ -487,13 +468,12 @@ final class ProcessPoolManager
                 return;
             }
 
-            // Loop to skip cancelled queue items
             $taskToDispatch = null;
             while (! $this->taskQueue->isEmpty()) {
                 /** @var array{0: callable(): mixed, 1: Promise<mixed>, 2: int, 3: string, 4: callable|null} $queued */
                 $queued = $this->taskQueue->dequeue();
                 if ($queued[1]->isCancelled()) {
-                    continue; // Skip tasks cancelled before dispatch
+                    continue;
                 }
                 $taskToDispatch = $queued;
 
@@ -544,11 +524,26 @@ final class ProcessPoolManager
                 return;
             }
 
-            // Always respawn to maintain the pool size
+            if ($this->isRespawnRateLimitExceeded()) {
+                $this->shutdownDueToFatalError(
+                    new RespawnRateLimitException(
+                        "Pool respawn rate limit exceeded: more than {$this->maxRestartPerSecond} worker(s) " .
+                            'restarted within the last second. This usually indicates a crash loop caused by ' .
+                            'a bad task payload, a broken bootstrap file, or an unhandled fatal error inside ' .
+                            'worker code. The pool has been shut down to prevent resource exhaustion.'
+                    )
+                );
+
+                return;
+            }
+
+            // Record this respawn event *after* the limit check so the worker
+            // that triggered the check is counted toward the next window.
+            $this->recordRespawn();
+
             if (\count($this->allWorkers) < $this->size) {
                 $this->spawnWorker();
 
-                // Trigger the hook asynchronously so it doesn't block worker booting
                 if ($this->onWorkerRespawn !== null) {
                     \Hibla\async($this->onWorkerRespawn);
                 }
@@ -562,7 +557,7 @@ final class ProcessPoolManager
      * @template TValue
      * @param callable(): TValue $task
      * @param Promise<TValue> $promise
-     * @param callable(WorkerMessage): void|null $onMessage Optional per-task handler
+     * @param callable(WorkerMessage): void|null $onMessage
      */
     private function dispatch(PersistentProcess $worker, callable $task, Promise $promise, int $timeoutSeconds, string $sourceLocation, ?callable $onMessage = null): void
     {
@@ -588,7 +583,7 @@ final class ProcessPoolManager
         }
 
         $payload = [
-            'task_id' => $taskId,
+            'task_id'             => $taskId,
             'serialized_callback' => $serializedTask,
         ];
 

@@ -99,6 +99,31 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
     public function withMaxExecutionsPerWorker(int $maxExecutions): static;
 
     /**
+     * Returns a new instance configured to limit how many workers can be
+     * respawned within a single one-second sliding window.
+     *
+     * When the threshold is exceeded the pool shuts down immediately via a
+     * fatal error, rejecting all pending and queued tasks with a
+     * {@see RespawnRateLimitException}. This protects against crash-loop
+     * storms where a bad task or broken bootstrap causes workers to restart
+     * continuously, exhausting OS resources.
+     *
+     * **Default: null (opt-in — no rate limit is applied).**
+     *
+     * Recommended starting value: `$poolSize * 2`. A healthy pool should
+     * rarely respawn more than once per worker per second; anything above
+     * twice the pool size in a single second almost certainly indicates a
+     * systemic problem worth surfacing as a hard failure rather than silently
+     * thrashing.
+     *
+     * @param int $maxRestartsPerSecond Maximum respawns allowed in any 1-second
+     *        sliding window. Must be >= 1.
+     * @return static A new instance with the rate limit configured.
+     * @throws \InvalidArgumentException If $maxRestartsPerSecond is less than 1.
+     */
+    public function withMaxRestartPerSecond(int $maxRestartsPerSecond): static;
+
+    /**
      * Registers a callback that is triggered whenever a worker crashes or retires
      * and a replacement worker is spawned. Useful for re-submitting long-running
      * tasks (like socket listeners) to the new worker.
