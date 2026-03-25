@@ -5,27 +5,16 @@ declare(strict_types=1);
 namespace Hibla\Parallel\Utilities;
 
 /**
- * @internal
- *
  * Cross-platform process tree kill utility.
  *
  * Handles recursive termination of a process and all its descendants,
  * addressing the orphan problem where killing a parent leaves grandchildren
- * running (e.g. sub-workers spawned inside a parallel() worker).
+ * running.
  */
 final class ProcessKiller
 {
     /**
      * Kill multiple process trees simultaneously.
-     *
-     * On Windows, launches a fire-and-forget background process executing
-     * `taskkill /T`, returning instantly (~0.01s) without blocking.
-     *
-     * On Linux, performs a single /proc scan to build PID and PGID maps, then
-     * kills by process group (atomic, race-free) when possible, falling back
-     * to a bottom-up tree walk for processes sharing the parent's PGID.
-     *
-     * On macOS/BSD, uses pgrep for recursive tree discovery (~30ms).
      *
      * @param list<int> $pids
      */
@@ -38,6 +27,7 @@ final class ProcessKiller
         match (true) {
             PHP_OS_FAMILY === 'Windows' => self::killTreesWindows($pids),
             PHP_OS_FAMILY === 'Linux' && is_dir('/proc') => self::killTreesLinux($pids),
+            \in_array(PHP_OS_FAMILY, ['Darwin', 'BSD'], true) => self::killTreesMacBsd($pids),
             default => self::killTreesUnixFallback($pids),
         };
     }
@@ -53,14 +43,13 @@ final class ProcessKiller
     }
 
     /**
-     * Fire-and-forget taskkill for a chunk of PIDs, respecting the Windows
-     * command-line length limit by capping chunks at 50 PIDs.
+     * Fire-and-forget taskkill for a chunk of PIDs.
      *
      * @param list<int> $chunk
      */
     private static function killTreesWindowsChunk(array $chunk): void
     {
-        $pidArgs = implode(' ', array_map(static fn (int $pid) => "/PID {$pid}", $chunk));
+        $pidArgs = implode(' ', array_map(static fn(int $pid) => "/PID {$pid}", $chunk));
         $cmd = "cmd /c start /B taskkill /F /T {$pidArgs} >nul 2>nul";
 
         $descriptorSpec = [
@@ -79,8 +68,7 @@ final class ProcessKiller
     }
 
     /**
-     * Single-pass /proc scan: build parentMap and pgidMap, then kill each
-     * target either by process group (atomic) or by tree walk (fallback).
+     * Linux-specific strategy using /proc for map building.
      *
      * @param list<int> $pids
      */
@@ -88,6 +76,38 @@ final class ProcessKiller
     {
         [$parentMap, $pgidMap] = self::buildProcMaps();
 
+        if ($parentMap !== []) {
+            self::killTreesUnixMapped($pids, $parentMap, $pgidMap);
+        } else {
+            self::killTreesUnixFallback($pids);
+        }
+    }
+
+    /**
+     * macOS and BSD strategy using ps for map building.
+     *
+     * @param list<int> $pids
+     */
+    private static function killTreesMacBsd(array $pids): void
+    {
+        [$parentMap, $pgidMap] = self::buildPsMaps();
+
+        if ($parentMap !== []) {
+            self::killTreesUnixMapped($pids, $parentMap, $pgidMap);
+        } else {
+            self::killTreesUnixFallback($pids);
+        }
+    }
+
+    /**
+     * Shared logic for Unix-like systems to kill processes based on maps.
+     *
+     * @param list<int> $pids
+     * @param array<int, int> $parentMap
+     * @param array<int, int> $pgidMap
+     */
+    private static function killTreesUnixMapped(array $pids, array $parentMap, array $pgidMap): void
+    {
         $killedPgids = [];
 
         foreach ($pids as $pid) {
@@ -108,12 +128,49 @@ final class ProcessKiller
     }
 
     /**
-     * Scan /proc once and return two maps: [pid => ppid] and [pid => pgid].
+     * Single-pass ps scan for macOS/BSD systems.
      *
-     * Uses strrpos(')') to find the end of the comm field, which is robust
-     * against process names containing spaces or parentheses.
+     * @return array{array<int, int>, array<int, int>}
+     */
+    private static function buildPsMaps(): array
+    {
+        $parentMap = [];
+        $pgidMap = [];
+
+        $output = @shell_exec('ps -eo pid,ppid,pgid 2>/dev/null');
+
+        if (! \is_string($output) || $output === '') {
+            return [$parentMap, $pgidMap];
+        }
+
+        $lines = explode("\n", trim($output));
+        array_shift($lines);
+
+        foreach ($lines as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+
+            $parts = preg_split('/\s+/', $line);
+
+            if (isset($parts[2])) {
+                $pid = (int) $parts[0];
+                $ppid = (int) $parts[1];
+                $pgid = (int) $parts[2];
+
+                $parentMap[$pid] = $ppid;
+                $pgidMap[$pid] = $pgid;
+            }
+        }
+
+        return [$parentMap, $pgidMap];
+    }
+
+    /**
+     * Scan /proc once and return PID and PGID maps.
      *
-     * @return array{array<int, int>, array<int, int>}  [$parentMap, $pgidMap]
+     * @return array{array<int, int>, array<int, int>}
      */
     private static function buildProcMaps(): array
     {
@@ -154,8 +211,6 @@ final class ProcessKiller
     /**
      * Parse a /proc/$pid/stat line into [pid, ppid, pgid].
      *
-     * Stat fields after the comm: state(0), ppid(1), pgrp(2), ...
-     *
      * @return array{int, int, int}|null
      */
     private static function parseProcStat(string $stat): ?array
@@ -179,8 +234,8 @@ final class ProcessKiller
     }
 
     /**
-     * @param  int $pid
-     * @param  array<int, int> $parentMap  [pid => ppid]
+     * @param int $pid
+     * @param array<int, int> $parentMap
      * @return list<int>
      */
     private static function collectDescendants(int $pid, array $parentMap): array
@@ -205,31 +260,26 @@ final class ProcessKiller
     }
 
     /**
+     * Fallback strategy using pgrep for recursive discovery.
+     *
      * @param list<int> $pids
      */
     private static function killTreesUnixFallback(array $pids): void
     {
         foreach ($pids as $pid) {
-            self::killTreeUnixFallback($pid);
-        }
-    }
+            $output = @shell_exec("pgrep -P {$pid} 2>/dev/null");
 
-    /**
-     * Recursive pgrep-based tree kill for Unix systems without /proc (~30ms).
-     */
-    private static function killTreeUnixFallback(int $pid): void
-    {
-        $output = @shell_exec("pgrep -P {$pid} 2>/dev/null");
-
-        if (\is_string($output) && $output !== '') {
-            foreach (explode("\n", trim($output)) as $childPid) {
-                if (ctype_digit($childPid) && (int) $childPid > 0) {
-                    self::killTreeUnixFallback((int) $childPid);
+            if (\is_string($output) && $output !== '') {
+                foreach (explode("\n", trim($output)) as $childPid) {
+                    $childPid = trim($childPid);
+                    if (ctype_digit($childPid) && (int) $childPid > 0) {
+                        self::killTreesUnixFallback([(int) $childPid]);
+                    }
                 }
             }
-        }
 
-        self::sendSignal($pid, SIGKILL);
+            self::sendSignal($pid, SIGKILL);
+        }
     }
 
     /**
@@ -243,7 +293,7 @@ final class ProcessKiller
     }
 
     /**
-     * Send a signal to an entire process group (negative PID).
+     * Send a signal to an entire process group.
      */
     private static function sendSignalToGroup(int $pgid, int $signal): void
     {

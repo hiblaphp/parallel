@@ -32,7 +32,13 @@ final class ProcessFixture
     {
         exec("ps -p {$pid} -o state= 2>/dev/null", $output, $code);
 
-        return $code === 0 && ! empty($output) && trim($output[0]) !== 'Z';
+        if ($code !== 0 || empty($output)) {
+            return false;
+        }
+
+        $state = trim($output[0]);
+
+        return $state !== '' && ! str_starts_with($state, 'Z');
     }
 
     private static function isRunningWindows(int $pid): bool
@@ -46,6 +52,21 @@ final class ProcessFixture
         }
 
         return false;
+    }
+
+    public static function waitForChildren(int $parentPid, int $timeoutMs = 3000): array
+    {
+        $deadline = microtime(true) + ($timeoutMs / 1000);
+
+        do {
+            $children = self::childPids($parentPid);
+            if ($children !== []) {
+                return $children;
+            }
+            usleep(50_000);
+        } while (microtime(true) < $deadline);
+
+        return [];
     }
 
     public static function waitForDeath(int $pid, int $timeoutMs = 1000): bool
@@ -172,7 +193,7 @@ final class ProcessFixture
         return array_values(
             array_filter(
                 array_map('intval', $output),
-                static fn (int $pid) => $pid > 0
+                static fn(int $pid) => $pid > 0
             )
         );
     }
@@ -183,18 +204,19 @@ final class ProcessFixture
     private static function childPidsWindows(int $parentPid): array
     {
         exec(
-            "wmic process where (ParentProcessId={$parentPid}) get ProcessId /FORMAT:VALUE 2>NUL",
+            "powershell -NoProfile -Command \""
+                . "Get-CimInstance Win32_Process"
+                . " | Where-Object { \$_.ParentProcessId -eq $parentPid }"
+                . " | Select-Object -ExpandProperty ProcessId"
+                . "\" 2>NUL",
             $output
         );
 
         $children = [];
         foreach ($output as $line) {
-            $line = trim($line);
-            if (str_starts_with($line, 'ProcessId=')) {
-                $pid = (int) substr($line, strlen('ProcessId='));
-                if ($pid > 0) {
-                    $children[] = $pid;
-                }
+            $pid = (int) trim($line);
+            if ($pid > 0) {
+                $children[] = $pid;
             }
         }
 

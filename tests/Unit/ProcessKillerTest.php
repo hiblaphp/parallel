@@ -26,7 +26,6 @@ describe('ProcessKiller', function () {
 
             proc_close($proc['resource']);
         })->skipOnWindows();
-
     });
 
     describe('Linux', function () {
@@ -75,7 +74,6 @@ describe('ProcessKiller', function () {
                     proc_close($proc['resource']);
                 }
             });
-
         });
 
         describe('process tree (shared PGID, bottom-up walk)', function () {
@@ -116,7 +114,6 @@ describe('ProcessKiller', function () {
 
                 proc_close($proc['resource']);
             });
-
         });
 
         describe('process group kill (PGID === PID, atomic path)', function () {
@@ -161,9 +158,7 @@ describe('ProcessKiller', function () {
                 proc_close($procA['resource']);
                 proc_close($procB['resource']);
             });
-
         });
-
     });
 
     describe('macOS', function () {
@@ -208,7 +203,6 @@ describe('ProcessKiller', function () {
                     proc_close($proc['resource']);
                 }
             });
-
         });
 
         describe('process tree (pgrep fallback)', function () {
@@ -249,9 +243,7 @@ describe('ProcessKiller', function () {
 
                 proc_close($proc['resource']);
             });
-
         });
-
     });
 
     describe('Windows', function () {
@@ -302,7 +294,6 @@ describe('ProcessKiller', function () {
                     ProcessFixture::removeTempScript($proc['script']);
                 }
             });
-
         });
 
         describe('process tree (taskkill /T path)', function () {
@@ -319,7 +310,7 @@ describe('ProcessKiller', function () {
 
                 usleep(500_000);
 
-                $children = ProcessFixture::childPids($rootPid);
+                $children = ProcessFixture::waitForChildren($rootPid, 3000);
                 expect($children)->not->toBeEmpty('root PHP should have spawned a child process');
 
                 ProcessKiller::killTreesAsync([$rootPid]);
