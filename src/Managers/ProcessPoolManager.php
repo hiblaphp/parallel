@@ -609,6 +609,7 @@ final class ProcessPoolManager
         $payload = [
             'task_id' => $taskId,
             'serialized_callback' => $serializedTask,
+            'timeout_seconds' => $timeoutSeconds,
         ];
 
         $jsonPayload = json_encode($payload, JSON_UNESCAPED_SLASHES);
@@ -643,8 +644,14 @@ final class ProcessPoolManager
 
                 $this->checkGracefulShutdownCompletion();
             },
-            function ($reason) use ($workerId, $taskId, $promise, $timeoutSeconds) {
+            function ($reason) use ($worker, $workerId, $taskId, $promise, $timeoutSeconds) {
                 unset($this->activeTasks[$workerId][$taskId]);
+
+                if ($reason instanceof PromiseTimeoutException) {
+                    if (isset($this->allWorkers[$workerId])) {
+                        $worker->terminate();
+                    }
+                }
 
                 if (! $promise->isCancelled()) {
                     if ($reason instanceof PromiseTimeoutException) {

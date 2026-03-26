@@ -147,16 +147,21 @@ register_shutdown_function(function () {
 
     $error = error_get_last();
     $message = 'Worker process exited or crashed unexpectedly.';
+    $isTimeout = false;
 
-    if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
-        $message = 'Fatal Error: ' . $error['message'];
+    if ($error !== null && in_array($error['type'],[E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+        $isTimeout = stripos($error['message'], 'Maximum execution time') !== false;
+        $message = $isTimeout
+            ? 'Task exceeded maximum execution time: ' . $error['message']
+            : 'Fatal Error: ' . $error['message'];
     }
 
-    // Reject the in-flight task promise on the parent side
+    // Reject the in-flight task promise on the parent side. We use TimeoutException
+    // when a timeout is detected so the parent runner can process it correctly.
     write_frame([
         'status' => 'ERROR',
         'task_id' => $currentTaskId,
-        'class' => Hibla\Parallel\Exceptions\ProcessCrashedException::class,
+        'class' => $isTimeout ? Hibla\Parallel\Exceptions\TimeoutException::class : Hibla\Parallel\Exceptions\ProcessCrashedException::class,
         'message' => $message,
         'code' => 0,
         'file' => $error['file'] ?? 'unknown',
@@ -231,15 +236,69 @@ while (($payload = fgets($stdin)) !== false) {
     global $currentTaskId, $isProcessing;
     $currentTaskId = $taskData['task_id'];
     $isProcessing = true;
+    
+    $taskTimeout = $taskData['timeout_seconds'] ?? $timeoutSeconds;
+    set_time_limit($taskTimeout);
+
+    if (function_exists('pcntl_alarm') && function_exists('pcntl_signal')) {
+        if (function_exists('pcntl_async_signals')) {
+            pcntl_async_signals(true);
+        }
+
+        pcntl_signal(SIGALRM, function () {
+            global $currentTaskId;
+            $message = 'Task exceeded maximum execution time (wall-clock timeout)';
+
+            write_frame([
+                'status' => 'ERROR',
+                'task_id' => $currentTaskId,
+                'class' => Hibla\Parallel\Exceptions\TimeoutException::class,
+                'message' => $message,
+                'code' => 0,
+                'file' => 'unknown',
+                'line' => 0,
+                'stack_trace' => 'Worker timed out.',
+            ]);
+            write_frame(['status' => 'CRASHED']);
+
+            if (ob_get_level() > 0) {
+                ob_end_clean();
+            }
+            drain_and_wait();
+            exit(124);
+        });
+
+        pcntl_alarm($taskTimeout);
+    }
+    // ---------------------------
 
     // Register the task ID so emit() can tag MESSAGE frames for correct
     // routing back to the originating task handler on the parent side.
     Hibla\Parallel\Internals\WorkerContext::setCurrentTaskId($currentTaskId);
 
     ob_start(function (string $buffer) use ($currentTaskId) {
-        if ($buffer !== '') {
-            write_frame(['status' => 'OUTPUT', 'task_id' => $currentTaskId, 'output' => $buffer]);
+        if ($buffer === '') {
+            return '';
         }
+
+        if (stripos($buffer, 'Maximum execution time') !== false) {
+            write_frame([
+                'status' => 'ERROR',
+                'task_id' => $currentTaskId,
+                'class' => Hibla\Parallel\Exceptions\TimeoutException::class,
+                'message' => 'Task exceeded maximum execution time (detected in output stream)',
+                'code' => 0,
+                'file' => 'unknown',
+                'line' => 0,
+                'stack_trace' => 'Worker timed out.',
+            ]);
+            write_frame(['status' => 'CRASHED']);
+            drain_and_wait();
+            
+            return '';
+        }
+
+        write_frame(['status' => 'OUTPUT', 'task_id' => $currentTaskId, 'output' => $buffer]);
 
         return '';
     }, 1);
@@ -249,6 +308,10 @@ while (($payload = fgets($stdin)) !== false) {
         $result = Hibla\await(Hibla\async($callback));
         ob_end_flush();
         Hibla\EventLoop\Loop::run();
+
+        if (function_exists('pcntl_alarm')) {
+            pcntl_alarm(0);
+        }
 
         $needsSerialization = is_resource($result) || containsObjects($result);
 
@@ -261,6 +324,9 @@ while (($payload = fgets($stdin)) !== false) {
     } catch (Throwable $e) {
         if (ob_get_level() > 0) {
             ob_end_clean();
+        }
+        if (function_exists('pcntl_alarm')) {
+            pcntl_alarm(0);
         }
 
         write_frame([
