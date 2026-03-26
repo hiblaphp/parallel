@@ -41,10 +41,10 @@ Hibla Parallel brings **Erlang-style reliability** and **Node.js-level cluster p
     - [Lazy Spawning](#lazy-spawning)
 - [Self-Healing & Supervisor Pattern](#self-healing--supervisor-pattern)
   - [Complete example: chaos server](#complete-example-chaos-server)
-- [Respawn Rate Limiting](#respawn-rate-limiting)        ← new
-  - [Fail-fast, not slow-fail](#fail-fast-not-slow-fail) ← new
-  - [Choosing the right limit](#choosing-the-right-limit) ← new
-  - [Interaction with `onWorkerRespawn`](#interaction-with-onworkerrespawn) ← new
+- [Respawn Rate Limiting](#respawn-rate-limiting)       
+  - [Fail-fast, not slow-fail](#fail-fast-not-slow-fail)
+  - [Choosing the right limit](#choosing-the-right-limit)
+  - [Interaction with `onWorkerRespawn`](#interaction-with-onworkerrespawn) 
 - [Pool Monitoring](#pool-monitoring)
   - [PID accuracy and `boot()`](#pid-accuracy-and-boot)
 
