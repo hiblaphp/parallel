@@ -147,9 +147,7 @@ Choose the right tool for your use case:
 | `->withMaxRestartPerSecond(int $n)` | *(Pool only)* Limit respawn rate to N workers per second |
 | `->onMessage(callable $handler)` | *(Task/Pool)* Register a handler for `emit()` messages from workers |
 | `->onWorkerRespawn(callable $handler)` | *(Pool only)* Called whenever a worker exits and a replacement is spawned |
-| `->boot()` | *(Pool only)* Pre-warm all workers immediately; returns before workers are ready — see `bootAsync()` |
-| `->bootAsync()` | *(Pool only)* Pre-warm all workers and return a `Promise<static>` that resolves only once all workers are genuinely ready |
-
+| `->boot()` | *(Pool only)* Pre-warm all workers immediately; returns before workers are ready |
 ---
 
 ## How Parallel Works
