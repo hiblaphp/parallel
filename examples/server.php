@@ -56,8 +56,6 @@ $startAcceptor = function () use (&$startAcceptor, $pool) {
                 $connection->write($response);
             });
         });
-
-        return new Promise();
     });
 };
 
