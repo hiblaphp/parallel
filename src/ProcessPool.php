@@ -68,9 +68,7 @@ final class ProcessPool implements ProcessPoolInterface
      */
     private $onRespawnHandler = null;
 
-    public function __construct(private readonly int $size)
-    {
-    }
+    public function __construct(private readonly int $size) {}
 
     /**
      * @inheritdoc
@@ -294,30 +292,24 @@ final class ProcessPool implements ProcessPoolInterface
     public function runFn(callable $task, ?callable $onMessage = null): callable
     {
         return function (mixed ...$args) use ($task, $onMessage): PromiseInterface {
-            return $this->run(static fn () => $task(...$args), $onMessage);
+            return $this->run(static fn() => $task(...$args), $onMessage);
         };
     }
 
     /**
-     * @inheritdoc
-     * @return PromiseInterface<void>
+     * @inheritDoc
      */
-    public function shutdownAsync(): PromiseInterface
+    public function drain(): void
     {
         $this->isShutdown = true;
 
         if ($this->pool !== null) {
-            $promise = $this->pool->shutdownAsync();
-            $promise->finally(function () {
-                $this->pool = null;
-                $this->onMessageHandlers = [];
-                $this->onRespawnHandler = null;
-            });
+            await($this->pool->shutdownAsync());
 
-            return $promise;
+            $this->pool = null;
+            $this->onMessageHandlers = [];
+            $this->onRespawnHandler = null;
         }
-
-        return Promise::resolved();
     }
 
     /**

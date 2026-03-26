@@ -761,8 +761,8 @@ for ($i = 0; $i < 4; $i++) {
 // Option A: Synchronous — blocks until all queued tasks finish and all workers exit
 $pool->shutdown();
 
-// Option B: Asynchronous — returns a Promise that resolves when fully shut down
-// await($pool->shutdownAsync());
+// Option B: Graceful- rejects all incoming task while still waiting for current task to finish and then shutdown
+// $pool->drain();
 ```
 
 ### Automatic garbage collection between tasks

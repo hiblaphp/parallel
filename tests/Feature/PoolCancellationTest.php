@@ -160,9 +160,7 @@ describe('Process Pool Cancellation and Respawn Integration', function () {
         $p = $pool->run(fn () => 'failed');
         $p->cancel();
 
-        $shutdownPromise = $pool->shutdownAsync();
-
-        await($shutdownPromise);
+        $pool->drain();
 
         expect(true)->toBeTrue('Shutdown was successful');
     });

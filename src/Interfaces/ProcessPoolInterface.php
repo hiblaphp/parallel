@@ -35,14 +35,12 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
     public function withLazySpawning(): static;
 
     /**
-     * Gracefully shuts down the pool asynchronously.
+     * Gracefully shuts down the pool.
      *
      * Stops accepting new tasks, but allows all currently queued and executing
      * tasks to finish before terminating the underlying worker processes.
-     *
-     * @return PromiseInterface<void> A promise that resolves when all workers have safely terminated.
      */
-    public function shutdownAsync(): PromiseInterface;
+    public function drain(): void;
 
     /**
      * Shuts down the pool forcefully, terminating all active worker processes immediately.
