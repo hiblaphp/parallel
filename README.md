@@ -1256,13 +1256,15 @@ the rest.
 
 ### Pool-Level vs. Per-Task Message Handlers
 
-You can register message handlers at two levels. They compose without conflict
-— the per-task handler fires first, followed by the pool-level handler, and
-both run concurrently as async fibers:
+You can register message handlers at two levels. The pool-level handler always
+starts first — it is launched before the per-task handler and begins executing
+immediately. Both then run concurrently as async fibers, interleaving at any
+`await` point, so the total wall-clock cost equals the slowest handler, not
+the sum:
 ```php
 $pool = Parallel::pool(size: 4)
     ->onMessage(function ($msg) {
-        // Pool-level handler — fires for every task's messages.
+        // Pool-level handler — always starts first.
         // Use this for cross-cutting concerns: logging, metrics, dashboards.
         Logger::info("Worker {$msg->pid} emitted", ['data' => $msg->data]);
     });
@@ -1273,7 +1275,7 @@ $pool->run(
         Hibla\emit(new ProgressUpdate(percent: 100));
     },
     onMessage: function ($msg) {
-        // Per-task handler — fires only for this task's messages, before pool-level.
+        // Per-task handler — starts after the pool-level handler's first slice.
         if ($msg->data instanceof ProgressUpdate) {
             echo "This task is {$msg->data->percent}% done\n";
         }
@@ -1286,6 +1288,61 @@ $pool->shutdown();
 The same two-level composition is available on `Parallel::task()` using
 `->onMessage()` for the executor level and the second argument to `->run()`
 for the per-task level.
+
+#### Concurrent handlers and shared state
+
+Because handlers run concurrently as fibers, **handlers that share mutable
+state can race at any `await` point**. Independent handlers — logging, metrics,
+tracing — are unaffected and need no guards. But if two handlers both read and
+write the same variable, one can read a stale value before the other has written
+back:
+```php
+// UNSAFE — both handlers share $log and interleave at await points
+$log = [];
+
+$pool = Parallel::pool(size: 4)
+    ->onMessage(function ($msg) use (&$log) {
+        $entries = $log;
+        await(Promise::resolved()); // ← yields here, per-task handler reads same stale $log
+        $log = [...$entries, "pool: {$msg->data}"];
+    });
+
+$pool->run(
+    fn() => emit('event'),
+    onMessage: function ($msg) use (&$log) {
+        $entries = $log;            // reads same stale value — one write is lost
+        await(Promise::resolved());
+        $log = [...$entries, "task: {$msg->data}"];
+    }
+);
+```
+
+Protect the critical section with a `Mutex` from `hiblaphp/sync`:
+```php
+use Hibla\Sync\Mutex;
+use function Hibla\await;
+
+$log = [];
+$mutex = new Mutex();
+
+$pool = Parallel::pool(size: 4)
+    ->onMessage(function ($msg) use (&$log, $mutex) {
+        await($mutex->withLock(function () use (&$log, $msg) {
+            $log[] = "pool: {$msg->data}";
+        }));
+    });
+
+$pool->run(
+    fn() => emit('event'),
+    onMessage: function ($msg) use (&$log, $mutex) {
+        await($mutex->withLock(function () use (&$log, $msg) {
+            $log[] = "task: {$msg->data}";
+        }));
+    }
+);
+```
+
+Handlers that do not share state need no guards — the concurrency is free.
 
 ### Handler completion blocks task promise resolution
 
