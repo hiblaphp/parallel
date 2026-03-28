@@ -42,6 +42,21 @@ Promise::all([
     async(function () {
         await(delay(1));
     }),
+    async(function () {
+        await(delay(1));
+    }),
+    async(function () {
+        await(delay(1));
+    }),
+    parallel(function () {
+        await(Promise::all([
+            parallel(fn() => sleep(1)),
+            parallel(fn() => sleep(1)),
+            parallel(fn() => sleep(1)),
+            parallel(fn() => sleep(1)),
+            parallel(fn() => sleep(1)),
+        ]));
+    })
 ])->wait();
 
 $end = microtime(true);
