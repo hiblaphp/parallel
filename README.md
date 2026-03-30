@@ -1174,7 +1174,7 @@ echo "Executed ~5 seconds of work in: {$duration} seconds!";
 // Output: Executed ~5 seconds of work in: 1.04 seconds!
 ```
 
-The event loop does not care whether a given unit of work is a process-backed promise from a pool worker or a fiber-backed promise from `async()`. It drives all of them forward concurrently on the same tick cycle. The result is a single composable concurrency model rather than two separate systems you have to coordinate manually.
+The event loop does not care whether a given unit of work is a process-backed promise from a pool worker or a fiber-backed promise from `async()`. From the event loop perspective, it just watching non blocking streams for process stdin and stdout. It drives all of them forward concurrently on the same tick cycle. The result is a single composable concurrency model rather than two separate systems you have to coordinate manually.
 
 ---
 
