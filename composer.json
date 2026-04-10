@@ -13,7 +13,10 @@
     "autoload-dev": {
         "psr-4": {
             "Tests\\": "tests/"
-        }
+        },
+        "files": [
+            "tests/Fixtures/callable_functions.php"
+        ]
     },
     "prefer-stable": true,
     "minimum-stability": "dev",
