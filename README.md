@@ -5,7 +5,9 @@
 Hibla Parallel brings **Erlang-style reliability** and **Node.js-level cluster pool performance** to the PHP ecosystem. Orchestrate worker clusters that are fast (proven **100,000+ RPS** on http socket server benchmarks), truly non-blocking on all platforms, and capable of healing themselves through a supervised "Let it Crash" architecture.
 
 [![Latest Release](https://img.shields.io/github/release/hiblaphp/parallel.svg?style=flat-square)](https://github.com/hiblaphp/parallel/releases)
-[![Tests](https://github.com/hiblaphp/parallel/actions/workflows/test.yml/badge.svg)](https://github.com/hiblaphp/parallel/actions/workflows/test.yml)
+[![Windows Tests](https://github.com/hiblaphp/parallel/actions/workflows/windows-ci.yml/badge.svg)](https://github.com/hiblaphp/parallel/actions/workflows/windows-ci.yml)
+[![Linux Tests](https://github.com/hiblaphp/parallel/actions/workflows/unix-ci.yml/badge.svg)](https://github.com/hiblaphp/parallel/actions/workflows/unix-ci.yml)
+[![macOS Tests](https://github.com/hiblaphp/parallel/actions/workflows/macos-ci.yml/badge.svg)](https://github.com/hiblaphp/parallel/actions/workflows/macos-ci.yml)
 [![Total Downloads](https://img.shields.io/packagist/dt/hiblaphp/parallel.svg?style=flat-square)](https://packagist.org/packages/hiblaphp/parallel)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](./LICENSE)
 
