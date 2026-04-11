@@ -19,13 +19,15 @@
         ]
     },
     "prefer-stable": true,
-    "minimum-stability": "dev",
     "require": {
+        "php": "^8.4",
         "rcalicdan/config-loader": "^1.0",
         "rcalicdan/serializer": "^1.0",
-        "hiblaphp/promise": "dev-main",
-        "hiblaphp/async": "dev-main",
-        "hiblaphp/stream": "dev-main"
+        "hiblaphp/event-loop": "^1.0@alpha",
+        "hiblaphp/promise": "^1.0@alpha",
+        "hiblaphp/cancellation": "^1.0@alpha",
+        "hiblaphp/async": "^1.0@alpha",
+        "hiblaphp/stream": "^1.0@alpha"
     },
     "require-dev": {
         "pestphp/pest": "^4.0",
@@ -34,7 +36,8 @@
         "laravel/pint": "^1.25",
         "mockery/mockery": "^1.6",
         "phpstan/extension-installer": "^1.4",
-        "hiblaphp/socket": "dev-main"
+        "hiblaphp/socket": "^1.0@alpha",
+        "hiblaphp/dns": "^1.0@alpha"
     },
     "config": {
         "allow-plugins": {
