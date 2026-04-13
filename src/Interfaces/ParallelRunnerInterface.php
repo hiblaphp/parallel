@@ -106,9 +106,9 @@ interface ParallelRunnerInterface
      * (See run() for nesting execution warnings and short closure rules).
      *
      * @template TResult
-     * @param callable(mixed ...$args): TResult $task The task to execute in parallel
+     * @param callable(mixed ...): TResult $task The task to execute in parallel
      * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
-     * @return callable(mixed ...$args): PromiseInterface<TResult> A callable that returns a Promise
+     * @return callable(mixed ...): PromiseInterface<TResult> A callable that returns a Promise
      */
     public function runFn(callable $task, ?callable $onMessage = null): callable;
 }

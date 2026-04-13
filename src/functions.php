@@ -101,10 +101,10 @@ function parallel(callable $task, ?int $timeout = null): PromiseInterface
  *
  * @template TResult
  *
- * @param callable(mixed ...$args): TResult $task The task to execute in parallel
+ * @param callable(mixed...): TResult $task The task to execute in parallel
  * @param int|null $timeout Maximum seconds to wait (default: from config or 60)
  *
- * @return callable(mixed ...$args): PromiseInterface<TResult> A callable that returns a Promise
+ * @return callable(mixed...): PromiseInterface<TResult> A callable that returns a Promise
  */
 function parallelFn(callable $task, ?int $timeout = null): callable
 {

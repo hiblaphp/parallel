@@ -106,7 +106,7 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      * storms where a bad task or broken bootstrap causes workers to restart
      * continuously, exhausting OS resources.
      *
-     * **Default: null (opt-in — no rate limit is applied).**
+     * **Default: null (opt-in: no rate limit is applied).**
      *
      * Recommended starting value: `$poolSize * 2`. A healthy pool should
      * rarely respawn more than once per worker per second; anything above
@@ -142,9 +142,9 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      *
      * Calling boot() on a lazy pool (withLazySpawning()) forces the manager to
      * initialize, but workers still spawn one-by-one on each submit() inside the
-     * manager rather than all at once — boot() does not override that behaviour.
+     * manager rather than all at once and boot() does not override that behaviour.
      *
-     * Safe to call multiple times — subsequent calls are no-ops.
+     * Safe to call multiple times and subsequent calls are no-ops.
      *
      * @return static The same instance (not a clone) for fluent chaining after configuration.
      */
