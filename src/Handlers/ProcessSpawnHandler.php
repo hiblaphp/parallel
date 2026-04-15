@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Handlers;
 
-use Hibla\Parallel\Exceptions\ParallelException;
 use Hibla\Parallel\Exceptions\ProcessSpawnException;
 use Hibla\Parallel\Exceptions\TaskPayloadException;
 use Hibla\Parallel\Internals\BackgroundProcess;
@@ -33,25 +32,7 @@ class ProcessSpawnHandler
 
     public function __construct()
     {
-        $requiredFunctions = PHP_OS_FAMILY !== 'Windows'
-            ? ['proc_open', 'exec', 'shell_exec', 'posix_kill']
-            : ['proc_open', 'exec', 'shell_exec'];
-
-        $missingFunctions = array_filter($requiredFunctions, static function (string $function): bool {
-            // @phpstan-ignore-next-line the functions are checked at runtime
-            return ! function_exists($function);
-        });
-
-        if (\count($missingFunctions) > 0) {
-            throw new ProcessSpawnException(
-                \sprintf(
-                    'The following required functions are disabled on this environment: "%s". ' .
-                        'Hibla Parallel requires these functions to spawn and manage processes. ' .
-                        'Please check the "disable_functions" directive in your php.ini file.',
-                    implode('", "', $missingFunctions)
-                )
-            );
-        }
+        SystemUtilities::validateEnvironment();
 
         $procMemLimit = Config::loadFromRoot('hibla_parallel', 'process.memory_limit', '512M');
         $this->defaultProcessMemoryLimit = (\is_string($procMemLimit) || \is_int($procMemLimit)) ? $procMemLimit : '512M';

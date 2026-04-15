@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Utilities;
 
+use Hibla\Parallel\Exceptions\EnvironmentException;
 use Hibla\Parallel\Exceptions\ParallelException;
 use Rcalicdan\ConfigLoader\Config;
 
@@ -251,5 +252,33 @@ final class SystemUtilities
         }
 
         throw new ParallelException("Worker script '$scriptName' not found.");
+    }
+
+    /**
+     * Validates that the current environment has the necessary PHP functions enabled.
+     *
+     * @throws EnvironmentException If required functions are disabled.
+     */
+    public static function validateEnvironment(): void
+    {
+        $requiredFunctions = PHP_OS_FAMILY !== 'Windows'
+            ? ['proc_open', 'exec', 'shell_exec', 'posix_kill']
+            : ['proc_open', 'exec', 'shell_exec'];
+
+        $missingFunctions = array_filter($requiredFunctions, static function (string $function): bool {
+            // @phpstan-ignore-next-line the functions are checked at runtime
+            return ! function_exists($function);
+        });
+
+        if (\count($missingFunctions) > 0) {
+            throw new EnvironmentException(
+                \sprintf(
+                    'The following required functions are disabled on this environment: "%s". ' .
+                        'Hibla Parallel requires these functions to spawn and manage processes. ' .
+                        'Please check the "disable_functions" directive in your php.ini file.',
+                    implode('", "', $missingFunctions)
+                )
+            );
+        }
     }
 }
