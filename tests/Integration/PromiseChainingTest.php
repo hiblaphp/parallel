@@ -2,10 +2,9 @@
 
 declare(strict_types=1);
 
-use function Hibla\await;
-
 use Hibla\EventLoop\Loop;
 
+use function Hibla\await;
 use function Hibla\parallel;
 
 describe('Promise Chaining Integration', function () {

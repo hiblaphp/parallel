@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Tests\Integration;
 
-use function Hibla\await;
-use function Hibla\delay;
-
 use Hibla\Parallel\Exceptions\TimeoutException;
-
 use Hibla\Parallel\Parallel;
 use Hibla\Promise\Promise;
+
+use function Hibla\await;
+use function Hibla\delay;
 
 describe('Pool Worker Spawning Test', function () {
     it('eager pool pre-spawns all workers after first task', function () {

@@ -99,7 +99,9 @@ final class ProcessPoolManager
         private readonly bool $spawnEagerly = true,
         ?int $maxExecutionsPerWorker = null,
         ?int $maxRestartPerSecond = null,
-        /** @var callable(): void|null */
+        /**
+         * @var callable(): void|null
+         */
         private $onWorkerRespawn = null,
         private readonly ?int $timeoutSeconds = null,
     ) {
@@ -163,8 +165,10 @@ final class ProcessPoolManager
 
     /**
      * @template TValue
+     *
      * @param callable(): TValue $task
      * @param callable(WorkerMessage): void|null $onMessage
+     *
      * @return PromiseInterface<TValue>
      */
     public function submit(callable $task, int $timeoutSeconds, string $sourceLocation = 'unknown', ?callable $onMessage = null): PromiseInterface
@@ -328,7 +332,7 @@ final class ProcessPoolManager
         $cutoff = $now - 1_000_000_000;
 
         $this->respawnTimestamps = array_values(
-            array_filter($this->respawnTimestamps, static fn(int $t): bool => $t > $cutoff)
+            array_filter($this->respawnTimestamps, static fn (int $t): bool => $t > $cutoff)
         );
 
         return \count($this->respawnTimestamps) >= $this->maxRestartPerSecond;
@@ -428,7 +432,7 @@ final class ProcessPoolManager
         }
 
         $workersToCleanup = $this->allWorkers;
-        $this->allWorkers  = [];
+        $this->allWorkers = [];
 
         while (! $this->taskQueue->isEmpty()) {
             $taskData = $this->taskQueue->dequeue();
@@ -579,6 +583,7 @@ final class ProcessPoolManager
 
     /**
      * @template TValue
+     *
      * @param callable(): TValue $task
      * @param Promise<TValue> $promise
      * @param callable(WorkerMessage): void|null $onMessage

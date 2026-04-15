@@ -2,11 +2,10 @@
 
 declare(strict_types=1);
 
-use function Hibla\async;
-
-use function Hibla\parallel;
-
 use Hibla\Promise\Promise;
+
+use function Hibla\async;
+use function Hibla\parallel;
 
 describe('Parallel and Async Concurrency', function () {
 

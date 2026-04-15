@@ -149,7 +149,7 @@ register_shutdown_function(function () {
     $message = 'Worker process exited or crashed unexpectedly.';
     $isTimeout = false;
 
-    if ($error !== null && in_array($error['type'],[E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+    if ($error !== null && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
         $isTimeout = stripos($error['message'], 'Maximum execution time') !== false;
         $message = $isTimeout
             ? 'Task exceeded maximum execution time: ' . $error['message']
@@ -236,7 +236,7 @@ while (($payload = fgets($stdin)) !== false) {
     global $currentTaskId, $isProcessing;
     $currentTaskId = $taskData['task_id'];
     $isProcessing = true;
-    
+
     $taskTimeout = $taskData['timeout_seconds'] ?? $timeoutSeconds;
     set_time_limit($taskTimeout);
 
@@ -294,7 +294,7 @@ while (($payload = fgets($stdin)) !== false) {
             ]);
             write_frame(['status' => 'CRASHED']);
             drain_and_wait();
-            
+
             return '';
         }
 

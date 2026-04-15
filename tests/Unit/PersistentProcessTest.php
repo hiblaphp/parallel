@@ -2,9 +2,6 @@
 
 declare(strict_types=1);
 
-use function Hibla\await;
-use function Hibla\delay;
-
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Internals\PersistentProcess;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
@@ -12,6 +9,9 @@ use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
+
+use function Hibla\await;
+use function Hibla\delay;
 
 /**
  * Builds a PersistentProcess whose stdout emits the given lines in order,

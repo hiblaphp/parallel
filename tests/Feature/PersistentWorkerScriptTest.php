@@ -10,14 +10,13 @@ describe('Persistent Worker Script Integration', function () {
     $autoloadPath = $projectRoot . '/vendor/autoload.php';
     $workerScript = $projectRoot . '/src/worker_persistent.php';
     $serializer = new CallbackSerializationManager();
-    $utils = new SystemUtilities();
 
     /**
      * Boots a persistent worker and returns[$process, $pipes, $stdoutFile].
      * The caller is responsible for closing/terminating.
      */
-    $bootWorker = function () use ($workerScript, $autoloadPath, $utils): array {
-        $phpBinary = $utils->getPhpBinary();
+    $bootWorker = function () use ($workerScript, $autoloadPath): array {
+        $phpBinary = SystemUtilities::getPhpBinary();
         $stdoutFile = sys_get_temp_dir() . '/hibla_persistent_stdout_' . uniqid() . '.log';
 
         $descriptors = [

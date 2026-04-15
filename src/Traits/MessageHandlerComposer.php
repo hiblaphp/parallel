@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Traits;
 
-use function Hibla\async;
-use function Hibla\await;
-
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Promise;
+
+use function Hibla\async;
+use function Hibla\await;
 
 trait MessageHandlerComposer
 {
@@ -28,9 +28,10 @@ trait MessageHandlerComposer
      * Returns null if no handlers are registered so the caller skips invocation entirely.
      *
      * @param array<int, callable(WorkerMessage): void> $outerHandlers Handlers registered
-     *        via onMessage() in registration order. Fire first as the middleware layer.
+     *                                                                 via onMessage() in registration order. Fire first as the middleware layer.
      * @param callable(WorkerMessage): void|null $perTask Optional per-task handler passed
-     *        to run(). Fires last as the inner application layer.
+     *                                                    to run(). Fires last as the inner application layer.
+     *
      * @return callable(WorkerMessage): void|null
      */
     private function composeMessageHandlers(array $outerHandlers, ?callable $perTask): ?callable

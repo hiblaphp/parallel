@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Tests\Feature;
 
-use function Hibla\await;
-
 use Hibla\Parallel\Parallel;
 use Hibla\Promise\Exceptions\CancelledException;
+
+use function Hibla\await;
 
 describe('Process Pool Cancellation and Respawn Integration', function () {
     $getTempFile = function (): string {

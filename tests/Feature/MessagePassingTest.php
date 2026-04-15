@@ -4,15 +4,14 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Tests\Integration;
 
+use Hibla\Parallel\Parallel;
+use Hibla\Parallel\ValueObjects\WorkerMessage;
+use Hibla\Promise\Promise;
+use Tests\Fixtures\ProgressUpdate;
+
 use function Hibla\await;
 use function Hibla\delay;
 use function Hibla\emit;
-
-use Hibla\Parallel\Parallel;
-use Hibla\Parallel\ValueObjects\WorkerMessage;
-
-use Hibla\Promise\Promise;
-use Tests\Fixtures\ProgressUpdate;
 
 describe('Message Passing Test', function () {
     test('one-off task receives messages via per-task handler', function () {

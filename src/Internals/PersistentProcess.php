@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Internals;
 
-use function Hibla\async;
-use function Hibla\await;
-
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
 use Hibla\Parallel\Utilities\ProcessKiller;
@@ -15,6 +12,9 @@ use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
+
+use function Hibla\async;
+use function Hibla\await;
 
 /**
  * @internal Represents a single, long-running persistent worker process.
@@ -202,6 +202,7 @@ final class PersistentProcess
 
     /**
      * @param callable(WorkerMessage): void|null $onMessage
+     *
      * @return PromiseInterface<mixed>
      */
     public function submitTask(string $taskId, string $payload, string $sourceLocation = 'unknown', ?callable $onMessage = null): PromiseInterface

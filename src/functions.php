@@ -64,6 +64,7 @@ use Hibla\Promise\Interfaces\PromiseInterface;
  *
  * @param callable(): TResult $task The task to execute in parallel
  * @param int|null $timeout Maximum seconds to wait for task completion (default: from config or 60)
+ *
  * @return PromiseInterface<TResult> Promise resolving to the task's return value
  */
 function parallel(callable $task, ?int $timeout = null): PromiseInterface
@@ -151,6 +152,7 @@ function parallelFn(callable $task, ?int $timeout = null): callable
  *
  * @param callable(): TResult $task The task to execute in parallel
  * @param int|null $timeout Maximum seconds for task completion (default: from config or 600)
+ *
  * @return PromiseInterface<BackgroundProcess> Promise resolving to the Process instance
  */
 function spawn(callable $task, ?int $timeout = null): PromiseInterface
@@ -211,6 +213,7 @@ function spawnFn(callable $task, ?int $timeout = null): callable
  * is /dev/null and message passing is unavailable).
  *
  * @param mixed $data The data to send to the parent process
+ *
  * @return void
  */
 function emit(mixed $data): void

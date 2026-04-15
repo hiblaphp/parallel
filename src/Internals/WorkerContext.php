@@ -52,6 +52,7 @@ final class WorkerContext
      * routing back to the originating task's handler on the parent side.
      *
      * @param string|null $taskId
+     *
      * @return void
      */
     public static function setCurrentTaskId(?string $taskId): void

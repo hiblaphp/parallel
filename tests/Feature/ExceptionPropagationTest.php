@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-use function Hibla\await;
-use function Hibla\parallel;
-
 use Hibla\Parallel\Parallel;
 use Tests\Fixtures\CustomTestException;
+
+use function Hibla\await;
+use function Hibla\parallel;
 
 describe('Exception Propagation Integration', function () {
 

@@ -59,6 +59,7 @@ final class Parallel
      * Workers are spawned once and reused across multiple task submissions.
      *
      * @param int $size Number of persistent worker processes to maintain
+     *
      * @throws \InvalidArgumentException If size is less than 1
      */
     public static function pool(int $size): ProcessPoolInterface

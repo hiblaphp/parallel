@@ -2,16 +2,15 @@
 
 declare(strict_types=1);
 
-use function Hibla\async;
-use function Hibla\await;
-use function Hibla\parallel;
-
 use Hibla\Parallel\Parallel;
 use Hibla\Promise\Exceptions\AggregateErrorException;
-
 use Hibla\Promise\Exceptions\TimeoutException;
 use Hibla\Promise\Promise;
 use Hibla\Promise\SettledResult;
+
+use function Hibla\async;
+use function Hibla\await;
+use function Hibla\parallel;
 
 describe('Promise Combinators Integration', function () {
     test('Promise::all: waits for multiple parallel tasks to complete successfully', function () {

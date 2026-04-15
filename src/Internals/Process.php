@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Internals;
 
-use function Hibla\async;
-use function Hibla\await;
-
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
@@ -18,6 +15,9 @@ use Hibla\Promise\Promise;
 use Hibla\Stream\Exceptions\StreamException;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
+
+use function Hibla\async;
+use function Hibla\await;
 
 /**
  * @internal
@@ -60,10 +60,12 @@ final class Process
      *
      * @param int $timeoutSeconds Maximum time to wait for result in seconds. 0 means no limit.
      * @param callable(WorkerMessage): void|null $onMessage Optional handler invoked for each
-     *        MESSAGE frame emitted by the worker via emit(). The handler promise is tracked
-     *        and awaited before the task promise resolves — callers are never released before
-     *        handlers finish executing.
+     *                                                      MESSAGE frame emitted by the worker via emit(). The handler promise is tracked
+     *                                                      and awaited before the task promise resolves — callers are never released before
+     *                                                      handlers finish executing.
+     *
      * @return PromiseInterface<TResult> Promise that resolves with the task result
+     *
      * @throws \RuntimeException If the task times out, fails, or the stream closes unexpectedly
      */
     public function getResult(int $timeoutSeconds = 60, ?callable $onMessage = null): PromiseInterface
@@ -186,6 +188,7 @@ final class Process
      * than readLineAsync() returning null as it would on a clean pipe EOF.
      *
      * @param callable(WorkerMessage): void|null $onMessage Optional message handler
+     *
      * @return PromiseInterface<TResult> Promise that resolves with the task result
      */
     private function readResultFromStream(?callable $onMessage): PromiseInterface
@@ -293,6 +296,7 @@ final class Process
      * Reconstructs a Throwable from the structured error data sent by the worker.
      *
      * @param array<string, mixed> $errorData Decoded ERROR frame from the worker
+     *
      * @return \Throwable The reconstructed exception
      */
     private function createExceptionFromError(array $errorData): \Throwable

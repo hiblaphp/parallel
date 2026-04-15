@@ -2,17 +2,13 @@
 
 declare(strict_types=1);
 
-use function Hibla\await;
-
 use Hibla\EventLoop\Loop;
-
-use function Hibla\parallel;
-
 use Hibla\Parallel\Managers\ProcessManager;
-
-use function Hibla\spawn;
-
 use Rcalicdan\ConfigLoader\Config;
+
+use function Hibla\await;
+use function Hibla\parallel;
+use function Hibla\spawn;
 
 describe('Process Cancellation Integration', function () {
 

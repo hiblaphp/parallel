@@ -2,14 +2,11 @@
 
 declare(strict_types=1);
 
-use function Hibla\await;
-
 use Hibla\Parallel\Internals\BackgroundProcess;
-
-use function Hibla\parallelFn;
-
 use Hibla\Promise\Promise;
 
+use function Hibla\await;
+use function Hibla\parallelFn;
 use function Hibla\spawnFn;
 
 describe('Concurrency Limiters Integration', function () {

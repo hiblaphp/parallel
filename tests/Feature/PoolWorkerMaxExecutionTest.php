@@ -4,13 +4,12 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Tests\Integration;
 
-use function Hibla\await;
-use function Hibla\delay;
-
-use function Hibla\emit;
-
 use Hibla\Parallel\Parallel;
 use Hibla\Promise\Promise;
+
+use function Hibla\await;
+use function Hibla\delay;
+use function Hibla\emit;
 
 describe('Process Pool Max Execution Test', function () {
     it('worker retires after reaching max executions', function () {

@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Tests\Integration;
 
-use function Hibla\await;
-
 use Hibla\Parallel\Parallel;
 use Tests\Fixtures\CallableTestInstanceWorker;
 use Tests\Fixtures\CallableTestInvokable;
 use Tests\Fixtures\CallableTestInvokableWithArgs;
 use Tests\Fixtures\CallableTestStaticWorker;
+
+use function Hibla\await;
 
 describe('CallbackExecutionTest', function () {
 
@@ -25,7 +25,7 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('executes a short closure', function () {
-            $result = await(Parallel::task()->run(fn() => 'short-closure'));
+            $result = await(Parallel::task()->run(fn () => 'short-closure'));
 
             expect($result)->toBe('short-closure');
         });
@@ -71,7 +71,7 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('passes args to a static method array callable', function () {
-            $task   = Parallel::task()->runFn([CallableTestStaticWorker::class, 'runWithArgs']);
+            $task = Parallel::task()->runFn([CallableTestStaticWorker::class, 'runWithArgs']);
             $result = await($task('static', 7));
 
             expect($result)->toBe('static-7');
@@ -79,14 +79,14 @@ describe('CallbackExecutionTest', function () {
 
         it('passes args to an instance method array callable', function () {
             $worker = new CallableTestInstanceWorker('world');
-            $task   = Parallel::task()->runFn([$worker, 'runWithArgs']);
+            $task = Parallel::task()->runFn([$worker, 'runWithArgs']);
             $result = await($task('inst', 3));
 
             expect($result)->toBe('inst-3-world');
         });
 
         it('passes args to an invokable class', function () {
-            $task   = Parallel::task()->runFn(new CallableTestInvokableWithArgs());
+            $task = Parallel::task()->runFn(new CallableTestInvokableWithArgs());
             $result = await($task('inv', 99));
 
             expect($result)->toBe('inv-99');
@@ -106,7 +106,7 @@ describe('CallbackExecutionTest', function () {
     describe('Parallel::pool() accepts all callable types', function () {
 
         it('executes a regular closure', function () {
-            $pool   = Parallel::pool(size: 2);
+            $pool = Parallel::pool(size: 2);
             $result = await($pool->run(function () {
                 return 'pool-regular-closure';
             }));
@@ -116,15 +116,15 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('executes a short closure', function () {
-            $pool   = Parallel::pool(size: 2);
-            $result = await($pool->run(fn() => 'pool-short-closure'));
+            $pool = Parallel::pool(size: 2);
+            $result = await($pool->run(fn () => 'pool-short-closure'));
 
             expect($result)->toBe('pool-short-closure');
             $pool->shutdown();
         });
 
         it('executes a static method array callable', function () {
-            $pool   = Parallel::pool(size: 2);
+            $pool = Parallel::pool(size: 2);
             $result = await($pool->run([CallableTestStaticWorker::class, 'run']));
 
             expect($result)->toBe('static-method');
@@ -132,7 +132,7 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('executes an instance method array callable', function () {
-            $pool   = Parallel::pool(size: 2);
+            $pool = Parallel::pool(size: 2);
             $worker = new CallableTestInstanceWorker('pool');
             $result = await($pool->run([$worker, 'run']));
 
@@ -141,7 +141,7 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('executes an invokable class', function () {
-            $pool   = Parallel::pool(size: 2);
+            $pool = Parallel::pool(size: 2);
             $result = await($pool->run(new CallableTestInvokable()));
 
             expect($result)->toBe('invokable-class');
@@ -149,7 +149,7 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('executes a named function string', function () {
-            $pool   = Parallel::pool(size: 2);
+            $pool = Parallel::pool(size: 2);
             $result = await(
                 $pool->run('Tests\Fixtures\callable_test_named_function')
             );
@@ -164,8 +164,8 @@ describe('CallbackExecutionTest', function () {
     describe('Parallel::pool() passes arguments for all callable types via runFn()', function () {
 
         it('passes args to a regular closure', function () {
-            $pool   = Parallel::pool(size: 2);
-            $task   = $pool->runFn(function (string $prefix, int $value) {
+            $pool = Parallel::pool(size: 2);
+            $task = $pool->runFn(function (string $prefix, int $value) {
                 return "{$prefix}-{$value}";
             });
             $result = await($task('pool-closure', 1));
@@ -175,8 +175,8 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('passes args to a static method array callable', function () {
-            $pool   = Parallel::pool(size: 2);
-            $task   = $pool->runFn([CallableTestStaticWorker::class, 'runWithArgs']);
+            $pool = Parallel::pool(size: 2);
+            $task = $pool->runFn([CallableTestStaticWorker::class, 'runWithArgs']);
             $result = await($task('pool-static', 2));
 
             expect($result)->toBe('pool-static-2');
@@ -184,9 +184,9 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('passes args to an instance method array callable', function () {
-            $pool   = Parallel::pool(size: 2);
+            $pool = Parallel::pool(size: 2);
             $worker = new CallableTestInstanceWorker('tagged');
-            $task   = $pool->runFn([$worker, 'runWithArgs']);
+            $task = $pool->runFn([$worker, 'runWithArgs']);
             $result = await($task('pool-inst', 8));
 
             expect($result)->toBe('pool-inst-8-tagged');
@@ -194,8 +194,8 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('passes args to an invokable class', function () {
-            $pool   = Parallel::pool(size: 2);
-            $task   = $pool->runFn(new CallableTestInvokableWithArgs());
+            $pool = Parallel::pool(size: 2);
+            $task = $pool->runFn(new CallableTestInvokableWithArgs());
             $result = await($task('pool-inv', 10));
 
             expect($result)->toBe('pool-inv-10');
@@ -203,8 +203,8 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('passes args to a named function string', function () {
-            $pool   = Parallel::pool(size: 2);
-            $task   = $pool->runFn(
+            $pool = Parallel::pool(size: 2);
+            $task = $pool->runFn(
                 'Tests\Fixtures\callable_test_named_function_with_args'
             );
             $result = await($task('pool-fn', 20));
@@ -238,14 +238,14 @@ describe('CallbackExecutionTest', function () {
         });
 
         it('passes args to a named function via first-class callable', function () {
-            $task   = Parallel::task()->runFn(\Tests\Fixtures\callable_test_named_function_with_args(...));
+            $task = Parallel::task()->runFn(\Tests\Fixtures\callable_test_named_function_with_args(...));
             $result = await($task('fcc', 1));
 
             expect($result)->toBe('fcc-1');
         });
 
         it('passes args to a static method via first-class callable', function () {
-            $task   = Parallel::task()->runFn(CallableTestStaticWorker::runWithArgs(...));
+            $task = Parallel::task()->runFn(CallableTestStaticWorker::runWithArgs(...));
             $result = await($task('fcc', 2));
 
             expect($result)->toBe('fcc-2');
@@ -253,7 +253,7 @@ describe('CallbackExecutionTest', function () {
 
         it('passes args to an instance method via first-class callable', function () {
             $worker = new CallableTestInstanceWorker('fcc');
-            $task   = Parallel::task()->runFn($worker->runWithArgs(...));
+            $task = Parallel::task()->runFn($worker->runWithArgs(...));
             $result = await($task('fcc', 3));
 
             expect($result)->toBe('fcc-3-fcc');
@@ -263,40 +263,40 @@ describe('CallbackExecutionTest', function () {
     describe('return values are correctly deserialized for all types', function () {
 
         it('returns a string', function () {
-            $result = await(Parallel::task()->run(fn() => 'hello'));
+            $result = await(Parallel::task()->run(fn () => 'hello'));
             expect($result)->toBeString()->toBe('hello');
         });
 
         it('returns an integer', function () {
-            $result = await(Parallel::task()->run(fn() => 42));
+            $result = await(Parallel::task()->run(fn () => 42));
             expect($result)->toBeInt()->toBe(42);
         });
 
         it('returns a float', function () {
-            $result = await(Parallel::task()->run(fn() => 3.14));
+            $result = await(Parallel::task()->run(fn () => 3.14));
             expect($result)->toBeFloat()->toBe(3.14);
         });
 
         it('returns a boolean', function () {
-            $result = await(Parallel::task()->run(fn() => true));
+            $result = await(Parallel::task()->run(fn () => true));
             expect($result)->toBeBool()->toBeTrue();
         });
 
         it('returns null', function () {
-            $result = await(Parallel::task()->run(fn() => null));
+            $result = await(Parallel::task()->run(fn () => null));
             expect($result)->toBeNull();
         });
 
         it('returns an array', function () {
-            $result = await(Parallel::task()->run(fn() => [1, 'two', 3.5]));
+            $result = await(Parallel::task()->run(fn () => [1, 'two', 3.5]));
             expect($result)->toBe([1, 'two', 3.5]);
         });
 
         it('returns a stdClass object', function () {
             $result = await(Parallel::task()->run(function () {
-                $obj       = new \stdClass();
+                $obj = new \stdClass();
                 $obj->name = 'test';
-                $obj->val  = 123;
+                $obj->val = 123;
 
                 return $obj;
             }));

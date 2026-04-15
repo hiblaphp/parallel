@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Utilities;
 
+use Hibla\Parallel\Exceptions\ParallelException;
 use Rcalicdan\ConfigLoader\Config;
 
 use function Rcalicdan\ConfigLoader\configRoot;
@@ -11,8 +12,23 @@ use function Rcalicdan\ConfigLoader\configRoot;
 /**
  * System utilities and helper functions
  */
-class SystemUtilities
+final class SystemUtilities
 {
+    private static ?string $phpBinary = null;
+
+    /**
+     * @var int<1, max>|null
+     */
+    private static ?int $cpuCount = null;
+
+    /** @var array<string, string> */
+    private static array $workerPathCache = [];
+
+    /**
+     * Prevent instantiation of this utility class.
+     */
+    private function __construct() {}
+
     /**
      * Get PHP binary path with enhanced detection.
      *
@@ -21,19 +37,14 @@ class SystemUtilities
      *
      * @return string Path to PHP binary executable
      */
-    public function getPhpBinary(): string
+    public static function getPhpBinary(): string
     {
-        /** @var string|null $cached */
-        static $cached = null;
-
-        if ($cached !== null) {
-            return $cached;
+        if (self::$phpBinary !== null) {
+            return self::$phpBinary;
         }
 
         if (\defined('PHP_BINARY') && is_executable(PHP_BINARY)) {
-            $cached = PHP_BINARY;
-
-            return $cached;
+            return self::$phpBinary = PHP_BINARY;
         }
 
         $possiblePaths = [
@@ -48,9 +59,7 @@ class SystemUtilities
 
         foreach ($possiblePaths as $path) {
             if (is_executable($path)) {
-                $cached = $path;
-
-                return $cached;
+                return self::$phpBinary = $path;
             }
 
             $which = PHP_OS_FAMILY === 'Windows' ? 'where' : 'which';
@@ -60,16 +69,12 @@ class SystemUtilities
             if ($result !== null && \is_string($result) && trim($result) !== '') {
                 $foundPath = trim($result);
                 if (is_executable($foundPath)) {
-                    $cached = $foundPath;
-
-                    return $cached;
+                    return self::$phpBinary = $foundPath;
                 }
             }
         }
 
-        $cached = 'php';
-
-        return $cached;
+        return self::$phpBinary = 'php';
     }
 
     /**
@@ -77,7 +82,7 @@ class SystemUtilities
      *
      * @return string Path to composer autoload.php file
      */
-    public function findAutoloadPath(): string
+    public static function findAutoloadPath(): string
     {
         $rootDir = Config::getRootPath();
 
@@ -89,7 +94,7 @@ class SystemUtilities
      *
      * @return array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}
      */
-    public function getFrameworkBootstrap(): array
+    public static function getFrameworkBootstrap(): array
     {
         $bootstrap = configRoot('hibla_parallel', 'bootstrap', null);
 
@@ -141,21 +146,12 @@ class SystemUtilities
      * Result is cached after the first call — CPU count does not change
      * during process lifetime so repeated shell calls are avoided.
      *
-     * Cross-platform detection order:
-     *   1. shell_exec with platform-specific command (wmic / sysctl / nproc)
-     *   2. Linux filesystem fallback (/sys/devices/system/cpu/present, /proc/cpuinfo)
-     *   3. Windows environment variable (NUMBER_OF_PROCESSORS)
-     *   4. Safe default of 4
-     *
      * @return int<1, max> Number of logical CPU cores, minimum 1
      */
-    public function getCpuCount(): int
+    public static function getCpuCount(): int
     {
-        /** @var int<1, max>|null $cached */
-        static $cached = null;
-
-        if ($cached !== null) {
-            return $cached;
+        if (self::$cpuCount !== null) {
+            return self::$cpuCount;
         }
 
         if (\function_exists('shell_exec')) {
@@ -169,17 +165,9 @@ class SystemUtilities
 
             if (\is_string($output) && trim($output) !== '') {
                 if (PHP_OS_FAMILY === 'Windows' && preg_match('/NumberOfLogicalProcessors=(\d+)/', $output, $m) === 1) {
-                    /** @var int<1, max> $count */
-                    $count = max(1, (int) $m[1]);
-                    $cached = $count;
-
-                    return $cached;
+                    return self::$cpuCount = max(1, (int) $m[1]);
                 } elseif (($count = (int) trim($output)) > 0) {
-                    /** @var int<1, max> $count */
-                    $count = max(1, $count);
-                    $cached = $count;
-
-                    return $cached;
+                    return self::$cpuCount = max(1, $count);
                 }
             }
         }
@@ -188,22 +176,14 @@ class SystemUtilities
             if (is_readable('/sys/devices/system/cpu/present')) {
                 $content = trim((string) file_get_contents('/sys/devices/system/cpu/present'));
                 if (preg_match('/^(\d+)-(\d+)$/', $content, $m) === 1) {
-                    /** @var int<1, max> $count */
-                    $count = max(1, (int) $m[2] - (int) $m[1] + 1);
-                    $cached = $count;
-
-                    return $cached;
+                    return self::$cpuCount = max(1, (int) $m[2] - (int) $m[1] + 1);
                 }
             }
 
             if (is_readable('/proc/cpuinfo')) {
                 $count = substr_count((string) file_get_contents('/proc/cpuinfo'), "\nprocessor");
                 if ($count > 0) {
-                    /** @var int<2, max> $result */
-                    $result = $count + 1;
-                    $cached = $result;
-
-                    return $cached;
+                    return self::$cpuCount = $count + 1;
                 }
             }
         }
@@ -211,16 +191,65 @@ class SystemUtilities
         if (PHP_OS_FAMILY === 'Windows') {
             $env = getenv('NUMBER_OF_PROCESSORS');
             if ($env !== false && (int) $env > 0) {
-                /** @var int<1, max> $count */
-                $count = max(1, (int) $env);
-                $cached = $count;
-
-                return $cached;
+                return self::$cpuCount = max(1, (int) $env);
             }
         }
 
-        $cached = 4;
+        return self::$cpuCount = 4;
+    }
 
-        return $cached;
+    /**
+     * Resolves the full path to a worker script.
+     *
+     * Attempts to locate the worker script in various possible installation
+     * locations, including Composer vendor directories and relative paths.
+     * Result is cached after the first call per script name.
+     *
+     * @param string $scriptName Name of the worker script file (e.g., 'worker.php')
+     *
+     * @return string Absolute path to the worker script
+     *
+     * @throws ParallelException If the worker script cannot be found
+     */
+    public static function getWorkerPath(string $scriptName): string
+    {
+        if (isset(self::$workerPathCache[$scriptName])) {
+            return self::$workerPathCache[$scriptName];
+        }
+
+        $localPaths = [
+            dirname(__DIR__) . '/' . $scriptName,
+            dirname(__DIR__) . '/../' . $scriptName,
+        ];
+
+        foreach ($localPaths as $path) {
+            if (file_exists($path) && is_readable($path)) {
+                $resolvedPath = realpath($path);
+                if ($resolvedPath !== false) {
+                    return self::$workerPathCache[$scriptName] = $resolvedPath;
+                }
+            }
+        }
+
+        if (class_exists(\Composer\Autoload\ClassLoader::class, false)) {
+            try {
+                $reflector = new \ReflectionClass(\Composer\Autoload\ClassLoader::class);
+                $fileName = $reflector->getFileName();
+
+                if ($fileName !== false) {
+                    $vendorPath = dirname($fileName, 2) . '/hiblaphp/parallel/src/' . $scriptName;
+                    if (file_exists($vendorPath) && is_readable($vendorPath)) {
+                        $resolvedPath = realpath($vendorPath);
+                        if ($resolvedPath !== false) {
+                            return self::$workerPathCache[$scriptName] = $resolvedPath;
+                        }
+                    }
+                }
+            } catch (\ReflectionException) {
+                // Continue if reflection fails
+            }
+        }
+
+        throw new ParallelException("Worker script '$scriptName' not found.");
     }
 }

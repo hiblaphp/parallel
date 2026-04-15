@@ -131,7 +131,9 @@ final class ParallelExecutor implements ParallelExecutorInterface
 
     /**
      * @template TResult
+     *
      * @inheritdoc
+     *
      * @return PromiseInterface<TResult>
      */
     public function run(callable $callback, ?callable $onMessage = null): PromiseInterface
@@ -170,8 +172,11 @@ final class ParallelExecutor implements ParallelExecutorInterface
 
     /**
      * @template TResult
+     *
      * @inheritdoc
+     *
      * @param callable(mixed ...$args): TResult $task
+     *
      * @return callable(mixed ...$args): PromiseInterface<TResult>
      */
     public function runFn(callable $task, ?callable $onMessage = null): callable

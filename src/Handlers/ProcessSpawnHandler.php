@@ -31,12 +31,8 @@ class ProcessSpawnHandler
 
     private string|int $defaultBackgroundMemoryLimit;
 
-    /** @var array<string, string> */
-    private array $workerPathCache = [];
-
-    public function __construct(
-        private SystemUtilities $systemUtils,
-    ) {
+    public function __construct()
+    {
         $requiredFunctions = PHP_OS_FAMILY !== 'Windows'
             ? ['proc_open', 'exec', 'shell_exec', 'posix_kill']
             : ['proc_open', 'exec', 'shell_exec'];
@@ -78,6 +74,7 @@ class ProcessSpawnHandler
      * wrapper process, enabling reliable and immediate process termination.
      *
      * @template TResult
+     *
      * @param callable(): TResult $callback The callback function to execute in the worker
      * @param array<string, mixed> $frameworkInfo Framework bootstrap information
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
@@ -85,7 +82,9 @@ class ProcessSpawnHandler
      * @param string $sourceLocation Source file and line triggering the process
      * @param string|null $memoryLimit Custom memory limit for this specific process
      * @param int $maxNestingLevel Maximum nesting level for this process
+     *
      * @return Process<TResult> The spawned process instance with communication streams
+     *
      * @throws \RuntimeException If process spawning fails
      */
     public function spawnStreamedTask(
@@ -97,15 +96,11 @@ class ProcessSpawnHandler
         ?string $memoryLimit = null,
         int $maxNestingLevel = 5
     ): Process {
-        $phpBinary = $this->systemUtils->getPhpBinary();
-        $workerScript = $this->getWorkerPath('worker.php');
+        $phpBinary = SystemUtilities::getPhpBinary();
+        $workerScript = SystemUtilities::getWorkerPath('worker.php');
 
-        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string)$maxNestingLevel);
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string) $maxNestingLevel);
 
-        // Use socket descriptors on Windows since anonymous pipes ignore
-        // stream_set_blocking(false) at the kernel level, starving the event loop.
-        // On Unix, anonymous pipes are used instead as they are ~15% faster for
-        // small messages and properly support non-blocking mode.
         $descriptorSpec = PHP_OS_FAMILY === 'Windows'
             ? [0 => ['socket'], 1 => ['socket'], 2 => ['socket']]
             : [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
@@ -175,6 +170,7 @@ class ProcessSpawnHandler
      * @param int $timeoutSeconds The maximum execution time in seconds. Use 0 for no limit.
      * @param string|null $memoryLimit Custom memory limit for this specific process
      * @param int $maxNestingLevel Maximum nesting level for this process
+     *
      * @return BackgroundProcess The spawned background process instance
      */
     public function spawnBackgroundTask(
@@ -187,10 +183,10 @@ class ProcessSpawnHandler
     ): BackgroundProcess {
         $this->validateTimeout($timeoutSeconds);
 
-        $phpBinary = $this->systemUtils->getPhpBinary();
-        $workerScript = $this->getWorkerPath(scriptName: 'worker_background.php');
+        $phpBinary = SystemUtilities::getPhpBinary();
+        $workerScript = SystemUtilities::getWorkerPath('worker_background.php');
 
-        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string)$maxNestingLevel);
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string) $maxNestingLevel);
 
         $descriptorSpec = [
             0 => ['pipe', 'r'],
@@ -198,8 +194,6 @@ class ProcessSpawnHandler
             2 => ['file', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null', 'w'],
         ];
 
-        // bypass_shell on Windows so the resource maps to the actual PHP worker,
-        // not a cmd.exe wrapper — same reasoning as spawnStreamedTask.
         $options = PHP_OS_FAMILY === 'Windows' ? ['bypass_shell' => true] : [];
 
         $pipes = [];
@@ -234,6 +228,75 @@ class ProcessSpawnHandler
     }
 
     /**
+     * Spawns a persistent worker process for long-running tasks.
+     *
+     * On Windows, bypass_shell is set to true for the same reason as
+     * spawnStreamedTask — prevents cmd.exe wrapping so proc_terminate()
+     * targets the actual PHP worker PID directly.
+     *
+     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
+     * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
+     * @param string|null $memoryLimit Custom memory limit for this specific process
+     * @param int $maxNestingLevel Maximum allowed function nesting level
+     * @param int|null $maxExecutionsPerWorker Maximum number of tasks before worker retires. Null means unlimited.
+     *
+     * @return PersistentProcess Instance of the spawned persistent process
+     */
+    public function spawnPersistentWorker(
+        array $frameworkInfo,
+        CallbackSerializationManager $serializationManager,
+        ?string $memoryLimit = null,
+        int $maxNestingLevel = 5,
+        ?int $maxExecutionsPerWorker = null,
+        ?int $timeoutSeconds = null
+    ): PersistentProcess {
+        $phpBinary = SystemUtilities::getPhpBinary();
+        $workerScript = SystemUtilities::getWorkerPath('worker_persistent.php');
+
+        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string) $maxNestingLevel);
+
+        $descriptorSpec = PHP_OS_FAMILY === 'Windows'
+            ? [0 => ['socket'], 1 => ['socket'], 2 => ['socket']]
+            : [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+
+        $options = PHP_OS_FAMILY === 'Windows' ? ['bypass_shell' => true] : [];
+
+        $pipes = [];
+        $processResource = @proc_open($command, $descriptorSpec, $pipes, null, null, $options);
+
+        if (! \is_resource($processResource)) {
+            throw new ProcessSpawnException('Failed to spawn persistent worker process.');
+        }
+
+        stream_set_blocking($pipes[0], false);
+        stream_set_blocking($pipes[1], false);
+        stream_set_blocking($pipes[2], false);
+
+        $stdin = new PromiseWritableStream($pipes[0]);
+        $stdout = new PromiseReadableStream($pipes[1]);
+        $stderr = new PromiseReadableStream($pipes[2]);
+
+        $bootPayload = $this->createBootPayload(
+            $frameworkInfo,
+            $serializationManager,
+            $memoryLimit ?? $this->defaultProcessMemoryLimit,
+            $maxExecutionsPerWorker,
+            $timeoutSeconds,
+        );
+        $stdin->writeAsync($bootPayload . PHP_EOL);
+
+        $status = proc_get_status($processResource);
+
+        return new PersistentProcess(
+            $status['pid'],
+            $processResource,
+            $stdin,
+            $stdout,
+            $stderr
+        );
+    }
+
+    /**
      * Creates a JSON-encoded task payload for the worker process.
      *
      * @param callable $callback The callback function to serialize
@@ -241,6 +304,7 @@ class ProcessSpawnHandler
      * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
      * @param int $timeoutSeconds Maximum execution time in seconds
      * @param string|int $memoryLimit Memory limit for this specific process
+     *
      * @return string JSON-encoded payload string
      */
     private function createTaskPayload(
@@ -272,7 +336,7 @@ class ProcessSpawnHandler
         /** @var array<string, mixed> $payloadData */
         $payloadData = [
             'serialized_callback' => $serializedCallback,
-            'autoload_path' => $this->systemUtils->findAutoloadPath(),
+            'autoload_path' => SystemUtilities::findAutoloadPath(),
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
             'framework_bootstrap_callback' => $serializedBootstrapCallback,
             'timeout_seconds' => $timeoutSeconds,
@@ -286,75 +350,6 @@ class ProcessSpawnHandler
         }
 
         return $json;
-    }
-
-    /**
-     * Spawns a persistent worker process for long-running tasks.
-     *
-     * On Windows, bypass_shell is set to true for the same reason as
-     * spawnStreamedTask — prevents cmd.exe wrapping so proc_terminate()
-     * targets the actual PHP worker PID directly.
-     *
-     * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null} $frameworkInfo
-     * @param CallbackSerializationManager $serializationManager Manager for serializing callbacks
-     * @param string|null $memoryLimit Custom memory limit for this specific process
-     * @param int $maxNestingLevel Maximum allowed function nesting level
-     * @param int|null $maxExecutionsPerWorker Maximum number of tasks before worker retires. Null means unlimited.
-     * @return PersistentProcess Instance of the spawned persistent process
-     */
-    public function spawnPersistentWorker(
-        array $frameworkInfo,
-        CallbackSerializationManager $serializationManager,
-        ?string $memoryLimit = null,
-        int $maxNestingLevel = 5,
-        ?int $maxExecutionsPerWorker = null,
-        ?int $timeoutSeconds = null
-    ): PersistentProcess {
-        $phpBinary = $this->systemUtils->getPhpBinary();
-        $workerScript = $this->getWorkerPath('worker_persistent.php');
-
-        $command = escapeshellarg($phpBinary) . ' ' . escapeshellarg($workerScript) . ' ' . escapeshellarg((string)$maxNestingLevel);
-
-        $descriptorSpec = PHP_OS_FAMILY === 'Windows'
-            ? [0 => ['socket'], 1 => ['socket'], 2 => ['socket']]
-            : [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
-
-        $options = PHP_OS_FAMILY === 'Windows' ? ['bypass_shell' => true] : [];
-
-        $pipes = [];
-        $processResource = @proc_open($command, $descriptorSpec, $pipes, null, null, $options);
-
-        if (! \is_resource($processResource)) {
-            throw new ProcessSpawnException('Failed to spawn persistent worker process.');
-        }
-
-        stream_set_blocking($pipes[0], false);
-        stream_set_blocking($pipes[1], false);
-        stream_set_blocking($pipes[2], false);
-
-        $stdin = new PromiseWritableStream($pipes[0]);
-        $stdout = new PromiseReadableStream($pipes[1]);
-        $stderr = new PromiseReadableStream($pipes[2]);
-
-        // Send the one-time boot payload
-        $bootPayload = $this->createBootPayload(
-            $frameworkInfo,
-            $serializationManager,
-            $memoryLimit ?? $this->defaultProcessMemoryLimit,
-            $maxExecutionsPerWorker,
-            $timeoutSeconds,
-        );
-        $stdin->writeAsync($bootPayload . PHP_EOL);
-
-        $status = proc_get_status($processResource);
-
-        return new PersistentProcess(
-            $status['pid'],
-            $processResource,
-            $stdin,
-            $stdout,
-            $stderr
-        );
     }
 
     /**
@@ -378,7 +373,7 @@ class ProcessSpawnHandler
         }
 
         $payloadData = [
-            'autoload_path' => $this->systemUtils->findAutoloadPath(),
+            'autoload_path' => SystemUtilities::findAutoloadPath(),
             'framework_bootstrap' => $frameworkInfo['bootstrap_file'] ?? null,
             'framework_bootstrap_callback' => $serializedBootstrapCallback,
             'memory_limit' => $memoryLimit,
@@ -395,77 +390,19 @@ class ProcessSpawnHandler
     }
 
     /**
-     * Resolves the full path to a worker script.
-     *
-     * Attempts to locate the worker script in various possible installation
-     * locations, including Composer vendor directories and relative paths.
-     *
-     * @param string $scriptName Name of the worker script file (e.g., 'worker.php')
-     * @return string Absolute path to the worker script
-     */
-    private function getWorkerPath(string $scriptName): string
-    {
-        if (isset($this->workerPathCache[$scriptName])) {
-            return $this->workerPathCache[$scriptName];
-        }
-
-        $localPaths = [
-            dirname(__DIR__) . '/' . $scriptName,
-            dirname(__DIR__) . '/../' . $scriptName,
-        ];
-
-        foreach ($localPaths as $path) {
-            if (file_exists($path) && is_readable($path)) {
-                $resolvedPath = realpath($path);
-                if ($resolvedPath !== false) {
-                    $this->workerPathCache[$scriptName] = $resolvedPath;
-
-                    return $resolvedPath;
-                }
-            }
-        }
-
-        if (class_exists(\Composer\Autoload\ClassLoader::class, false)) {
-            try {
-                $reflector = new \ReflectionClass(\Composer\Autoload\ClassLoader::class);
-                $fileName = $reflector->getFileName();
-
-                if ($fileName !== false) {
-                    $vendorPath = dirname($fileName, 2) . '/hiblaphp/parallel/src/' . $scriptName;
-                    if (file_exists($vendorPath) && is_readable($vendorPath)) {
-                        $resolvedPath = realpath($vendorPath);
-                        if ($resolvedPath !== false) {
-                            $this->workerPathCache[$scriptName] = $resolvedPath;
-
-                            return $resolvedPath;
-                        }
-                    }
-                }
-            } catch (\ReflectionException $e) {
-                // Continue if reflection fails
-            }
-        }
-
-        throw new ParallelException("Worker script '$scriptName' not found.");
-    }
-
-    /**
      * Validates the timeout value.
      *
      * Ensures that the timeout is a non-negative number. A value of 0 is
      * treated as no limit, equivalent to set_time_limit(0) in the child process.
      *
      * @param int $timeoutSeconds Timeout duration in seconds
+     *
      * @throws \InvalidArgumentException If the timeout is negative
      */
     private function validateTimeout(int $timeoutSeconds): void
     {
         if ($timeoutSeconds < 0) {
             throw new \InvalidArgumentException('Timeout cannot be a negative number.');
-        }
-
-        if ($timeoutSeconds === 0) {
-            return;
         }
     }
 }

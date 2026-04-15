@@ -28,6 +28,7 @@ interface MessagePassingInterface
      * guarantees between them.
      *
      * @param callable(WorkerMessage): void $handler
+     *
      * @return static A new instance with the handler registered.
      */
     public function onMessage(callable $handler): static;

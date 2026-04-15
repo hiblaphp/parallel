@@ -8,8 +8,7 @@ use Rcalicdan\ConfigLoader\Config;
 describe('SystemUtilities', function () {
     describe('getPhpBinary', function () {
         it('returns a valid executable path', function () {
-            $utils = new SystemUtilities();
-            $phpBinary = $utils->getPhpBinary();
+            $phpBinary = SystemUtilities::getPhpBinary();
 
             expect($phpBinary)->toBeString()->not->toBeEmpty();
 
@@ -23,17 +22,15 @@ describe('SystemUtilities', function () {
                 $this->markTestSkipped('PHP_BINARY constant is not available');
             }
 
-            $utils = new SystemUtilities();
-            expect($utils->getPhpBinary())->toBe(PHP_BINARY);
+            expect(SystemUtilities::getPhpBinary())->toBe(PHP_BINARY);
         });
     });
 
     describe('findAutoloadPath', function () {
         it('locates the composer autoload file via Config', function () {
-            $utils = new SystemUtilities();
 
             $expectedRoot = Config::getRootPath();
-            $path = $utils->findAutoloadPath();
+            $path = SystemUtilities::findAutoloadPath();
 
             expect($path)->toBe($expectedRoot . '/vendor/autoload.php');
         });
@@ -45,8 +42,7 @@ describe('SystemUtilities', function () {
         });
 
         it('returns default none configuration when config is empty', function () {
-            $utils = new SystemUtilities();
-            $result = $utils->getFrameworkBootstrap();
+            $result = SystemUtilities::getFrameworkBootstrap();
 
             expect($result)->toBe([
                 'name' => 'none',
@@ -62,9 +58,7 @@ describe('SystemUtilities', function () {
                 value: '/path/does/not/exist.php'
             );
 
-            $utils = new SystemUtilities();
-
-            expect(fn () => $utils->getFrameworkBootstrap())
+            expect(fn () => SystemUtilities::getFrameworkBootstrap())
                 ->toThrow(RuntimeException::class, 'Bootstrap file not found')
             ;
         });
@@ -76,9 +70,7 @@ describe('SystemUtilities', function () {
                 value: 'not_a_function'
             );
 
-            $utils = new SystemUtilities();
-
-            expect(fn () => $utils->getFrameworkBootstrap())
+            expect(fn () => SystemUtilities::getFrameworkBootstrap())
                 ->toThrow(RuntimeException::class, 'Bootstrap callback must be callable')
             ;
         });

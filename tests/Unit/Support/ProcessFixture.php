@@ -86,7 +86,8 @@ final class ProcessFixture
     /**
      * Spawn a process and return its PID and resource handle.
      *
-     * @param  string|list<string> $cmd
+     * @param string|list<string> $cmd
+     *
      * @return array{pid: int, resource: resource}
      */
     public static function spawn(string|array $cmd): array
@@ -193,7 +194,7 @@ final class ProcessFixture
         return array_values(
             array_filter(
                 array_map('intval', $output),
-                static fn(int $pid) => $pid > 0
+                static fn (int $pid) => $pid > 0
             )
         );
     }
@@ -204,11 +205,11 @@ final class ProcessFixture
     private static function childPidsWindows(int $parentPid): array
     {
         exec(
-            "powershell -NoProfile -Command \""
-                . "Get-CimInstance Win32_Process"
+            'powershell -NoProfile -Command "'
+                . 'Get-CimInstance Win32_Process'
                 . " | Where-Object { \$_.ParentProcessId -eq $parentPid }"
-                . " | Select-Object -ExpandProperty ProcessId"
-                . "\" 2>NUL",
+                . ' | Select-Object -ExpandProperty ProcessId'
+                . '" 2>NUL',
             $output
         );
 

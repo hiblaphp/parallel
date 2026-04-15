@@ -2,13 +2,12 @@
 
 declare(strict_types=1);
 
-use function Hibla\await;
-
 use Hibla\Parallel\Internals\BackgroundProcess;
 use Hibla\Parallel\Internals\Process;
 use Hibla\Parallel\Managers\ProcessManager;
-
 use Rcalicdan\ConfigLoader\Config;
+
+use function Hibla\await;
 
 describe('ProcessManager Real Integration', function () {
     $activeProcesses = [];

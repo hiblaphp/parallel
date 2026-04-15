@@ -13,11 +13,11 @@ use Rcalicdan\Serializer\CallbackSerializationManager;
 describe('ProcessSpawnHandler Feature Test', function () {
 
     $setupHandler = function () {
-        $utils = new SystemUtilities();
-        $serializer = new CallbackSerializationManager();
-        $handler = new ProcessSpawnHandler($utils);
 
-        return [$handler, $utils, $serializer];
+        $serializer = new CallbackSerializationManager();
+        $handler = new ProcessSpawnHandler();
+
+        return [$handler, $serializer];
     };
 
     $activeProcesses = [];
@@ -36,8 +36,8 @@ describe('ProcessSpawnHandler Feature Test', function () {
     });
 
     it('can spawn a Streamed Task (worker.php)', function () use ($setupHandler, &$activeProcesses) {
-        [$handler, $utils, $serializer] = $setupHandler();
-        $frameworkInfo = $utils->getFrameworkBootstrap();
+        [$handler, $serializer] = $setupHandler();
+        $frameworkInfo = SystemUtilities::getFrameworkBootstrap();
 
         /** @var Process $process */
         $process = $handler->spawnStreamedTask(
@@ -55,8 +55,8 @@ describe('ProcessSpawnHandler Feature Test', function () {
     });
 
     it('can spawn a Background Task (worker_background.php)', function () use ($setupHandler, &$activeProcesses) {
-        [$handler, $utils, $serializer] = $setupHandler();
-        $frameworkInfo = $utils->getFrameworkBootstrap();
+        [$handler, $serializer] = $setupHandler();
+        $frameworkInfo = SystemUtilities::getFrameworkBootstrap();
 
         $process = $handler->spawnBackgroundTask(
             callback: fn () => usleep(200000),
@@ -73,8 +73,8 @@ describe('ProcessSpawnHandler Feature Test', function () {
     });
 
     it('can spawn a Persistent Worker (worker_persistent.php)', function () use ($setupHandler, &$activeProcesses) {
-        [$handler, $utils, $serializer] = $setupHandler();
-        $frameworkInfo = $utils->getFrameworkBootstrap();
+        [$handler, $serializer] = $setupHandler();
+        $frameworkInfo = SystemUtilities::getFrameworkBootstrap();
 
         $process = $handler->spawnPersistentWorker(
             frameworkInfo: $frameworkInfo,
@@ -91,8 +91,8 @@ describe('ProcessSpawnHandler Feature Test', function () {
     });
 
     it('persistent worker becomes ready after receiving boot payload', function () use ($setupHandler, &$activeProcesses) {
-        [$handler, $utils, $serializer] = $setupHandler();
-        $frameworkInfo = $utils->getFrameworkBootstrap();
+        [$handler, $serializer] = $setupHandler();
+        $frameworkInfo = SystemUtilities::getFrameworkBootstrap();
 
         $process = $handler->spawnPersistentWorker(
             frameworkInfo: $frameworkInfo,
@@ -126,8 +126,8 @@ describe('ProcessSpawnHandler Feature Test', function () {
     });
 
     it('persistent worker executes a task and resolves its promise', function () use ($setupHandler, &$activeProcesses) {
-        [$handler, $utils, $serializer] = $setupHandler();
-        $frameworkInfo = $utils->getFrameworkBootstrap();
+        [$handler, $serializer] = $setupHandler();
+        $frameworkInfo = SystemUtilities::getFrameworkBootstrap();
 
         $process = $handler->spawnPersistentWorker(
             frameworkInfo: $frameworkInfo,
@@ -175,8 +175,8 @@ describe('ProcessSpawnHandler Feature Test', function () {
     });
 
     it('persistent worker fires onCrashCallback when worker calls exit()', function () use ($setupHandler, &$activeProcesses) {
-        [$handler, $utils, $serializer] = $setupHandler();
-        $frameworkInfo = $utils->getFrameworkBootstrap();
+        [$handler, $serializer] = $setupHandler();
+        $frameworkInfo = SystemUtilities::getFrameworkBootstrap();
 
         $process = $handler->spawnPersistentWorker(
             frameworkInfo: $frameworkInfo,
@@ -216,8 +216,8 @@ describe('ProcessSpawnHandler Feature Test', function () {
     });
 
     it('validates timeout values', function () use ($setupHandler) {
-        [$handler, $utils, $serializer] = $setupHandler();
-        $frameworkInfo = $utils->getFrameworkBootstrap();
+        [$handler, $serializer] = $setupHandler();
+        $frameworkInfo = SystemUtilities::getFrameworkBootstrap();
 
         expect(fn () => $handler->spawnBackgroundTask(
             callback: fn () => true,
@@ -228,13 +228,13 @@ describe('ProcessSpawnHandler Feature Test', function () {
     });
 
     it('correctly resolves the worker script paths', function () use ($setupHandler) {
-        [$handler, $utils, $serializer] = $setupHandler();
+        [$handler, $serializer] = $setupHandler();
 
         $process = $handler->spawnStreamedTask(
             callback: function () {
                 usleep(100000);
             },
-            frameworkInfo: $utils->getFrameworkBootstrap(),
+            frameworkInfo: SystemUtilities::getFrameworkBootstrap(),
             serializationManager: $serializer,
             timeoutSeconds: 5,
             sourceLocation: 'test_path',

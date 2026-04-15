@@ -19,6 +19,7 @@ interface ExecutorConfigInterface
      * with a TimeoutException and the underlying process will be terminated.
      *
      * @param int $seconds The maximum number of seconds to allow the task to run.
+     *
      * @return static A new instance with the timeout configured.
      */
     public function withTimeout(int $seconds): static;
@@ -37,6 +38,7 @@ interface ExecutorConfigInterface
      * Returns a new instance with a specific memory limit for the worker process.
      *
      * @param string $limit The memory limit in a format accepted by ini_set() (e.g., '256M', '1G').
+     *
      * @return static A new instance with the memory limit configured.
      */
     public function withMemoryLimit(string $limit): static;
@@ -58,6 +60,7 @@ interface ExecutorConfigInterface
      *
      * @param string $file The absolute path to a PHP file to require_once in the worker.
      * @param (callable(string $file): mixed)|null $callback An optional callback to run after the file is included. It receives the file path as an argument.
+     *
      * @return static A new instance with the bootstrap logic configured.
      */
     public function withBootstrap(string $file, ?callable $callback = null): static;
@@ -69,6 +72,7 @@ interface ExecutorConfigInterface
      * acting as a safeguard against accidental fork bombs. The default is 5.
      *
      * @param int $level The maximum allowed nesting depth (e.g., 2 means a child can spawn a grandchild).
+     *
      * @return static A new instance with the max nesting level configured.
      */
     public function withMaxNestingLevel(int $level): static;

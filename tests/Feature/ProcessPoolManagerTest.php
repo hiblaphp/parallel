@@ -2,25 +2,24 @@
 
 declare(strict_types=1);
 
-use function Hibla\await;
-
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Managers\ProcessPoolManager;
 use Hibla\Parallel\Utilities\SystemUtilities;
 use Hibla\Promise\Promise;
 use Rcalicdan\Serializer\CallbackSerializationManager;
 
+use function Hibla\await;
+
 describe('ProcessPoolManager', function () {
     $buildPool = function (int $size) {
-        $utils = new SystemUtilities();
         $serializer = new CallbackSerializationManager();
-        $handler = new ProcessSpawnHandler($utils);
+        $handler = new ProcessSpawnHandler();
 
         return new ProcessPoolManager(
             size: $size,
             spawnHandler: $handler,
             serializer: $serializer,
-            frameworkInfo: $utils->getFrameworkBootstrap(),
+            frameworkInfo: SystemUtilities::getFrameworkBootstrap(),
             memoryLimit: '128M',
             maxNestingLevel: 3
         );

@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Tests\Integration;
 
-use function Hibla\await;
-use function Hibla\delay;
-
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 use Hibla\Parallel\Parallel;
+
+use function Hibla\await;
+use function Hibla\delay;
 
 describe('Pool Manage Respawn Test', function () {
 

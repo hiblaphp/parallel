@@ -16,6 +16,7 @@ final class ExceptionHandler
      *
      * @param array<string, mixed> $errorData Error data from worker
      * @param string $sourceLocation Parent source location (file:line)
+     *
      * @return \Throwable Reconstructed exception with merged stack traces
      */
     public static function createFromWorkerError(array $errorData, string $sourceLocation): \Throwable
@@ -48,6 +49,7 @@ final class ExceptionHandler
      * Normalize exception code to integer
      *
      * @param mixed $codeValue
+     *
      * @return int
      */
     private static function normalizeExceptionCode(mixed $codeValue): int
@@ -69,6 +71,7 @@ final class ExceptionHandler
      * @param string $className
      * @param string $message
      * @param int $code
+     *
      * @return \Throwable
      */
     private static function instantiateException(string $className, string $message, int $code): \Throwable
@@ -107,6 +110,7 @@ final class ExceptionHandler
      *
      * @param \Throwable $exception
      * @param string $sourceLocation Format: "file:line"
+     *
      * @return void
      */
     private static function setExceptionLocation(\Throwable $exception, string $sourceLocation): void
@@ -139,6 +143,7 @@ final class ExceptionHandler
      * Parse source location string into file and line
      *
      * @param string $sourceLocation
+     *
      * @return array{0: string, 1: string}
      */
     private static function parseSourceLocation(string $sourceLocation): array
@@ -161,6 +166,7 @@ final class ExceptionHandler
      *
      * @param \Throwable $exception
      * @param string $workerTrace
+     *
      * @return void
      */
     private static function appendWorkerStackTrace(\Throwable $exception, string $workerTrace): void
@@ -205,6 +211,7 @@ final class ExceptionHandler
      * Parse worker stack trace string into array format
      *
      * @param string $workerTrace
+     *
      * @return array<int, array<string, mixed>>
      */
     private static function parseWorkerStackTrace(string $workerTrace): array
@@ -241,6 +248,7 @@ final class ExceptionHandler
      *
      * @param \ReflectionClass<object> $reflection
      * @param string $propertyName
+     *
      * @return \ReflectionClass<object>|null
      */
     private static function findReflectionWithProperty(\ReflectionClass $reflection, string $propertyName): ?\ReflectionClass

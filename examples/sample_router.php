@@ -5,6 +5,7 @@ declare(strict_types=1);
 class Router
 {
     private array $static = [];
+
     private array $dynamic = [];
 
     public function get(string $path, callable $handler): void

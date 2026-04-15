@@ -4,16 +4,15 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel;
 
-use function Hibla\await;
-
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\Managers\ProcessPoolManager;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
-
 use Rcalicdan\ConfigLoader\Config;
+
+use function Hibla\await;
 
 /**
  * Class for managing a pool of persistent worker processes.
@@ -68,7 +67,9 @@ final class ProcessPool implements ProcessPoolInterface
      */
     private $onRespawnHandler = null;
 
-    public function __construct(private readonly int $size) {}
+    public function __construct(private readonly int $size)
+    {
+    }
 
     /**
      * @inheritdoc
@@ -249,7 +250,9 @@ final class ProcessPool implements ProcessPoolInterface
 
     /**
      * @template TResult
+     *
      * @inheritdoc
+     *
      * @return PromiseInterface<TResult>
      */
     public function run(callable $callback, ?callable $onMessage = null): PromiseInterface
@@ -285,14 +288,17 @@ final class ProcessPool implements ProcessPoolInterface
 
     /**
      * @template TResult
+     *
      * @inheritdoc
+     *
      * @param callable(mixed ...$args): TResult $task
+     *
      * @return callable(mixed ...$args): PromiseInterface<TResult>
      */
     public function runFn(callable $task, ?callable $onMessage = null): callable
     {
         return function (mixed ...$args) use ($task, $onMessage): PromiseInterface {
-            return $this->run(static fn() => $task(...$args), $onMessage);
+            return $this->run(static fn () => $task(...$args), $onMessage);
         };
     }
 
@@ -345,11 +351,11 @@ final class ProcessPool implements ProcessPoolInterface
 
             $this->pool = new ProcessPoolManager(
                 size: $this->size,
-                spawnHandler: $manager->getSpawnHandler(),
-                serializer: $manager->getSerializer(),
-                frameworkInfo: $this->bootstrap ?? $manager->getFrameworkBootstrap(),
+                spawnHandler: $manager->spawnHandler,
+                serializer: $manager->serializer,
+                frameworkInfo: $this->bootstrap ?? $manager->frameworkInfo,
                 memoryLimit: $this->memoryLimit,
-                maxNestingLevel: $this->maxNestingLevel ?? $manager->getMaxNestingLevel(),
+                maxNestingLevel: $this->maxNestingLevel ?? $manager->maxNestingLevel,
                 onMessageHandlers: $this->onMessageHandlers,
                 spawnEagerly: $this->spawnEagerly,
                 maxExecutionsPerWorker: $this->maxExecutionsPerWorker,

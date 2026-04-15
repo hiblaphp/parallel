@@ -6,7 +6,9 @@ namespace Tests\Fixtures;
 
 class CallableTestInstanceWorker
 {
-    public function __construct(private readonly string $tag = 'default') {}
+    public function __construct(private readonly string $tag = 'default')
+    {
+    }
 
     public function run(): string
     {

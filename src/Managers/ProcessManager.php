@@ -36,29 +36,37 @@ class ProcessManager
      */
     public const int DEFAULT_MAX_NESTING_LEVEL = 5;
 
-    /**
-     * @var self|null Singleton instance of the ProcessManager
-     */
-    private static ?self $instance = null;
+    public private(set) ProcessSpawnHandler $spawnHandler;
 
-    private ProcessSpawnHandler $spawnHandler;
+    public private(set) CallbackSerializationManager $serializer;
 
-    private SystemUtilities $systemUtils;
+    public private(set) int $maxNestingLevel;
 
-    private CallbackSerializationManager $serializer;
+    public int $currentNestingLevel {
+        get {
+            $nestingLevel = $_SERVER['DEFER_NESTING_LEVEL']
+                ?? $_ENV['DEFER_NESTING_LEVEL']
+                ?? getenv('DEFER_NESTING_LEVEL');
+
+            return is_numeric($nestingLevel) ? (int) $nestingLevel : 0;
+        }
+    }
 
     /**
      * @var array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}
      */
-    private array $frameworkInfo;
+    public private(set) array $frameworkInfo;
+
+    /**
+     * @var self|null Singleton instance of the ProcessManager
+     */
+    private static ?self $instance = null;
 
     private int $spawnCount = 0;
 
     private int|float $lastSpawnReset = 0;
 
     private int $maxSpawnsPerSecond;
-
-    private int $maxNestingLevel;
 
     /**
      * Gets or creates the global singleton instance.
@@ -90,18 +98,15 @@ class ProcessManager
     /**
      * Allow public instantiation for dependency injection or testing.
      *
-     * @param SystemUtilities|null $systemUtils Optional dependency injection for system utilities
      * @param CallbackSerializationManager|null $serializer Optional dependency injection for serialization
      * @param int|null $maxSpawnsPerSecond Optional safety limit for background spawns/sec. If null, loads from config or uses default.
      * @param int|null $maxNestingLevel Optional maximum nesting level for parallel processes. If null, loads from config or uses default.
      */
     public function __construct(
-        ?SystemUtilities $systemUtils = null,
         ?CallbackSerializationManager $serializer = null,
         ?int $maxSpawnsPerSecond = null,
         ?int $maxNestingLevel = null
     ) {
-        $this->systemUtils = $systemUtils ?? new SystemUtilities();
         $this->serializer = $serializer ?? new CallbackSerializationManager();
 
         if ($maxSpawnsPerSecond !== null) {
@@ -151,8 +156,8 @@ class ProcessManager
         $_ENV['HIBLA_MAX_NESTING_LEVEL'] = (string) $this->maxNestingLevel;
         $_SERVER['HIBLA_MAX_NESTING_LEVEL'] = (string) $this->maxNestingLevel;
 
-        $this->spawnHandler = new ProcessSpawnHandler($this->systemUtils);
-        $this->frameworkInfo = $this->systemUtils->getFrameworkBootstrap();
+        $this->spawnHandler = new ProcessSpawnHandler();
+        $this->frameworkInfo = SystemUtilities::getFrameworkBootstrap();
     }
 
     /**
@@ -165,6 +170,7 @@ class ProcessManager
      * @param string|null $memoryLimit Optional memory limit override
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null $customBootstrap Optional bootstrap override
      * @param int|null $maxNestingLevel Optional max nesting level override
+     *
      * @return Process<TResult> The spawned process instance with communication streams
      */
     public function spawnStreamedTask(
@@ -224,7 +230,9 @@ class ProcessManager
      * @param string|null $memoryLimit Optional memory limit override
      * @param array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}|null $customBootstrap Optional bootstrap override
      * @param int|null $maxNestingLevel Optional max nesting level override
+     *
      * @return BackgroundProcess The spawned background process instance
+     *
      * @throws NestingLimitException If task nesting limit is exceeded
      * @throws TaskPayloadException If the callback cannot be serialized
      * @throws RateLimitException If rate limit is exceeded
@@ -267,72 +275,18 @@ class ProcessManager
     }
 
     /**
-     * Get the current nesting level.
-     *
-     * @return int Current nesting level (0 = main process, 1+ = nested)
-     */
-    public function getCurrentNestingLevel(): int
-    {
-        $nestingLevel = $_SERVER['DEFER_NESTING_LEVEL'] ?? $_ENV['DEFER_NESTING_LEVEL'] ?? getenv('DEFER_NESTING_LEVEL');
-
-        return is_numeric($nestingLevel) ? (int) $nestingLevel : 0;
-    }
-
-    /**
-     * Get the maximum allowed nesting level.
-     *
-     * @return int Maximum nesting level
-     */
-    public function getMaxNestingLevel(): int
-    {
-        return $this->maxNestingLevel;
-    }
-
-    /**
-     * Get the instance of spawn handler.
-     */
-    public function getSpawnHandler(): ProcessSpawnHandler
-    {
-        return $this->spawnHandler;
-    }
-
-    /**
-     * Get the callback payload serializer.
-     */
-    public function getSerializer(): CallbackSerializationManager
-    {
-        return $this->serializer;
-    }
-
-    /**
-     * Get the system utilities instance.
-     */
-    public function getSystemUtils(): SystemUtilities
-    {
-        return $this->systemUtils;
-    }
-
-    /**
-     * Get the framework bootstrap configuration.
-     *
-     * @return array{name: string, bootstrap_file: string|null, bootstrap_callback: callable|null}
-     */
-    public function getFrameworkBootstrap(): array
-    {
-        return $this->frameworkInfo;
-    }
-
-    /**
      * Validates the callback and nesting level before spawning.
      *
      * @param callable $callback The callback to validate
      * @param int $maxNestingLevel The explicit max nesting level for this task
+     *
      * @return void
+     *
      * @throws TaskPayloadException If the callback cannot be serialized
      */
     private function validate(callable $callback, int $maxNestingLevel): void
     {
-        $currentLevel = $this->getCurrentNestingLevel();
+        $currentLevel = $this->currentNestingLevel;
 
         if (! $this->serializer->canSerializeCallback($callback)) {
             throw new TaskPayloadException(

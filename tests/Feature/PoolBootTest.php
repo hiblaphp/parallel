@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
+use Hibla\Parallel\Parallel;
+
 use function Hibla\await;
 use function Hibla\delay;
-
-use Hibla\Parallel\Parallel;
 
 describe('Pool Boot', function () {
     it('boot() returns the same pool instance for fluent chaining', function () {

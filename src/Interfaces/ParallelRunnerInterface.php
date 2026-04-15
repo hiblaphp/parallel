@@ -85,10 +85,12 @@ interface ParallelRunnerInterface
      * forcefully terminated if the parent process finishes its execution first.
      *
      * @template TResult
+     *
      * @param callable(): TResult $callback The closure or callable to execute.
      * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
-     *        Fires before any pool-level handler registered via onMessage().
-     *        Wrapped in async() — safe to use await() inside without blocking.
+     *                                                      Fires before any pool-level handler registered via onMessage().
+     *                                                      Wrapped in async() — safe to use await() inside without blocking.
+     *
      * @return PromiseInterface<TResult> A promise that will be fulfilled with the return value of the task.
      */
     public function run(callable $callback, ?callable $onMessage = null): PromiseInterface;
@@ -106,8 +108,10 @@ interface ParallelRunnerInterface
      * (See run() for nesting execution warnings and short closure rules).
      *
      * @template TResult
+     *
      * @param callable(mixed ...): TResult $task The task to execute in parallel
      * @param callable(WorkerMessage): void|null $onMessage Optional per-task message handler.
+     *
      * @return callable(mixed ...): PromiseInterface<TResult> A callable that returns a Promise
      */
     public function runFn(callable $task, ?callable $onMessage = null): callable;

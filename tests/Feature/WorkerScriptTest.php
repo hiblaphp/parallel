@@ -11,9 +11,8 @@ describe('Worker Scripts Integration', function () {
     $streamWorker = $projectRoot . '/src/worker.php';
     $bgWorker = $projectRoot . '/src/worker_background.php';
     $serializer = new CallbackSerializationManager();
-    $utils = new SystemUtilities();
 
-    $runStreamWorker = function (callable $task) use ($streamWorker, $autoloadPath, $serializer, $utils) {
+    $runStreamWorker = function (callable $task) use ($streamWorker, $autoloadPath, $serializer) {
         $serializedCallback = $serializer->serializeCallback($task);
 
         $payload = json_encode([
@@ -32,7 +31,7 @@ describe('Worker Scripts Integration', function () {
             2 => ['file', $stderrFile, 'w'],
         ];
 
-        $phpBinary = $utils->getPhpBinary();
+        $phpBinary = SystemUtilities::getPhpBinary();
         $process = proc_open(escapeshellarg($phpBinary) . ' ' . escapeshellarg($streamWorker), $descriptors, $pipes);
 
         if (! is_resource($process)) {
@@ -84,7 +83,7 @@ describe('Worker Scripts Integration', function () {
         return array_filter(explode("\n", $output));
     };
 
-    $runBgWorker = function (callable $task) use ($bgWorker, $autoloadPath, $serializer, $utils) {
+    $runBgWorker = function (callable $task) use ($bgWorker, $autoloadPath, $serializer) {
         $serializedCallback = $serializer->serializeCallback($task);
 
         $payload = json_encode([
@@ -102,7 +101,7 @@ describe('Worker Scripts Integration', function () {
             2 => ['file', $stderrFile, 'w'],
         ];
 
-        $phpBinary = $utils->getPhpBinary();
+        $phpBinary = SystemUtilities::getPhpBinary();
         $process = proc_open(escapeshellarg($phpBinary) . ' ' . escapeshellarg($bgWorker), $descriptors, $pipes);
 
         if (! is_resource($process)) {

@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
+use Tests\Fixtures\TestValueObject;
+
 use function Hibla\await;
 use function Hibla\parallel;
-
-use Tests\Fixtures\TestValueObject;
 
 describe('Complex Serialization Integration', function () {
     it('can return a simple Value Object from a parallel task', function () {

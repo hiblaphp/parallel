@@ -4,9 +4,6 @@ declare(strict_types=1);
 
 namespace Tests\Feature;
 
-use function Hibla\await;
-use function Hibla\delay;
-
 use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Interfaces\ParallelExecutorInterface;
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
@@ -15,6 +12,9 @@ use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\Parallel;
 use Hibla\Promise\Promise;
 use Rcalicdan\ConfigLoader\Config;
+
+use function Hibla\await;
+use function Hibla\delay;
 
 describe('Parallel Feature Test', function () {
     $tempFiles = [];

@@ -7,7 +7,6 @@ require __DIR__ . '/sample_router.php';
 
 use Hibla\EventLoop\Factories\EventLoopComponentFactory;
 use Hibla\Parallel\Parallel;
-use Hibla\Promise\Promise;
 use Hibla\Socket\SocketServer;
 
 // use benchmarking tool like ab or wrk to test the server

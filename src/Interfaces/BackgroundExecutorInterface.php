@@ -84,6 +84,7 @@ interface BackgroundExecutorInterface extends ExecutorConfigInterface
      * forcefully terminated if the parent process finishes its execution first.
      *
      * @param callable(): mixed $callback The closure or callable to execute.
+     *
      * @return PromiseInterface<BackgroundProcess> A promise that resolves with the process handle.
      */
     public function spawn(callable $callback): PromiseInterface;
@@ -99,6 +100,7 @@ interface BackgroundExecutorInterface extends ExecutorConfigInterface
      * (See spawn() for nesting execution warnings and short closure rules).
      *
      * @param callable(mixed ...$args): mixed $task The task to execute in background
+     *
      * @return callable(mixed ...$args): PromiseInterface<BackgroundProcess> A callable that returns a Promise
      */
     public function spawnFn(callable $task): callable;

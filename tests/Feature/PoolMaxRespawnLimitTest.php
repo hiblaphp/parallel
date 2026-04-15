@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Tests\Feature;
 
-use function Hibla\await;
-use function Hibla\delay;
-
 use Hibla\Parallel\Exceptions\PoolShutdownException;
 use Hibla\Parallel\Exceptions\RespawnRateLimitException;
 use Hibla\Parallel\Parallel;
 use Hibla\Promise\Promise;
+
+use function Hibla\await;
+use function Hibla\delay;
 
 describe('Process Pool Max Respawn Per Second Test', function () {
     it('shuts down pool with RespawnRateLimitException when limit is exceeded', function () {
@@ -174,6 +174,7 @@ describe('Process Pool Max Respawn Per Second Test', function () {
 
     it('throws InvalidArgumentException when max restarts per second is negative', function () {
         expect(fn () => Parallel::pool(2)->withMaxRestartPerSecond(-1))
-            ->toThrow(\InvalidArgumentException::class, 'Max restarts per second must be at least 1');
+            ->toThrow(\InvalidArgumentException::class, 'Max restarts per second must be at least 1')
+        ;
     });
 });

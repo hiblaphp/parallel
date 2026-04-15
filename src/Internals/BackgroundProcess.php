@@ -19,8 +19,8 @@ final class BackgroundProcess
     /**
      * @param int $pid The process ID
      * @param mixed $processResource The process resource handle from proc_open.
-     *        Null when the resource is unavailable — isRunning() falls back to
-     *        posix_kill() on Unix and tasklist on Windows in that case.
+     *                               Null when the resource is unavailable — isRunning() falls back to
+     *                               posix_kill() on Unix and tasklist on Windows in that case.
      */
     public function __construct(
         private readonly int $pid,

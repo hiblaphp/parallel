@@ -4,8 +4,6 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Interfaces;
 
-use Hibla\Promise\Interfaces\PromiseInterface;
-
 /**
  * Defines the contract for a persistent pool of reusable worker processes.
  *
@@ -91,7 +89,9 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      * had it configured.
      *
      * @param int $maxExecutions Maximum number of tasks before worker retires. Must be >= 1.
+     *
      * @return static A new instance with the retirement threshold configured.
+     *
      * @throws \InvalidArgumentException If $maxExecutions is less than 1.
      */
     public function withMaxExecutionsPerWorker(int $maxExecutions): static;
@@ -115,8 +115,10 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      * thrashing.
      *
      * @param int $maxRestartsPerSecond Maximum respawns allowed in any 1-second
-     *        sliding window. Must be >= 1.
+     *                                  sliding window. Must be >= 1.
+     *
      * @return static A new instance with the rate limit configured.
+     *
      * @throws \InvalidArgumentException If $maxRestartsPerSecond is less than 1.
      */
     public function withMaxRestartPerSecond(int $maxRestartsPerSecond): static;
@@ -127,6 +129,7 @@ interface ProcessPoolInterface extends ExecutorConfigInterface, MessagePassingIn
      * tasks (like socket listeners) to the new worker.
      *
      * @param callable(ProcessPoolInterface $pool): void $handler
+     *
      * @return static A new instance with the respawn handler configured.
      */
     public function onWorkerRespawn(callable $handler): static;
