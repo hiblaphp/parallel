@@ -96,19 +96,22 @@ Hibla Parallel brings Erlang-style reliability and Node.js-level cluster pool pe
 
 ## Installation
 
-> This library is currently in its Alpha development phase. You can install it via Composer by explicitly allowing alpha stability:
+>This package is currently in **beta**. Before installing, ensure your `composer.json`
+allows beta releases:
+
+```json
+{
+    "minimum-stability": "beta",
+    "prefer-stable": true
+}
+```
 
 ```bash
-composer require hiblaphp/parallel:"^1.0@alpha"
+composer require hiblaphp/parallel
 ```
 
 **Requirements:**
-- PHP 8.3+
-- `hiblaphp/event-loop`
-- `hiblaphp/promise`
-- `hiblaphp/stream`
-- `hiblaphp/cancellation`
-- `hiblaphp/async`
+- PHP 8.4+ 
 
 ---
 
