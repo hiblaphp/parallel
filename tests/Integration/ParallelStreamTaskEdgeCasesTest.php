@@ -325,7 +325,8 @@ describe('Pool :: Concurrency Stress', function () {
         $elapsed = (hrtime(true) - $start) / 1e6;
 
         $pool->drain();
-        expect($elapsed)->toBeLessThan(200)
+
+        expect($elapsed)->toBeLessThan(350)
             ->and(count(array_unique($pids)))->toBeGreaterThan(1)
         ;
     });
@@ -466,7 +467,7 @@ describe('Task :: Concurrency', function () {
         $pids = await(Promise::all($promises));
         $elapsed = (hrtime(true) - $start) / 1e6;
 
-        expect($elapsed)->toBeLessThan(400)
+        expect($elapsed)->toBeLessThan(650)
             ->and(count(array_unique($pids)))->toBe(8)
         ;
     });

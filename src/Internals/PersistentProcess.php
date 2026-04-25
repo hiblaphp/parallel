@@ -80,17 +80,30 @@ final class PersistentProcess
 
                     $data = @json_decode($buffer, true);
 
-                    // If decoding fails, the payload was likely truncated by a 64KB stream limit.
-                    // Keep the buffer and wait for the next chunk to append.
-                    if (! \is_array($data)) {
+                    if (\is_array($data)) {
+                        // Successful decode: clear the buffer for the next frame
+                        $buffer = '';
+                    } else {
+                        // If decoding fails, it might be a truncated chunk OR malformed garbage.
+                        $isCompleteLine = str_ends_with($line, "\n") || str_ends_with($line, "\r");
+                        $ltrimmed = ltrim($buffer);
+
+                        if ($ltrimmed !== '' && $ltrimmed[0] !== '{') {
+                            // Valid frames ALWAYS start with '{'. If not, it's non-JSON pollution
+                            // (e.g., PHP deprecation warnings, plain text echoes) -> Discard.
+                            $buffer = '';
+                        } elseif ($isCompleteLine) {
+                            // Started with '{' but reached the end of the line and still failed to decode.
+                            // It's a completely malformed JSON string -> Discard.
+                            $buffer = '';
+                        }
+
+                        // Otherwise, it starts with '{' but no newline yet -> Truncated chunk. Keep buffering.
                         continue;
                     }
 
-                    // Successful decode: clear the buffer for the next frame
-                    $buffer = '';
-
                     /** @var array<string, mixed> $data */
-                    $status = isset($data['status']) && is_string($data['status'])
+                    $status = isset($data['status']) && \is_string($data['status'])
                         ? $data['status']
                         : '';
 

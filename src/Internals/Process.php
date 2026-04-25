@@ -46,8 +46,7 @@ final class Process
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr,
         private readonly string $sourceLocation = 'unknown'
-    ) {
-    }
+    ) {}
 
     /**
      * Get the result of the background process.
@@ -194,12 +193,12 @@ final class Process
     private function readResultFromStream(?callable $onMessage): PromiseInterface
     {
         return async(function () use ($onMessage) {
-            // Tracks all in-flight handler fibers so it can await them before
+            // Tracks all in-flight handler fibers so we can await them before
             // resolving the task promise — prevents .wait() from returning before
             // handlers have finished executing.
             /** @var list<PromiseInterface<mixed>> $pendingHandlers */
             $pendingHandlers = [];
-            $buffer = ''; // JSON reassembly buffer for frames larger than readLineAsync's chunk size
+            $buffer = ''; // JSON Reassembly Buffer
 
             try {
                 while (null !== ($line = await($this->stdout->readLineAsync()))) {
@@ -213,14 +212,27 @@ final class Process
 
                     $status = @json_decode($buffer, true);
 
-                    // Incomplete frame — readLineAsync hit its chunk limit mid-payload.
-                    // Accumulate and wait for the next chunk before attempting decode.
-                    if (! \is_array($status)) {
+                    if (\is_array($status)) {
+                        // Successful decode: clear the buffer for the next frame
+                        $buffer = '';
+                    } else {
+                        // If decoding fails, it might be a truncated chunk OR malformed garbage.
+                        $isCompleteLine = str_ends_with($line, "\n") || str_ends_with($line, "\r");
+                        $ltrimmed = ltrim($buffer);
+
+                        if ($ltrimmed !== '' && $ltrimmed[0] !== '{') {
+                            // Valid frames ALWAYS start with '{'. If not, it's non-JSON pollution
+                            // (e.g., PHP deprecation warnings, plain text echoes) -> Discard.
+                            $buffer = '';
+                        } elseif ($isCompleteLine) {
+                            // Started with '{' but reached the end of the line and still failed to decode.
+                            // It's a completely malformed JSON string -> Discard.
+                            $buffer = '';
+                        }
+
+                        // Otherwise, it starts with '{' but no newline yet -> Truncated chunk. Keep buffering.
                         continue;
                     }
-
-                    // Full frame received — clear buffer for the next one.
-                    $buffer = '';
 
                     $statusType = $status['status'] ?? '';
 
@@ -246,7 +258,7 @@ final class Process
                                 data: $data,
                                 pid: \is_int($status['pid']) ? $status['pid'] : $this->pid,
                             );
-                            $pendingHandlers[] = async(fn () => $onMessage($message));
+                            $pendingHandlers[] = async(fn() => $onMessage($message));
                         }
                     } elseif ($statusType === 'COMPLETED') {
                         $result = $status['result'] ?? null;
