@@ -570,7 +570,9 @@ final class ProcessPoolManager
             $this->recordRespawn();
 
             if (\count($this->allWorkers) < $this->size) {
-                $this->spawnWorker();
+                \Hibla\async(function () {
+                    $this->spawnWorker();
+                });
 
                 if ($this->onWorkerRespawn !== null) {
                     \Hibla\async($this->onWorkerRespawn);
@@ -635,11 +637,15 @@ final class ProcessPoolManager
 
         $executionPromise = $worker->submitTask($taskId, $jsonPayload, $sourceLocation, $composedHandler);
 
+        $executionPromise->catch(static fn () => null);
+
         if ($timeoutSeconds > 0) {
-            $executionPromise = Promise::timeout($executionPromise, $timeoutSeconds);
+            $wrappedPromise = Promise::timeout($executionPromise, $timeoutSeconds);
+        } else {
+            $wrappedPromise = $executionPromise;
         }
 
-        $executionPromise->then(
+        $wrappedPromise->then(
             function ($value) use ($workerId, $taskId, $promise) {
                 unset($this->activeTasks[$workerId][$taskId]);
 

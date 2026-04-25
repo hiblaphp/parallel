@@ -22,13 +22,17 @@ final class SystemUtilities
      */
     private static ?int $cpuCount = null;
 
-    /** @var array<string, string> */
+    /**
+     * @var array<string, string>
+     */
     private static array $workerPathCache = [];
 
     /**
      * Prevent instantiation of this utility class.
      */
-    private function __construct() {}
+    private function __construct()
+    {
+    }
 
     /**
      * Get PHP binary path with enhanced detection.

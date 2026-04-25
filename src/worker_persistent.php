@@ -42,9 +42,10 @@ $stderr = fopen('php://stderr', 'w');
 // on an empty pipe. For the task loop fgets() this is also safe — the event
 // loop only runs during task execution inside await(), never between tasks,
 // so there is nothing to starve while waiting for the next payload.
+
 stream_set_blocking($stdin,  true);
-stream_set_blocking($stdout, false);
-stream_set_blocking($stderr, false);
+stream_set_blocking($stdout, true);
+stream_set_blocking($stderr, true);
 
 // ===== PROCESS-LEVEL STATE =====
 // These are declared at script scope and accessed via global in closures
@@ -62,10 +63,27 @@ $maxExecutionsPerWorker = null;   // null = unlimited, set from boot payload
 function write_frame(array $data): void
 {
     global $stdout;
-    if (is_resource($stdout)) {
-        @fwrite($stdout, json_encode($data, JSON_UNESCAPED_SLASHES) . PHP_EOL);
-        @fflush($stdout);
+    if (! is_resource($stdout)) {
+        return;
     }
+
+    $json = json_encode($data, JSON_UNESCAPED_SLASHES);
+    if ($json === false) {
+        return;
+    }
+
+    $payload = $json . PHP_EOL;
+    $length = strlen($payload);
+    $written = 0;
+    while ($written < $length) {
+        $result = @fwrite($stdout, substr($payload, $written));
+        if ($result === false || $result === 0) {
+            break;
+        }
+        $written += $result;
+    }
+
+    @fflush($stdout);
 }
 
 /**
@@ -219,10 +237,12 @@ $maxExecutionsPerWorker = isset($bootData['max_executions_per_worker'])
     ? $bootData['max_executions_per_worker']
     : null;
 
+// Clear the time limit so the worker doesn't die while idle on Windows
+set_time_limit(0);
+
 // Tell the parent the worker is ready to accept tasks
 write_frame(['status' => 'READY', 'pid' => getmypid()]);
 
-// ===== TASK LOOP =====
 while (($payload = fgets($stdin)) !== false) {
     if (trim($payload) === '') {
         continue;
@@ -377,6 +397,7 @@ while (($payload = fgets($stdin)) !== false) {
     // ============================
 
     write_frame(['status' => 'READY', 'pid' => getmypid()]);
+    set_time_limit(0);
 }
 
 exit(0);

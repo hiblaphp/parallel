@@ -66,31 +66,35 @@ final class PersistentProcess
         async(function () {
             /** @var array<string, list<PromiseInterface<mixed>>> $pendingHandlers */
             $pendingHandlers = [];
+            $buffer = ''; // JSON Reassembly Buffer
 
             try {
                 while (null !== ($line = await($this->stdout->readLineAsync()))) {
-                    if (trim($line) === '') {
+                    $buffer .= $line;
+
+                    if (trim($buffer) === '') {
+                        $buffer = '';
+
                         continue;
                     }
 
-                    $data = @json_decode($line, true);
+                    $data = @json_decode($buffer, true);
+
+                    // If decoding fails, the payload was likely truncated by a 64KB stream limit.
+                    // Keep the buffer and wait for the next chunk to append.
                     if (! \is_array($data)) {
                         continue;
                     }
+
+                    // Successful decode: clear the buffer for the next frame
+                    $buffer = '';
 
                     /** @var array<string, mixed> $data */
                     $status = isset($data['status']) && is_string($data['status'])
                         ? $data['status']
                         : '';
 
-                    if ($status === 'CRASHED') {
-                        $this->terminate();
-                        ($this->onCrashCallback)($this);
-
-                        break;
-                    }
-
-                    if ($status === 'RETIRING') {
+                    if ($status === 'CRASHED' || $status === 'RETIRING') {
                         $this->terminate();
                         ($this->onCrashCallback)($this);
 

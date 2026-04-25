@@ -194,22 +194,33 @@ final class Process
     private function readResultFromStream(?callable $onMessage): PromiseInterface
     {
         return async(function () use ($onMessage) {
-            // Tracks all in-flight handler fibers so we can await them before
+            // Tracks all in-flight handler fibers so it can await them before
             // resolving the task promise — prevents .wait() from returning before
             // handlers have finished executing.
             /** @var list<PromiseInterface<mixed>> $pendingHandlers */
             $pendingHandlers = [];
+            $buffer = ''; // JSON reassembly buffer for frames larger than readLineAsync's chunk size
 
             try {
                 while (null !== ($line = await($this->stdout->readLineAsync()))) {
-                    if (trim($line) === '') {
+                    $buffer .= $line;
+
+                    if (trim($buffer) === '') {
+                        $buffer = '';
+
                         continue;
                     }
 
-                    $status = @json_decode($line, true);
+                    $status = @json_decode($buffer, true);
+
+                    // Incomplete frame — readLineAsync hit its chunk limit mid-payload.
+                    // Accumulate and wait for the next chunk before attempting decode.
                     if (! \is_array($status)) {
                         continue;
                     }
+
+                    // Full frame received — clear buffer for the next one.
+                    $buffer = '';
 
                     $statusType = $status['status'] ?? '';
 
@@ -281,9 +292,8 @@ final class Process
                     }
                 }
             } catch (StreamException) {
-                // The worker closed its socket end before readLineAsync() returned
-                // null — this is normal on Windows when the process exits. If a
-                // terminal frame was already handled above we never reach this point.
+                // Worker closed its socket end before readLineAsync() returned null —
+                // normal on Windows when the process exits cleanly.
             } finally {
                 $pendingHandlers = [];
             }

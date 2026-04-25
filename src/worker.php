@@ -81,14 +81,9 @@ $stdin = fopen('php://stdin',  'r');
 $stdout = fopen('php://stdout', 'w');
 $stderr = fopen('php://stderr', 'w');
 
-// Keep stdin blocking for the initial payload read to reliably wait for the
-// parent to write the task payload. On Linux, anonymous pipes in non-blocking
-// mode return false immediately if no data is ready yet, creating a race
-// condition. Blocking mode eliminates this without requiring a polling loop.
-// stdout and stderr remain non-blocking so the event loop is never starved.
 stream_set_blocking($stdin,  true);
-stream_set_blocking($stdout, false);
-stream_set_blocking($stderr, false);
+stream_set_blocking($stdout, true);
+stream_set_blocking($stderr, true);
 
 $autoloadPath = null;
 $taskId = 'unknown';
@@ -107,10 +102,23 @@ function write_status_to_stdout(array $data): void
     }
 
     $json = json_encode($data, JSON_UNESCAPED_SLASHES);
-    if ($json !== false) {
-        @fwrite($stdout, $json . PHP_EOL);
-        @fflush($stdout);
+    if ($json === false) {
+        return;
     }
+
+    $payload = $json . PHP_EOL;
+    $length = strlen($payload);
+    $written = 0;
+
+    while ($written < $length) {
+        $result = @fwrite($stdout, substr($payload, $written));
+        if ($result === false || $result === 0) {
+            break;
+        }
+        $written += $result;
+    }
+
+    @fflush($stdout);
 }
 
 /**
