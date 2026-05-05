@@ -110,6 +110,11 @@ final class ProcessKiller
     {
         $killedPgids = [];
 
+        $childMap = [];
+        foreach ($parentMap as $child => $parent) {
+            $childMap[$parent][] = $child;
+        }
+
         foreach ($pids as $pid) {
             $pgid = $pgidMap[$pid] ?? null;
 
@@ -119,7 +124,7 @@ final class ProcessKiller
                     self::sendSignalToGroup($pgid, SIGKILL);
                 }
             } else {
-                $descendants = self::collectDescendants($pid, $parentMap);
+                $descendants = self::collectDescendants($pid, $childMap);
                 foreach (array_reverse($descendants) as $descendantPid) {
                     self::sendSignal($descendantPid, SIGKILL);
                 }
@@ -219,7 +224,7 @@ final class ProcessKiller
             restore_error_handler();
         }
 
-        return[$parentMap, $pgidMap];
+        return [$parentMap, $pgidMap];
     }
 
     /**
@@ -249,17 +254,12 @@ final class ProcessKiller
 
     /**
      * @param int $pid
-     * @param array<int, int> $parentMap
+     * @param array<int, list<int>> $childMap Pre-built child map (pid => list of child pids)
      *
      * @return list<int>
      */
-    private static function collectDescendants(int $pid, array $parentMap): array
+    private static function collectDescendants(int $pid, array $childMap): array
     {
-        $childMap = [];
-        foreach ($parentMap as $child => $parent) {
-            $childMap[$parent][] = $child;
-        }
-
         $result = [];
         $queue = [$pid];
 
@@ -275,24 +275,32 @@ final class ProcessKiller
     }
 
     /**
-     * Fallback strategy using pgrep for recursive discovery.
+     * Fallback strategy using pgrep for iterative discovery.
      *
      * @param list<int> $pids
      */
     private static function killTreesUnixFallback(array $pids): void
     {
-        foreach ($pids as $pid) {
+        $queue = $pids;
+        $toKill = [];
+
+        while ($queue !== []) {
+            $pid = array_shift($queue);
+            $toKill[] = $pid;
+
             $output = @shell_exec("pgrep -P {$pid} 2>/dev/null");
 
             if (\is_string($output) && $output !== '') {
                 foreach (explode("\n", trim($output)) as $childPid) {
                     $childPid = trim($childPid);
                     if (ctype_digit($childPid) && (int) $childPid > 0) {
-                        self::killTreesUnixFallback([(int) $childPid]);
+                        $queue[] = (int) $childPid;
                     }
                 }
             }
+        }
 
+        foreach (array_reverse($toKill) as $pid) {
             self::sendSignal($pid, SIGKILL);
         }
     }

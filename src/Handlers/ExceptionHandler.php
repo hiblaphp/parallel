@@ -22,12 +22,12 @@ final class ExceptionHandler
     public static function createFromWorkerError(array $errorData, string $sourceLocation): \Throwable
     {
         $className = $errorData['class'] ?? \RuntimeException::class;
-        $message = $errorData['message'] ?? 'Unknown error';
+        $messageRaw = $errorData['message'] ?? 'Unknown error';
         $codeValue = $errorData['code'] ?? 0;
-        $workerTrace = $errorData['stack_trace'] ?? '';
+        $workerTraceRaw = $errorData['stack_trace'] ?? '';
 
-        assert(\is_string($message));
-        assert(\is_string($workerTrace));
+        $message = \is_string($messageRaw) ? $messageRaw : 'Unknown error';
+        $workerTrace = \is_string($workerTraceRaw) ? $workerTraceRaw : '';
 
         if (! \is_string($className)) {
             $className = \RuntimeException::class;
@@ -36,10 +36,12 @@ final class ExceptionHandler
         $code = self::normalizeExceptionCode($codeValue);
         $exception = self::instantiateException($className, $message, $code);
 
-        self::setExceptionLocation($exception, $sourceLocation);
+        $reflection = new \ReflectionObject($exception);
+
+        self::setExceptionLocation($exception, $sourceLocation, $reflection);
 
         if ($workerTrace !== '') {
-            self::appendWorkerStackTrace($exception, $workerTrace);
+            self::appendWorkerStackTrace($exception, $workerTrace, $reflection);
         }
 
         return $exception;
@@ -110,10 +112,11 @@ final class ExceptionHandler
      *
      * @param \Throwable $exception
      * @param string $sourceLocation Format: "file:line"
+     * @param \ReflectionObject $reflection
      *
      * @return void
      */
-    private static function setExceptionLocation(\Throwable $exception, string $sourceLocation): void
+    private static function setExceptionLocation(\Throwable $exception, string $sourceLocation, \ReflectionObject $reflection): void
     {
         if ($sourceLocation === 'unknown' || ! str_contains($sourceLocation, ':')) {
             return;
@@ -122,17 +125,16 @@ final class ExceptionHandler
         try {
             [$file, $line] = self::parseSourceLocation($sourceLocation);
 
-            $reflection = new \ReflectionObject($exception);
-            $reflection = self::findReflectionWithProperty($reflection, 'file');
+            $reflectionClass = self::findReflectionWithProperty($reflection, 'file');
 
-            if ($reflection === null) {
+            if ($reflectionClass === null) {
                 return;
             }
 
-            $fileProp = $reflection->getProperty('file');
+            $fileProp = $reflectionClass->getProperty('file');
             $fileProp->setValue($exception, $file);
 
-            $lineProp = $reflection->getProperty('line');
+            $lineProp = $reflectionClass->getProperty('line');
             $lineProp->setValue($exception, (int)$line);
         } catch (\Throwable) {
             // Ignore reflection errors
@@ -166,20 +168,20 @@ final class ExceptionHandler
      *
      * @param \Throwable $exception
      * @param string $workerTrace
+     * @param \ReflectionObject $reflection
      *
      * @return void
      */
-    private static function appendWorkerStackTrace(\Throwable $exception, string $workerTrace): void
+    private static function appendWorkerStackTrace(\Throwable $exception, string $workerTrace, \ReflectionObject $reflection): void
     {
         try {
-            $reflection = new \ReflectionObject($exception);
-            $reflection = self::findReflectionWithProperty($reflection, 'trace');
+            $reflectionClass = self::findReflectionWithProperty($reflection, 'trace');
 
-            if ($reflection === null) {
+            if ($reflectionClass === null) {
                 return;
             }
 
-            $traceProp = $reflection->getProperty('trace');
+            $traceProp = $reflectionClass->getProperty('trace');
 
             $currentTrace = $traceProp->getValue($exception);
 

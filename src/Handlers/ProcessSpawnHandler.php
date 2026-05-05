@@ -24,7 +24,7 @@ use Rcalicdan\Serializer\CallbackSerializationManager;
  * background processes, setting up their communication channels, and preparing
  * task payloads for execution.
  */
-class ProcessSpawnHandler
+final class ProcessSpawnHandler
 {
     private string|int $defaultProcessMemoryLimit;
 
