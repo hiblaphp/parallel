@@ -186,9 +186,10 @@ final class SystemUtilities
             }
 
             if (is_readable('/proc/cpuinfo')) {
-                $count = substr_count((string) file_get_contents('/proc/cpuinfo'), "\nprocessor");
-                if ($count > 0) {
-                    return self::$cpuCount = $count + 1;
+                $cpuInfo = (string) file_get_contents('/proc/cpuinfo');
+                $matchCount = preg_match_all('/^processor/m', $cpuInfo, $cpuMatches);
+                if ($matchCount !== false && $matchCount > 0) {
+                    return self::$cpuCount = $matchCount;
                 }
             }
         }

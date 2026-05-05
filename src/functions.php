@@ -203,10 +203,11 @@ function spawnFn(callable $task, ?int $timeout = null): callable
  * Sends a structured MESSAGE frame to the parent process via stdout,
  * bypassing the output buffer so it is never captured as task output.
  *
- * Supports any serializable PHP value — scalars, arrays, and objects
- * all round-trip correctly across the process boundary. Objects are
- * transparently serialized using base64(serialize()) and reconstructed
- * into their original type on the parent side when building WorkerMessage.
+ * Supports scalars, arrays of scalars, and objects that implement JsonSerializable.
+ * Arrays containing objects that do not implement JsonSerializable are serialized
+ * using base64(serialize()) so they round-trip correctly across the process boundary.
+ * Standalone objects are also transparently serialized and reconstructed into their
+ * original type on the parent side when building WorkerMessage.
  *
  * Silently no-ops when called outside a worker context (e.g., in the
  * parent process or in a fire-and-forget background worker where stdout
@@ -225,6 +226,14 @@ function emit(mixed $data): void
     }
 
     $needsSerialization = \is_object($data) || \is_resource($data);
+
+    if (! $needsSerialization && \is_array($data)) {
+        array_walk_recursive($data, static function (mixed $value) use (&$needsSerialization): void {
+            if (\is_object($value) || \is_resource($value)) {
+                $needsSerialization = true;
+            }
+        });
+    }
 
     $frame = [
         'status' => 'MESSAGE',

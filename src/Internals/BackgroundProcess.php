@@ -76,7 +76,7 @@ final class BackgroundProcess
 
         if (PHP_OS_FAMILY === 'Windows') {
             $output = shell_exec("tasklist /FI \"PID eq {$this->pid}\" 2>nul");
-            $running = \is_string($output) && strpos($output, (string)$this->pid) !== false;
+            $running = \is_string($output) && str_contains($output, (string)$this->pid);
         } else {
             if (\is_resource($this->processResource)) {
                 $status = proc_get_status($this->processResource);
@@ -85,7 +85,7 @@ final class BackgroundProcess
                 $running = posix_kill($this->pid, 0);
             } else {
                 $output = shell_exec("ps -p {$this->pid} 2>/dev/null");
-                $running = \is_string($output) && strpos($output, (string)$this->pid) !== false;
+                $running = \is_string($output) && str_contains($output, (string)$this->pid);
             }
         }
 

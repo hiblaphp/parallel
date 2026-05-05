@@ -24,7 +24,7 @@ use Rcalicdan\Serializer\CallbackSerializationManager;
  * fire-and-forget background tasks. Implements a singleton pattern for global access,
  * but allows direct instantiation for testing and dependency injection.
  */
-class ProcessManager
+final class ProcessManager
 {
     /**
      * Default maximum number of background tasks allowed to spawn per second.

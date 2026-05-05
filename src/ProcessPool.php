@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Hibla\Parallel;
 
 use Hibla\Parallel\Interfaces\ProcessPoolInterface;
+use Hibla\Parallel\Exceptions\PoolShutdownException;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\Managers\ProcessPoolManager;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
@@ -253,12 +254,12 @@ final class ProcessPool implements ProcessPoolInterface
      *
      * @inheritdoc
      *
-     * @return PromiseInterface<TResult>
+     * @return PromiseInterface<TResult> Rejects with PoolShutdownException if the pool has been shut down.
      */
     public function run(callable $callback, ?callable $onMessage = null): PromiseInterface
     {
         if ($this->isShutdown) {
-            return Promise::rejected(new \RuntimeException('Cannot submit task to a shutdown pool.'));
+            return Promise::rejected(new PoolShutdownException('Cannot submit task to a shutdown pool.'));
         }
 
         $sourceLocation = 'unknown';
