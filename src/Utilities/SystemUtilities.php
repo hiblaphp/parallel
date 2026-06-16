@@ -271,7 +271,6 @@ final class SystemUtilities
             : ['proc_open', 'exec', 'shell_exec'];
 
         $missingFunctions = array_filter($requiredFunctions, static function (string $function): bool {
-            // @phpstan-ignore-next-line the functions are checked at runtime
             return ! function_exists($function);
         });
 
