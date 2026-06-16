@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel\Internals;
 
-use Hibla\Parallel\Utilities\ProcessKiller;
+use Rcalicdan\ProcessKiller\ProcessKiller;
 
 /**
  * @internal

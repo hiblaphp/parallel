@@ -13,7 +13,7 @@ use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ProcessSpawnHandler;
 use Hibla\Parallel\Internals\PersistentProcess;
 use Hibla\Parallel\Traits\MessageHandlerComposer;
-use Hibla\Parallel\Utilities\ProcessKiller;
+use Rcalicdan\ProcessKiller\ProcessKiller;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;

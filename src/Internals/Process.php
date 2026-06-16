@@ -7,7 +7,7 @@ namespace Hibla\Parallel\Internals;
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
-use Hibla\Parallel\Utilities\ProcessKiller;
+use Rcalicdan\ProcessKiller\ProcessKiller;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;

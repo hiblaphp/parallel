@@ -2,6 +2,12 @@
     "name": "hiblaphp/parallel",
     "type": "library",
     "license": "MIT",
+    "authors": [
+        {
+            "name": "Reymart A. Calicdan",
+            "email": "reymart.calicdan06@gmail.com"
+        }
+    ],
     "autoload": {
         "psr-4": {
             "Hibla\\Parallel\\": "src/"
@@ -24,6 +30,7 @@
         "php": "^8.4",
         "rcalicdan/config-loader": "^1.0",
         "rcalicdan/serializer": "^1.0",
+        "rcalicdan/process-killer": "^1.0",
         "hiblaphp/event-loop": "^1.0",
         "hiblaphp/promise": "^1.0",
         "hiblaphp/cancellation": "^1.0",
