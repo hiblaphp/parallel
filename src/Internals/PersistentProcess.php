@@ -267,8 +267,12 @@ final class PersistentProcess
                             $this->workerPid = $data['pid'];
                         }
 
-                        // Suspend the read loop and notify the pool manager
-                        $this->isBusy = false;
+                        // Prevent the read loop from exiting if a task was just submitted
+                        // (Fixes test suite hanging due to synchronous task submission)
+                        if (\count($this->pendingTasks) === 0) {
+                            $this->isBusy = false;
+                        }
+
                         if ($this->onReadyCallback !== null) {
                             ($this->onReadyCallback)($this);
                         }
