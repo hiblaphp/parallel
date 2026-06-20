@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Hibla\Parallel;
 
-use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 use Hibla\Parallel\Exceptions\PoolShutdownException;
+use Hibla\Parallel\Interfaces\ProcessPoolInterface;
 use Hibla\Parallel\Managers\ProcessManager;
 use Hibla\Parallel\Managers\ProcessPoolManager;
 use Hibla\Parallel\ValueObjects\WorkerMessage;

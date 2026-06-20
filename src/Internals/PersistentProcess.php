@@ -6,12 +6,12 @@ namespace Hibla\Parallel\Internals;
 
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
-use Rcalicdan\ProcessKiller\ProcessKiller;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Interfaces\PromiseInterface;
 use Hibla\Promise\Promise;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
+use Rcalicdan\ProcessKiller\ProcessKiller;
 
 use function Hibla\async;
 use function Hibla\await;
@@ -27,18 +27,20 @@ final class PersistentProcess
     private array $pendingTasks = [];
 
     /**
-     * @var callable(self): void
+     * @var (callable(self): void)|null
      */
-    private $onReadyCallback;
+    private $onReadyCallback = null;
 
     /**
-     * @var callable(self): void
+     * @var (callable(self): void)|null
      */
-    private $onCrashCallback;
+    private $onCrashCallback = null;
 
     private bool $isAlive = true;
 
     private bool $isBusy = true;
+
+    private bool $isReading = false;
 
     /**
      * @var int|null
@@ -63,148 +65,8 @@ final class PersistentProcess
         $this->onReadyCallback = $onReadyCallback;
         $this->onCrashCallback = $onCrashCallback;
 
-        async(function () {
-            /** @var array<string, list<PromiseInterface<mixed>>> $pendingHandlers */
-            $pendingHandlers = [];
-            $buffer = ''; // JSON Reassembly Buffer
-
-            try {
-                while (null !== ($line = await($this->stdout->readLineAsync()))) {
-                    $buffer .= $line;
-
-                    if (trim($buffer) === '') {
-                        $buffer = '';
-
-                        continue;
-                    }
-
-                    $data = @json_decode($buffer, true);
-
-                    if (\is_array($data)) {
-                        // Successful decode: clear the buffer for the next frame
-                        $buffer = '';
-                    } else {
-                        // If decoding fails, it might be a truncated chunk OR malformed garbage.
-                        $isCompleteLine = str_ends_with($line, "\n") || str_ends_with($line, "\r");
-                        $ltrimmed = ltrim($buffer);
-
-                        if ($ltrimmed !== '' && $ltrimmed[0] !== '{') {
-                            // Valid frames ALWAYS start with '{'. If not, it's non-JSON pollution
-                            // (e.g., PHP deprecation warnings, plain text echoes) -> Discard.
-                            $buffer = '';
-                        } elseif ($isCompleteLine) {
-                            // Started with '{' but reached the end of the line and still failed to decode.
-                            // It's a completely malformed JSON string -> Discard.
-                            $buffer = '';
-                        }
-
-                        // Otherwise, it starts with '{' but no newline yet -> Truncated chunk. Keep buffering.
-                        continue;
-                    }
-
-                    /** @var array<string, mixed> $data */
-                    $status = isset($data['status']) && \is_string($data['status'])
-                        ? $data['status']
-                        : '';
-
-                    if ($status === 'CRASHED' || $status === 'RETIRING') {
-                        $this->terminate();
-                        ($this->onCrashCallback)($this);
-
-                        break;
-                    }
-
-                    if ($status === 'READY') {
-                        if (isset($data['pid']) && \is_int($data['pid'])) {
-                            $this->workerPid = $data['pid'];
-                        }
-
-                        $this->isBusy = false;
-                        ($this->onReadyCallback)($this);
-
-                        continue;
-                    }
-
-                    $taskId = isset($data['task_id']) && is_string($data['task_id'])
-                        ? $data['task_id']
-                        : null;
-
-                    if ($taskId === null || ! isset($this->pendingTasks[$taskId])) {
-                        continue;
-                    }
-
-                    $taskMeta = $this->pendingTasks[$taskId];
-                    $promise = $taskMeta['promise'];
-                    $sourceLocation = $taskMeta['location'];
-
-                    if ($status === 'OUTPUT') {
-                        $output = $data['output'] ?? '';
-                        echo \is_string($output) ? $output : '';
-                    } elseif ($status === 'MESSAGE') {
-                        $onMessage = $this->pendingTasks[$taskId]['onMessage'];
-
-                        if ($onMessage !== null) {
-                            $rawData = $data['data'] ?? null;
-
-                            // Transparently deserialize objects serialized by emit()
-                            // using the base64(serialize()) pattern
-                            if (($data['data_serialized'] ?? false) === true && \is_string($rawData)) {
-                                $decoded = base64_decode($rawData, true);
-                                if ($decoded !== false) {
-                                    $rawData = unserialize($decoded);
-                                }
-                            }
-
-                            $message = new WorkerMessage(
-                                data: $rawData,
-                                pid: \is_int($data['pid']) ? $data['pid'] : $this->pid,
-                            );
-
-                            // Track handler fiber under its task ID so the terminal
-                            // frame can await all handlers for this specific task.
-                            $pendingHandlers[$taskId][] = async(fn () => $onMessage($message));
-                        }
-                    } elseif ($status === 'COMPLETED') {
-                        $result = $data['result'] ?? null;
-
-                        if (($data['result_serialized'] ?? false) === true && \is_string($result)) {
-                            $decoded = base64_decode($result, true);
-                            if ($decoded !== false) {
-                                $result = unserialize($decoded);
-                            }
-                        }
-
-                        if (isset($pendingHandlers[$taskId]) && \count($pendingHandlers[$taskId]) > 0) {
-                            await(Promise::all($pendingHandlers[$taskId]));
-                            unset($pendingHandlers[$taskId]);
-                        }
-
-                        unset($this->pendingTasks[$taskId]);
-                        $promise->resolve($result);
-                    } elseif ($status === 'ERROR') {
-                        /** @var array<string, mixed> $data */
-                        $exception = ExceptionHandler::createFromWorkerError($data, $sourceLocation);
-
-                        if (isset($pendingHandlers[$taskId]) && \count($pendingHandlers[$taskId]) > 0) {
-                            await(Promise::all($pendingHandlers[$taskId]));
-                            unset($pendingHandlers[$taskId]);
-                        }
-
-                        unset($this->pendingTasks[$taskId]);
-                        $promise->reject($exception);
-                    }
-                }
-            } catch (\Throwable $e) {
-                // Stream closed unexpectedly or any other error — treat as a crash
-                // and clear all pending handler references before crashing.
-                $pendingHandlers = [];
-                $this->terminate();
-                ($this->onCrashCallback)($this);
-            } finally {
-                $pendingHandlers = [];
-                $this->terminate();
-            }
-        });
+        // Boot phase: start reading to catch the initial READY frame
+        $this->ensureReading();
     }
 
     public function getPid(): int
@@ -234,6 +96,8 @@ final class PersistentProcess
             'location' => $sourceLocation,
             'onMessage' => $onMessage,
         ];
+
+        $this->ensureReading();
 
         async(function () use ($payload) {
             try {
@@ -325,5 +189,176 @@ final class PersistentProcess
         }
 
         $this->pendingTasks = [];
+    }
+
+    /**
+     * Demand-driven read loop that only listens when the worker is busy (booting or executing).
+     * Automatically suspends itself when idle to allow the event loop to exit cleanly.
+     */
+    private function ensureReading(): void
+    {
+        if ($this->isReading) {
+            return;
+        }
+
+        $this->isReading = true;
+
+        async(function () {
+            /** @var array<string, list<PromiseInterface<mixed>>> $pendingHandlers */
+            $pendingHandlers = [];
+            $buffer = ''; // JSON Reassembly Buffer
+
+            try {
+                while ($this->isBusy) {
+                    $line = await($this->stdout->readLineAsync());
+
+                    if ($line === null) {
+                        throw new \RuntimeException('Worker stream closed unexpectedly.');
+                    }
+
+                    $buffer .= $line;
+
+                    if (trim($buffer) === '') {
+                        $buffer = '';
+
+                        continue;
+                    }
+
+                    $data = @json_decode($buffer, true);
+
+                    if (\is_array($data)) {
+                        // Successful decode: clear the buffer for the next frame
+                        $buffer = '';
+                    } else {
+                        // If decoding fails, it might be a truncated chunk OR malformed garbage.
+                        $isCompleteLine = str_ends_with($line, "\n") || str_ends_with($line, "\r");
+                        $ltrimmed = ltrim($buffer);
+
+                        if ($ltrimmed !== '' && $ltrimmed[0] !== '{') {
+                            // Valid frames ALWAYS start with '{'. If not, it's non-JSON pollution
+                            // (e.g., PHP deprecation warnings, plain text echoes) -> Discard.
+                            $buffer = '';
+                        } elseif ($isCompleteLine) {
+                            // Started with '{' but reached the end of the line and still failed to decode.
+                            // It's a completely malformed JSON string -> Discard.
+                            $buffer = '';
+                        }
+
+                        // Otherwise, it starts with '{' but no newline yet -> Truncated chunk. Keep buffering.
+                        continue;
+                    }
+
+                    /** @var array<string, mixed> $data */
+                    $status = isset($data['status']) && \is_string($data['status'])
+                        ? $data['status']
+                        : '';
+
+                    if ($status === 'CRASHED' || $status === 'RETIRING') {
+                        $this->terminate();
+                        if ($this->onCrashCallback !== null) {
+                            ($this->onCrashCallback)($this);
+                        }
+
+                        break;
+                    }
+
+                    if ($status === 'READY') {
+                        if (isset($data['pid']) && \is_int($data['pid'])) {
+                            $this->workerPid = $data['pid'];
+                        }
+
+                        // Suspend the read loop and notify the pool manager
+                        $this->isBusy = false;
+                        if ($this->onReadyCallback !== null) {
+                            ($this->onReadyCallback)($this);
+                        }
+
+                        continue;
+                    }
+
+                    $taskId = isset($data['task_id']) && is_string($data['task_id'])
+                        ? $data['task_id']
+                        : null;
+
+                    if ($taskId === null || ! isset($this->pendingTasks[$taskId])) {
+                        continue;
+                    }
+
+                    $taskMeta = $this->pendingTasks[$taskId];
+                    $promise = $taskMeta['promise'];
+                    $sourceLocation = $taskMeta['location'];
+
+                    if ($status === 'OUTPUT') {
+                        $output = $data['output'] ?? '';
+                        echo \is_string($output) ? $output : '';
+                    } elseif ($status === 'MESSAGE') {
+                        $onMessage = $this->pendingTasks[$taskId]['onMessage'];
+
+                        if ($onMessage !== null) {
+                            $rawData = $data['data'] ?? null;
+
+                            // Transparently deserialize objects serialized by emit()
+                            // using the base64(serialize()) pattern
+                            if (($data['data_serialized'] ?? false) === true && \is_string($rawData)) {
+                                $decoded = base64_decode($rawData, true);
+                                if ($decoded !== false) {
+                                    $rawData = unserialize($decoded);
+                                }
+                            }
+
+                            $message = new WorkerMessage(
+                                data: $rawData,
+                                pid: \is_int($data['pid']) ? $data['pid'] : $this->pid,
+                            );
+
+                            // Track handler fiber under its task ID so the terminal
+                            // frame can await all handlers for this specific task.
+                            $pendingHandlers[$taskId][] = async(fn () => $onMessage($message));
+                        }
+                    } elseif ($status === 'COMPLETED') {
+                        $result = $data['result'] ?? null;
+
+                        if (($data['result_serialized'] ?? false) === true && \is_string($result)) {
+                            $decoded = base64_decode($result, true);
+                            if ($decoded !== false) {
+                                $result = unserialize($decoded);
+                            }
+                        }
+
+                        if (isset($pendingHandlers[$taskId]) && \count($pendingHandlers[$taskId]) > 0) {
+                            await(Promise::all($pendingHandlers[$taskId]));
+                            unset($pendingHandlers[$taskId]);
+                        }
+
+                        unset($this->pendingTasks[$taskId]);
+                        $promise->resolve($result);
+                    } elseif ($status === 'ERROR') {
+                        /** @var array<string, mixed> $data */
+                        $exception = ExceptionHandler::createFromWorkerError($data, $sourceLocation);
+
+                        if (isset($pendingHandlers[$taskId]) && \count($pendingHandlers[$taskId]) > 0) {
+                            await(Promise::all($pendingHandlers[$taskId]));
+                            unset($pendingHandlers[$taskId]);
+                        }
+
+                        unset($this->pendingTasks[$taskId]);
+                        $promise->reject($exception);
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Stream closed unexpectedly or any other error — treat as a crash
+                // and clear all pending handler references before crashing.
+                $pendingHandlers = [];
+                $this->terminate();
+
+                if ($this->onCrashCallback !== null) {
+                    ($this->onCrashCallback)($this);
+                }
+            } finally {
+                $this->isReading = false;
+                $pendingHandlers = [];
+                // Unconditional terminate intentionally removed here to allow idle worker to stay alive
+            }
+        });
     }
 }

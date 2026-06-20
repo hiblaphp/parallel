@@ -43,6 +43,7 @@ Hibla Parallel brings Erlang-style reliability and Node.js-level cluster pool pe
 
 **Persistent pools**
 - [Persistent Worker Pools](#persistent-worker-pools)
+  - [Explicit Lifecycle Management](#explicit-lifecycle-management)
   - [Automatic garbage collection between tasks](#automatic-garbage-collection-between-tasks)
   - [Why `withMaxExecutionsPerWorker`](#why-withmaxexecutionsperworker)
   - [Lazy vs. Eager Spawning](#lazy-vs-eager-spawning)
@@ -781,17 +782,23 @@ for ($i = 0; $i < 4; $i++) {
     $pool->run($task)->then(fn($pid) => print("Handled by worker: $pid\n"));
 }
 
-/**
- * CRITICAL: Always shut down the pool when done.
- * Persistent workers hold open IPC channels that keep the Event Loop alive.
- * Without an explicit shutdown the script will never exit.
- */
+// Once all tasks are complete and the event loop is empty, the script will
+// exit naturally. PHP's Garbage Collector will automatically tear down the 
+// OS processes via the pool's __destruct() method. No manual cleanup is required!
+```
 
-// Option A: Synchronous — blocks until all queued tasks finish and all workers exit
+### Explicit Lifecycle Management
+
+While Hibla Parallel automatically cleans up idle pools when your script ends, you may still want to shut down pools manually in long-running daemons (like web servers) to free up OS resources immediately when a pool is no longer needed.
+
+```php
+// Option A: Forceful Shutdown — instantly kills all workers in the pool. 
+// Any currently executing or queued tasks are rejected with a PoolShutdownException.
 $pool->shutdown();
 
-// Option B: Graceful — rejects all incoming tasks while still waiting for the current task to finish, then shuts down
-// $pool->drain();
+// Option B: Graceful Drain — stops accepting new tasks, but waits for all 
+// currently executing and queued tasks to finish before tearing down the workers.
+$pool->drain();
 ```
 
 ### Automatic garbage collection between tasks
