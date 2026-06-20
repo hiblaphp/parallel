@@ -365,7 +365,6 @@ describe('PersistentProcess', function () {
         $crashFired = false;
 
         $lines = [
-            json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'CRASHED']),
         ];
 
@@ -406,7 +405,6 @@ describe('PersistentProcess', function () {
 
     it('marks the worker as dead after a CRASHED frame', function () {
         $lines = [
-            json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'CRASHED']),
         ];
 
@@ -422,7 +420,6 @@ describe('PersistentProcess', function () {
         $retireFired = false;
 
         $lines = [
-            json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'RETIRING', 'executions' => 10]),
         ];
 
@@ -441,7 +438,6 @@ describe('PersistentProcess', function () {
 
     it('marks the worker as dead after a RETIRING frame', function () {
         $lines = [
-            json_encode(['status' => 'READY', 'pid' => 1234]),
             json_encode(['status' => 'RETIRING', 'executions' => 5]),
         ];
 

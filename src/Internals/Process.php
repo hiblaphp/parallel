@@ -7,7 +7,6 @@ namespace Hibla\Parallel\Internals;
 use Hibla\Parallel\Exceptions\ProcessCrashedException;
 use Hibla\Parallel\Exceptions\TimeoutException;
 use Hibla\Parallel\Handlers\ExceptionHandler;
-use Rcalicdan\ProcessKiller\ProcessKiller;
 use Hibla\Parallel\ValueObjects\WorkerMessage;
 use Hibla\Promise\Exceptions\TimeoutException as PromiseTimeoutException;
 use Hibla\Promise\Interfaces\PromiseInterface;
@@ -15,6 +14,7 @@ use Hibla\Promise\Promise;
 use Hibla\Stream\Exceptions\StreamException;
 use Hibla\Stream\Interfaces\PromiseReadableStreamInterface;
 use Hibla\Stream\Interfaces\PromiseWritableStreamInterface;
+use Rcalicdan\ProcessKiller\ProcessKiller;
 
 use function Hibla\async;
 use function Hibla\await;
@@ -46,7 +46,8 @@ final class Process
         private readonly PromiseReadableStreamInterface $stdout,
         private readonly PromiseReadableStreamInterface $stderr,
         private readonly string $sourceLocation = 'unknown'
-    ) {}
+    ) {
+    }
 
     /**
      * Get the result of the background process.
@@ -258,7 +259,7 @@ final class Process
                                 data: $data,
                                 pid: \is_int($status['pid']) ? $status['pid'] : $this->pid,
                             );
-                            $pendingHandlers[] = async(fn() => $onMessage($message));
+                            $pendingHandlers[] = async(fn () => $onMessage($message));
                         }
                     } elseif ($statusType === 'COMPLETED') {
                         $result = $status['result'] ?? null;
