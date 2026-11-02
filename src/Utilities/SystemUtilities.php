@@ -30,9 +30,7 @@ final class SystemUtilities
     /**
      * Prevent instantiation of this utility class.
      */
-    private function __construct()
-    {
-    }
+    private function __construct() {}
 
     /**
      * Get PHP binary path with enhanced detection.
@@ -159,25 +157,21 @@ final class SystemUtilities
             return self::$cpuCount;
         }
 
-        if (\function_exists('shell_exec')) {
-            $command = match (PHP_OS_FAMILY) {
-                'Windows' => 'wmic cpu get NumberOfLogicalProcessors /value',
-                'Darwin' => 'sysctl -n hw.logicalcpu',
-                default => 'nproc',
-            };
-
-            $output = @shell_exec($command);
-
-            if (\is_string($output) && trim($output) !== '') {
-                if (PHP_OS_FAMILY === 'Windows' && preg_match('/NumberOfLogicalProcessors=(\d+)/', $output, $m) === 1) {
-                    return self::$cpuCount = max(1, (int) $m[1]);
-                } elseif (($count = (int) trim($output)) > 0) {
-                    return self::$cpuCount = max(1, $count);
-                }
+        if (PHP_OS_FAMILY === 'Windows') {
+            $env = getenv('NUMBER_OF_PROCESSORS');
+            if ($env !== false && (int) $env > 0) {
+                return self::$cpuCount = max(1, (int) $env);
             }
         }
 
         if (PHP_OS_FAMILY === 'Linux') {
+            if (is_readable('/sys/devices/system/cpu/online')) {
+                $content = trim((string) file_get_contents('/sys/devices/system/cpu/online'));
+                if (preg_match('/^(\d+)-(\d+)$/', $content, $m) === 1) {
+                    return self::$cpuCount = max(1, (int) $m[2] - (int) $m[1] + 1);
+                }
+            }
+
             if (is_readable('/sys/devices/system/cpu/present')) {
                 $content = trim((string) file_get_contents('/sys/devices/system/cpu/present'));
                 if (preg_match('/^(\d+)-(\d+)$/', $content, $m) === 1) {
@@ -189,15 +183,24 @@ final class SystemUtilities
                 $cpuInfo = (string) file_get_contents('/proc/cpuinfo');
                 $matchCount = preg_match_all('/^processor/m', $cpuInfo, $cpuMatches);
                 if ($matchCount !== false && $matchCount > 0) {
-                    return self::$cpuCount = $matchCount;
+                    return self::$cpuCount = max(1, $matchCount);
                 }
             }
         }
 
-        if (PHP_OS_FAMILY === 'Windows') {
-            $env = getenv('NUMBER_OF_PROCESSORS');
-            if ($env !== false && (int) $env > 0) {
-                return self::$cpuCount = max(1, (int) $env);
+        if (\function_exists('shell_exec')) {
+            $command = match (PHP_OS_FAMILY) {
+                'Darwin' => 'sysctl -n hw.logicalcpu 2>/dev/null',
+                default => 'nproc 2>/dev/null',
+            };
+
+            $output = @shell_exec($command);
+
+            if (\is_string($output) && trim($output) !== '') {
+                $count = (int) trim($output);
+                if ($count > 0) {
+                    return self::$cpuCount = max(1, $count);
+                }
             }
         }
 
